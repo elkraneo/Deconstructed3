@@ -2,7 +2,7 @@ import TMFormat
 
 /// A display-oriented projection of a `tm_entity` object: name, type, attached
 /// component types, and recursively-projected children.
-public struct RCP3Entity: Equatable, Sendable {
+public struct RCP3Entity: Equatable, Sendable, Identifiable {
     public let name: String
     /// `__type`, or the `__prototype_type` when the entity is a prototype instance.
     public let type: String?
@@ -10,6 +10,10 @@ public struct RCP3Entity: Equatable, Sendable {
     public let prototypeUUID: String?
     public let componentTypes: [String]
     public let children: [RCP3Entity]
+
+    /// Stable identity for selection/outline. Real entities carry a `__uuid`; the
+    /// fallback keeps unnamed/uuid-less nodes distinguishable enough for display.
+    public var id: String { uuid ?? "\(type ?? "anon")#\(name)" }
 
     public init(_ object: TMObject) {
         name = object.name ?? ""
