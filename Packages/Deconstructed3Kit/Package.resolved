@@ -1,5 +1,5 @@
 {
-  "originHash" : "c451092c9b5b2a55a4fe17eb0f0cf1a0aa7d7f8ba9942f3dde23fb2ed44ce88f",
+  "originHash" : "07a34866c2908a8bd576849d765caeba256b1329c3b280661f50a56bbb893e93",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "dcccb979a2183b8df3334237e3dc1ae2b4116a86",
         "version" : "1.2.0"
+      }
+    },
+    {
+      "identity" : "stageview",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Reality2713/StageView.git",
+      "state" : {
+        "revision" : "efc801a74c59439073d0e43711a1da84e886d615",
+        "version" : "0.3.26"
       }
     },
     {

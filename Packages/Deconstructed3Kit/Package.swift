@@ -10,10 +10,9 @@ import PackageDescription
 // it `.tm_*`-reconstructed RealityKit entities via `RealityKitProvider.setModel`,
 // reusing StageView's RealityKit render path — not its USD-import path.
 //
-// StageView is wired here as a LOCAL PATH dependency so a developer checkout
-// builds against an adjacent clone. An OSS/CI release would switch this to the
-// git URL `https://github.com/Reality2713/StageView.git` (pinned by tag). See
-// `Docs/StageView-Adoption.md` for the local-path-vs-URL trade-off.
+// StageView is consumed from its public git URL (`Reality2713/StageView`),
+// pinned by tag — OSS/CI-clonable. For active StageView development, swap to a
+// local path. See `Docs/StageView-Adoption.md` for the trade-off.
 let package = Package(
     name: "Deconstructed3Kit",
     platforms: [.macOS(.v15)],
@@ -25,10 +24,9 @@ let package = Package(
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
     ],
     dependencies: [
-        // Local checkout of the StageView package (sibling of this repo's root).
-        // OSS/CI release would use:
-        //   .package(url: "https://github.com/Reality2713/StageView.git", from: "<tag>")
-        .package(path: "../../../../../StageView"),
+        // StageView — public git URL, pinned by tag. (Local path for StageView dev:
+        //   .package(path: "../../../../../StageView"))
+        .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.26"),
         // TCA is available transitively through StageView; we depend on it
         // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
         // Pinned to the same revision StageView resolves (1.26.0).

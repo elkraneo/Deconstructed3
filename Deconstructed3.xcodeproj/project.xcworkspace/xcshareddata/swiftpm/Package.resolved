@@ -11,6 +11,15 @@
       }
     },
     {
+      "identity" : "stageview",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Reality2713/StageView.git",
+      "state" : {
+        "revision" : "efc801a74c59439073d0e43711a1da84e886d615",
+        "version" : "0.3.26"
+      }
+    },
+    {
       "identity" : "swift-case-paths",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-case-paths",
