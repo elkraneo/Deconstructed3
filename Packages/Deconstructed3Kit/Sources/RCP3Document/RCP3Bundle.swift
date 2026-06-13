@@ -8,6 +8,9 @@ import TMFormat
 /// projects migrated from a USD import.
 public struct RCP3Bundle: Sendable {
     public let url: URL
+    /// Absolute URL of the root entity file that `root` was loaded from
+    /// (`world.tm_entity` or `Scene.import/Scene.tm_entity`). Save writes here.
+    public let rootURL: URL
     /// The root scene entity object.
     public let root: TMObject
     /// Number of type definitions in `__type_index.tm_meta`, if the index is present.
@@ -49,6 +52,25 @@ public struct RCP3Bundle: Sendable {
             typeCount = types.count
         }
 
-        return RCP3Bundle(url: url, root: root, typeCount: typeCount)
+        return RCP3Bundle(url: url, rootURL: rootURL, root: root, typeCount: typeCount)
+    }
+
+    /// Writes `newRoot` back to the bundle's root entity file via `tmText()`,
+    /// returning a `RCP3Bundle` whose `root` reflects what is now on disk.
+    ///
+    /// This is the write-back half of open → edit → save: the caller mutates the
+    /// `root` object (see `TMObject` mutation API) and persists the result. Only
+    /// the root entity file is rewritten; sibling files (type index, settings,
+    /// `core.lib`, binary buffers) are untouched.
+    @discardableResult
+    public func save(_ newRoot: TMObject) throws -> RCP3Bundle {
+        try newRoot.tmText().write(to: rootURL, atomically: true, encoding: .utf8)
+        return RCP3Bundle(url: url, rootURL: rootURL, root: newRoot, typeCount: typeCount)
+    }
+
+    /// Writes the bundle's current `root` back to disk (convenience for callers
+    /// holding an already-mutated bundle value).
+    public func save() throws {
+        try root.tmText().write(to: rootURL, atomically: true, encoding: .utf8)
     }
 }
