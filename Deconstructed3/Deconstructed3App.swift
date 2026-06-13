@@ -23,6 +23,9 @@ struct DeconstructedThreeApp: App {
 final class SceneModel {
     var bundleURL: URL?
     var root: RCP3Entity?
+    /// Render-oriented projection of the open bundle, used to materialize the
+    /// RealityKit viewport. `nil` until a bundle is opened.
+    var sceneGraph: RCP3SceneNode?
     var selection: RCP3Entity.ID?
     var errorMessage: String?
 
@@ -42,11 +45,13 @@ final class SceneModel {
             let bundle = try RCP3Bundle.open(url)
             bundleURL = url
             root = bundle.entity
+            sceneGraph = bundle.sceneGraph
             selection = bundle.entity.id
             errorMessage = nil
         } catch {
             errorMessage = String(describing: error)
             root = nil
+            sceneGraph = nil
             selection = nil
         }
     }

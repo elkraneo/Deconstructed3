@@ -32,6 +32,11 @@ struct ContentView: View {
                 }
             }
             .frame(minWidth: 240)
+        } content: {
+            // Center column: the reconstructed 3D viewport (option 1).
+            SceneViewportView(sceneGraph: model.sceneGraph, selection: $model.selection)
+                .navigationTitle("Viewport")
+                .frame(minWidth: 320)
         } detail: {
             if let entity = model.selectedEntity {
                 EntityDetailView(entity: entity)
