@@ -19,6 +19,7 @@ let package = Package(
     products: [
         .library(name: "TMFormat", targets: ["TMFormat"]),
         .library(name: "RCP3Document", targets: ["RCP3Document"]),
+        .library(name: "RCP3Runtime", targets: ["RCP3Runtime"]),
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
         .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
@@ -35,6 +36,10 @@ let package = Package(
     targets: [
         .target(name: "TMFormat"),
         .target(name: "RCP3Document", dependencies: ["TMFormat"]),
+        // Path-2 script-graph runtime: a public-JavaScriptCore host that runs a
+        // compiled graph against an entity model, plus the `tm_graph`→JS compiler.
+        // `JavaScriptCore` is a public system framework (auto-links via `import`).
+        .target(name: "RCP3Runtime", dependencies: ["RCP3Document", "TMFormat"]),
         .target(
             name: "RCP3Viewport",
             dependencies: [
@@ -56,6 +61,10 @@ let package = Package(
         .executableTarget(name: "RCP3Dump", dependencies: ["RCP3Document"]),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),
+        .testTarget(
+            name: "RCP3RuntimeTests",
+            dependencies: ["RCP3Runtime", "RCP3Document", "TMFormat"]
+        ),
         .testTarget(name: "RCP3ViewportTests", dependencies: ["RCP3Viewport"]),
         .testTarget(
             name: "DeconstructedFeatureTests",
