@@ -51,6 +51,14 @@ public struct DocumentFeature: Sendable {
             return Self.find(selection, in: rootEntity)
         }
 
+        /// The script graph attached to the selected entity (via its
+        /// `re_scripting_component`), or `nil` when there is none. Resolved against
+        /// the live editor's root + bundle, so it follows the current selection.
+        public var selectedScriptGraph: RCP3ScriptGraph? {
+            guard let editor, let selection else { return nil }
+            return editor.scriptGraph(forEntityID: selection)
+        }
+
         private static func find(_ id: RCP3Entity.ID, in entity: RCP3Entity) -> RCP3Entity? {
             if entity.id == id { return entity }
             for child in entity.children {

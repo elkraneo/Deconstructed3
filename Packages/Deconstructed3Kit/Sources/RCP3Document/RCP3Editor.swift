@@ -33,6 +33,15 @@ public struct RCP3Editor: Sendable, Equatable {
     /// edits (e.g. a rename) immediately, before `save()`.
     public var sceneGraph: RCP3SceneNode { bundle.sceneGraph(for: root) }
 
+    /// The script graph attached to the entity with this display id in the current
+    /// (possibly unsaved) root tree, or `nil` when that entity has no
+    /// `re_scripting_component`. The graph asset is resolved from this bundle's
+    /// `*.tm_script_graph` files.
+    public func scriptGraph(forEntityID id: RCP3Entity.ID) -> RCP3ScriptGraph? {
+        guard let object = RCP3Bundle.findEntity(id: id, in: root) else { return nil }
+        return bundle.scriptGraph(forEntity: object)
+    }
+
     private init(bundle: RCP3Bundle) {
         self.bundle = bundle
         self.root = bundle.root

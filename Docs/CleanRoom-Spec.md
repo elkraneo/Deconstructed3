@@ -123,13 +123,48 @@ Prefixes (inferred from naming): `tm_*` = object-database/engine layer; `re_*` /
 - **Actions / tags (no-code blocks):** `ActionWrapperTagDefinition`,
   `"Play Audio_tag"`, `"Enable/Disable Entity_tag"`, `InternalTagDefinition`.
 
+## Script graph — node graph format (observed)
+
+From the `Random` capture: a box carrying a `re_scripting_component` plus a
+sibling `Script Graph.tm_script_graph` asset. The component holds the no-code
+logic; the asset holds the graph it instances.
+
+**Wiring (entity → asset).** The entity's `re_scripting_component` has a
+`source` whose `__prototype_uuid` is the graph asset's identity. The asset file
+`<Name>.tm_script_graph` is a `re_scripting_source_graph` whose **root `__uuid`
+equals that prototype uuid**. Resolution = scan the bundle dir for
+`*.tm_script_graph` and match `__uuid`. (Captured: source
+`__prototype_uuid 3d614328-…` → `Script Graph.tm_script_graph` root `__uuid`.)
+
+**Asset shape.**
+`re_scripting_source_graph { graph: tm_graph { nodes[], connections[], data[], interface }, validation_settings }`.
+
+- **`nodes[]`** — `{ __uuid, type, label?, position{ x, y } }`. `type` is a plain
+  member (e.g. `tm_gesture_event_drag`, `tm_set_component`), **not** `__type`.
+  `label` is the author-given name (e.g. `"Set Transform"`).
+- **`connections[]`** — `{ __uuid, from_node, to_node, from_connector_hash?, to_connector_hash? }`.
+  `from_node`/`to_node` are **node `__uuid`s**. A connection with **no** connector
+  hashes is an **exec / control-flow** wire; one **with** both hashes is a **data**
+  wire (`fromPin → toPin`).
+- **`data[]`** — `{ __uuid, to_node, to_connector_hash, data }`: a constant input
+  bound to a node's pin; `data` is a typed object (`__type`).
+- **Pins** are referenced by `connector_hash = MurmurHash64A(pin_name, seed 0,
+  m = 0xc6a4a7935bd1e995)` — the **same hash** the type index uses for type names.
+  Anchors: `translation → 3e132861ebce0169`, `component_type → 772749b3cbf24a8f`,
+  `tm_transform_component → 8c878bd87b046f80`. Hashes are stored as lowercase
+  16-digit hex; reverse only via a known-name table, else show the hex.
+
+Captured graph decodes as: *on drag, set the box's transform `translation`* — one
+exec wire drag→set, one data wire drag→set.`translation`, and a `component_type`
+data literal on the set node.
+
 ## Open questions / next captures
 
 - [ ] Grammar edge cases: enums, asset references, and how text objects link to
       binary `*.tm_buffers/<uuid>.<hash>` payloads (the `<uuid>.<hash>` naming).
-- [ ] One capture each — a **script graph**, a **timeline/animation**, a
-      **material edit** — diffed against `Empty` to isolate each subsystem's
-      authored objects.
+- [x] **Script graph** captured + decoded (see "Script graph" above). Still to do:
+      a **timeline/animation** and a **material edit** — diffed against `Empty` to
+      isolate each subsystem's authored objects.
 - [ ] USD import path: how `settings.tm_usd` → `Scene.import/*.tm_entity` (round-trip).
 - [ ] Does USDKit open/render the new bundle directly, or only legacy `Scene.usda`?
       (render-path decision for the app.)

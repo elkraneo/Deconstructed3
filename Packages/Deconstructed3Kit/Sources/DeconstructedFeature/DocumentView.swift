@@ -128,9 +128,89 @@ struct EntityInspectorView: View {
                     }
                 }
             }
+
+            if let graph = store.selectedScriptGraph {
+                ScriptGraphSection(graph: graph)
+            }
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
+    }
+}
+
+// MARK: - Script-graph section
+
+/// A readable, structured rendering of the entity's script graph (the no-code
+/// logic behind a `re_scripting_component`): its nodes, the wires between them
+/// (exec vs. data, with resolved pin names), and bound data literals. A list, not
+/// a visual canvas — the canvas comes later.
+struct ScriptGraphSection: View {
+    let graph: RCP3ScriptGraph
+
+    var body: some View {
+        Section("Script Graph") {
+            nodesGroup
+            wiresGroup
+            dataGroup
+        }
+    }
+
+    @ViewBuilder
+    private var nodesGroup: some View {
+        LabeledContent("Nodes", value: "\(graph.nodes.count)")
+        ForEach(graph.nodes) { node in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(node.label ?? node.type)
+                    .font(.callout)
+                if node.label != nil {
+                    Text(node.type).font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var wiresGroup: some View {
+        if !graph.wires.isEmpty {
+            LabeledContent("Wires", value: "\(graph.wires.count)")
+            ForEach(graph.wires) { wire in
+                Text(describe(wire)).font(.caption.monospaced())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var dataGroup: some View {
+        if !graph.data.isEmpty {
+            LabeledContent("Inputs", value: "\(graph.data.count)")
+            ForEach(graph.data) { literal in
+                Text(describe(literal)).font(.caption.monospaced())
+            }
+        }
+    }
+
+    /// `fromNode → toNode  [exec]` or `fromNode → toNode  [fromPin → toPin]`.
+    private func describe(_ wire: RCP3ScriptGraph.Wire) -> String {
+        let from = nodeName(wire.from)
+        let to = nodeName(wire.to)
+        let detail = wire.isExec
+            ? "[exec]"
+            : "[\(RCP3ScriptGraph.label(forHash: wire.fromPin)) → \(RCP3ScriptGraph.label(forHash: wire.toPin))]"
+        return "\(from) → \(to)  \(detail)"
+    }
+
+    /// `toNode.pin = <type>` for a bound data literal.
+    private func describe(_ literal: RCP3ScriptGraph.DataLiteral) -> String {
+        let pin = RCP3ScriptGraph.label(forHash: literal.toPin)
+        let value = literal.valueType.map { " = \($0)" } ?? ""
+        return "\(nodeName(literal.toNode)).\(pin)\(value)"
+    }
+
+    /// A node's display label by uuid: its author label, else its type, else a
+    /// short uuid prefix.
+    private func nodeName(_ id: String) -> String {
+        guard let node = graph.node(id: id) else { return String(id.prefix(8)) }
+        return node.label ?? node.type
     }
 }
 
