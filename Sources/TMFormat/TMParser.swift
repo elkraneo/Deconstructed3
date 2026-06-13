@@ -66,12 +66,14 @@ private struct Scanner {
         case "{": return .object(try parseBracedObject())
         case "[": return try parseArray()
         default:
-            if c == "-" || c.isNumber { return .number(try parseNumber()) }
-            let word = try parseIdent()
-            switch word {
+            // A non-string/non-container value is a single token: bool, number, or
+            // bareword symbol. Numbers keep their lexeme (incl. `inf`/`-inf`/`nan`).
+            let token = try parseIdent()
+            switch token {
             case "true": return .bool(true)
             case "false": return .bool(false)
-            default: return .symbol(word)
+            default:
+                return Double(token) != nil ? .number(token) : .symbol(token)
             }
         }
     }
@@ -95,7 +97,7 @@ private struct Scanner {
             } else if isAtEnd {
                 break
             }
-            let key = try parseIdent()
+            let key = peek() == "\"" ? try parseString() : try parseIdent()
             skipTrivia()
             guard peek() == ":" else { throw error("expected ':' after key '\(key)'") }
             advance() // consume ':'
@@ -139,19 +141,8 @@ private struct Scanner {
         throw error("unterminated string")
     }
 
-    mutating func parseNumber() throws -> String {
-        var s = ""
-        while let c = peek(),
-              c == "-" || c == "+" || c == "." || c == "e" || c == "E" || c.isNumber {
-            s.append(c)
-            advance()
-        }
-        guard !s.isEmpty else { throw error("invalid number") }
-        return s
-    }
-
-    /// A bareword run: any non-delimiter, non-whitespace characters. Used for keys
-    /// and bareword (symbol) values.
+    /// A bareword run: any non-delimiter, non-whitespace characters. Used for keys,
+    /// number lexemes (incl. `-inf`/`nan`), and bareword (symbol) values.
     mutating func parseIdent() throws -> String {
         var s = ""
         while let c = peek(),

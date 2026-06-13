@@ -57,10 +57,17 @@ private func writeValue(_ value: TMValue, depth: Int, into out: inout String) {
 
 private func writeMembers(_ object: TMObject, depth: Int, into out: inout String) {
     for member in object.members {
-        out += indent(depth) + member.key + ": "
+        out += indent(depth) + keyText(member.key) + ": "
         writeValue(member.value, depth: depth, into: &out)
         out += "\n"
     }
+}
+
+/// Bareword keys are emitted as-is; keys with whitespace/delimiters (or empty) are
+/// quoted so they round-trip (e.g. `"Max AO distance"`).
+private func keyText(_ key: String) -> String {
+    let needsQuoting = key.isEmpty || key.contains { $0.isWhitespace || ":{}[]\"".contains($0) }
+    return needsQuoting ? "\"" + escaped(key) + "\"" : key
 }
 
 private func writeArray(_ items: [TMValue], depth: Int, into out: inout String) {
