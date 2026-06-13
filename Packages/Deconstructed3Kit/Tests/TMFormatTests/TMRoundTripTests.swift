@@ -35,14 +35,19 @@ import TMFormat
 
     /// The real `world.tm_entity` from the workspace `Empty` capture, if present.
     static var worldEntityURL: URL? {
-        let container = URL(filePath: #filePath)
-            .deletingLastPathComponent()  // TMFormatTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // package root
-            .deletingLastPathComponent()  // source
-            .deletingLastPathComponent()  // Deconstructed3 container
-        let url = container.appending(path: "references/Empty/Empty.realitycomposerpro/world.tm_entity")
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        referencesDir()?.appending(path: "Empty/Empty.realitycomposerpro/world.tm_entity")
+    }
+
+    static func referencesDir() -> URL? {
+        var dir = URL(filePath: #filePath).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let refs = dir.appending(path: "references")
+            if FileManager.default.fileExists(atPath: refs.appending(path: "Empty/Empty.realitycomposerpro").path) {
+                return refs
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
     }
 
     @Test func roundTripsRealWorldEntitySemantically() throws {

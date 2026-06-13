@@ -7,14 +7,21 @@ import RCP3Document
     /// OSS package (in `../../references/`), so these tests no-op cleanly when the
     /// capture is absent — keeping the package green standalone.
     static var emptyBundleURL: URL? {
-        let container = URL(filePath: #filePath)
-            .deletingLastPathComponent()  // RCP3DocumentTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // package root
-            .deletingLastPathComponent()  // source
-            .deletingLastPathComponent()  // Deconstructed3 container
-        let url = container.appending(path: "references/Empty/Empty.realitycomposerpro")
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        referencesDir()?.appending(path: "Empty/Empty.realitycomposerpro")
+    }
+
+    /// Ascend from this file until the workspace `references/` dir is found
+    /// (captures live outside the package, so the depth isn't fixed).
+    static func referencesDir() -> URL? {
+        var dir = URL(filePath: #filePath).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let refs = dir.appending(path: "references")
+            if FileManager.default.fileExists(atPath: refs.appending(path: "Empty/Empty.realitycomposerpro").path) {
+                return refs
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
     }
 
     @Test func opensEmptyWithBox() throws {
