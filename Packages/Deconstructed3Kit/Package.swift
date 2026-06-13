@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "TMFormat", targets: ["TMFormat"]),
         .library(name: "RCP3Document", targets: ["RCP3Document"]),
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
+        .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
     ],
     dependencies: [
@@ -28,6 +29,10 @@ let package = Package(
         // OSS/CI release would use:
         //   .package(url: "https://github.com/Reality2713/StageView.git", from: "<tag>")
         .package(path: "../../../../../StageView"),
+        // TCA is available transitively through StageView; we depend on it
+        // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
+        // Pinned to the same revision StageView resolves (1.26.0).
+        .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.26.0"),
     ],
     targets: [
         .target(name: "TMFormat"),
@@ -39,9 +44,27 @@ let package = Package(
                 .product(name: "RealityKitStageView", package: "StageView"),
             ]
         ),
+        // The TCA feature layer: `DocumentFeature` (open → edit → save) and the
+        // SwiftUI views that drive it. Depends on the document model, the
+        // viewport, and TCA directly.
+        .target(
+            name: "DeconstructedFeature",
+            dependencies: [
+                "RCP3Document",
+                "RCP3Viewport",
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+            ]
+        ),
         .executableTarget(name: "RCP3Dump", dependencies: ["RCP3Document"]),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),
         .testTarget(name: "RCP3ViewportTests", dependencies: ["RCP3Viewport"]),
+        .testTarget(
+            name: "DeconstructedFeatureTests",
+            dependencies: [
+                "DeconstructedFeature",
+                .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
+            ]
+        ),
     ]
 )

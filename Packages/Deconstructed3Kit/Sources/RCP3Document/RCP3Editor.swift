@@ -12,7 +12,7 @@ import TMFormat
 ///
 /// Sibling files (type index, settings, `core.lib`, binary buffers) are never
 /// touched — only the root entity file is rewritten.
-public struct RCP3Editor: Sendable {
+public struct RCP3Editor: Sendable, Equatable {
     /// The mutable root scene entity. Edit this, then `save()`.
     public var root: TMObject
 
@@ -27,6 +27,11 @@ public struct RCP3Editor: Sendable {
 
     /// A display projection of the current (possibly unsaved) root tree.
     public var entity: RCP3Entity { RCP3Entity(root) }
+
+    /// A render-oriented projection of the current (possibly unsaved) root tree,
+    /// resolved against this bundle's built-in geometry library. Reflects in-memory
+    /// edits (e.g. a rename) immediately, before `save()`.
+    public var sceneGraph: RCP3SceneNode { bundle.sceneGraph(for: root) }
 
     private init(bundle: RCP3Bundle) {
         self.bundle = bundle

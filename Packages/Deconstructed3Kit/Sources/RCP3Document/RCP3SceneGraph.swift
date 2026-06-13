@@ -12,6 +12,17 @@ extension RCP3Bundle {
     /// synthesized test bundle), the prototype filename convention provides a
     /// best-effort fallback and unmatched entities resolve to `.none`.
     public var sceneGraph: RCP3SceneNode {
+        sceneGraph(for: root)
+    }
+
+    /// Projects an arbitrary `root` entity tree into a scene graph using *this*
+    /// bundle's built-in geometry library for primitive resolution.
+    ///
+    /// This is the live-edit seam: an editing session can rename/restructure the
+    /// root in memory (without saving) and re-derive the viewport scene by passing
+    /// the edited root here — the `core.lib` resolution still keys off this
+    /// bundle's `url`, so prototype instances keep their primitive kinds.
+    public func sceneGraph(for root: TMObject) -> RCP3SceneNode {
         let kinds = Self.geometryPrototypeKinds(in: url)
         return Self.node(from: root, geometryKinds: kinds)
     }

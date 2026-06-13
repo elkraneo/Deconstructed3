@@ -6,7 +6,7 @@ import TMFormat
 /// v1 loads the root scene entity and (if present) the type-index size. The root
 /// is `world.tm_entity` for native projects, or `Scene.import/Scene.tm_entity` for
 /// projects migrated from a USD import.
-public struct RCP3Bundle: Sendable {
+public struct RCP3Bundle: Sendable, Equatable {
     public let url: URL
     /// Absolute URL of the root entity file that `root` was loaded from
     /// (`world.tm_entity` or `Scene.import/Scene.tm_entity`). Save writes here.
