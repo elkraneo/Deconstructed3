@@ -1,4 +1,5 @@
 import RCP3Document
+import RCP3Viewport
 import SwiftUI
 
 struct ContentView: View {
@@ -33,8 +34,10 @@ struct ContentView: View {
             }
             .frame(minWidth: 240)
         } content: {
-            // Center column: the reconstructed 3D viewport (option 1).
-            SceneViewportView(sceneGraph: model.sceneGraph, selection: $model.selection)
+            // Center column: the reconstructed 3D viewport, rendered by StageView's
+            // RealityKitStageView (we feed it `.tm_*`-reconstructed RealityKit
+            // entities — no USD). See Packages/Deconstructed3Kit `RCP3Viewport`.
+            RCP3ViewportView(sceneGraph: model.sceneGraph, selection: $model.selection)
                 .navigationTitle("Viewport")
                 .frame(minWidth: 320)
         } detail: {

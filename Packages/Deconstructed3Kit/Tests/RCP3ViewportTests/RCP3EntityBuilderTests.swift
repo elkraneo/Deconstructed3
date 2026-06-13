@@ -1,0 +1,127 @@
+import RCP3Document
+import RealityKit
+import RealityKitStageView
+import Testing
+import simd
+
+@testable import RCP3Viewport
+
+/// Verifies the `.tm_*` → RealityKit reconstruction and the uuid ⇄ StageView
+/// prim-path identity bridge that backs viewport selection.
+@MainActor
+@Suite struct RCP3EntityBuilderTests {
+    // A small box-under-world scene with stable uuids.
+    private func makeScene() -> RCP3SceneNode {
+        let box = RCP3SceneNode(
+            id: "box-uuid",
+            name: "box",
+            translation: (1, 2, 3),
+            rotation: (0, 0, 0, 1),
+            scale: (2, 2, 2),
+            primitiveKind: .box,
+            children: []
+        )
+        return RCP3SceneNode(
+            id: "world-uuid",
+            name: "world",
+            translation: (0, 0, 0),
+            rotation: (0, 0, 0, 1),
+            scale: (1, 1, 1),
+            primitiveKind: .none,
+            children: [box]
+        )
+    }
+
+    /// `build.root` is the anonymous wrapper (mirrors `Entity(contentsOf:)`); our
+    /// `world` node is its single child, and `box` is `world`'s child.
+    private func sceneRoot(of build: RCP3EntityBuilder.Build) throws -> Entity {
+        try #require(build.root.children.first)
+    }
+
+    @Test func wrapperHoldsNamedSceneRoot() throws {
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        // The wrapper itself is anonymous so the provider treats `world` as a prim.
+        #expect(build.root.name.isEmpty)
+        let world = try sceneRoot(of: build)
+        #expect(world.name == "world-uuid")
+        let box = try #require(world.children.first)
+        #expect(box.name == "box-uuid")
+    }
+
+    @Test func boxNodeBecomesModelEntityWithCollision() throws {
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        let world = try sceneRoot(of: build)
+        let box = try #require(world.children.first)
+        // ModelEntity carries a ModelComponent; structural world root does not.
+        #expect(box.components.has(ModelComponent.self))
+        #expect(!world.components.has(ModelComponent.self))
+        // generateCollisionShapes is what makes the entity pickable.
+        #expect(box.components.has(CollisionComponent.self))
+    }
+
+    @Test func transformIsAppliedFromNode() throws {
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        let world = try sceneRoot(of: build)
+        let box = try #require(world.children.first)
+        #expect(box.transform.translation == SIMD3<Float>(1, 2, 3))
+        #expect(box.transform.scale == SIMD3<Float>(2, 2, 2))
+    }
+
+    @Test func primPathMirrorsStageViewNameWalk() throws {
+        // StageView builds prim paths by slash-joining entity names from the root's
+        // children down. Our paths must match so selection round-trips.
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        #expect(build.primPathByNodeID["world-uuid"] == "/world-uuid")
+        #expect(build.primPathByNodeID["box-uuid"] == "/world-uuid/box-uuid")
+
+        // The component we set must equal the same string the provider's mapping
+        // would compute from entity names.
+        let world = try sceneRoot(of: build)
+        let box = try #require(world.children.first)
+        let component = try #require(box.components[USDPrimPathComponent.self])
+        #expect(component.primPath == "/world-uuid/box-uuid")
+    }
+
+    @Test func providerMappingAgreesWithOurPrimPaths() {
+        // Inject into a real provider and confirm StageView's name-based mapping
+        // resolves our prim paths back to the same entities we registered.
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        let provider = RealityKitProvider()
+        provider.setModel(build.root, metersPerUnit: 1, isZUp: false)
+
+        let boxEntity = provider.entity(for: "/world-uuid/box-uuid")
+        #expect(boxEntity?.name == "box-uuid")
+
+        // And the reverse: the entity resolves to our prim path.
+        if let boxEntity {
+            #expect(provider.primPath(for: boxEntity) == "/world-uuid/box-uuid")
+        }
+    }
+
+    @Test func nodeIDDecodesFromLeafOfPrimPath() {
+        #expect(RCP3EntityBuilder.nodeID(forPrimPath: "/world-uuid/box-uuid") == "box-uuid")
+        #expect(RCP3EntityBuilder.nodeID(forPrimPath: "/world-uuid") == "world-uuid")
+        #expect(RCP3EntityBuilder.nodeID(forPrimPath: nil) == nil)
+        #expect(RCP3EntityBuilder.nodeID(forPrimPath: "") == nil)
+    }
+
+    @Test func boundsAreFrameableForAScene() {
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        #expect(build.bounds.isFrameable)
+    }
+
+    @Test func emptyStructuralSceneGetsFallbackBounds() {
+        let structural = RCP3SceneNode(
+            id: "world-uuid",
+            name: "world",
+            translation: (0, 0, 0),
+            rotation: (0, 0, 0, 1),
+            scale: (1, 1, 1),
+            primitiveKind: .none,
+            children: []
+        )
+        let build = RCP3EntityBuilder.build(from: structural)
+        // No geometry → padded to a small frameable cube so the camera/grid work.
+        #expect(build.bounds.isFrameable)
+    }
+}

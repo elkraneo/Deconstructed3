@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC72FDD937100F67BC4 /* RCP3Document */; };
 		AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC92FDD937100F67BC4 /* TMFormat */; };
+		AE3E5BCC2FDD937100F67BC4 /* RCP3Viewport in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BCB2FDD937100F67BC4 /* RCP3Viewport */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 			files = (
 				AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */,
 				AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */,
+				AE3E5BCC2FDD937100F67BC4 /* RCP3Viewport in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -70,6 +72,7 @@
 			packageProductDependencies = (
 				AE3E5BC72FDD937100F67BC4 /* RCP3Document */,
 				AE3E5BC92FDD937100F67BC4 /* TMFormat */,
+				AE3E5BCB2FDD937100F67BC4 /* RCP3Viewport */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Deconstructed3.app */;
@@ -371,6 +374,10 @@
 		AE3E5BC92FDD937100F67BC4 /* TMFormat */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TMFormat;
+		};
+		AE3E5BCB2FDD937100F67BC4 /* RCP3Viewport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RCP3Viewport;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
