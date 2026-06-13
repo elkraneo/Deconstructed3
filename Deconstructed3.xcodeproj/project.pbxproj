@@ -6,6 +6,11 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC72FDD937100F67BC4 /* RCP3Document */; };
+		AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC92FDD937100F67BC4 /* TMFormat */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Deconstructed3.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Deconstructed3.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -22,6 +27,8 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */,
+				AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -60,6 +67,10 @@
 				000000000000000000000010 /* Deconstructed3 */,
 			);
 			name = Deconstructed3;
+			packageProductDependencies = (
+				AE3E5BC72FDD937100F67BC4 /* RCP3Document */,
+				AE3E5BC92FDD937100F67BC4 /* TMFormat */,
+			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Deconstructed3.app */;
 			productType = "com.apple.product-type.application";
@@ -88,6 +99,9 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AE3E5BC62FDD937100F67BC4 /* XCLocalSwiftPackageReference "Packages/Deconstructed3Kit" */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
@@ -341,6 +355,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AE3E5BC62FDD937100F67BC4 /* XCLocalSwiftPackageReference "Packages/Deconstructed3Kit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Deconstructed3Kit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AE3E5BC72FDD937100F67BC4 /* RCP3Document */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RCP3Document;
+		};
+		AE3E5BC92FDD937100F67BC4 /* TMFormat */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TMFormat;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }
