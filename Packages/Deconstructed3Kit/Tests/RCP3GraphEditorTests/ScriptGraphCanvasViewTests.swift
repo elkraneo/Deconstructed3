@@ -92,6 +92,80 @@ import RCP3Document
         #expect(model.canvasPort(near: recoveredGraph) == port)
     }
 
+    /// During a live node drag the model is NOT mutated; the renderer offsets the
+    /// dragged node's edge endpoints locally. An endpoint on the dragged node must move
+    /// by EXACTLY the screen-space drag translation (so the wire stays attached to the
+    /// port as the card follows the cursor), while an endpoint on a node that isn't
+    /// being dragged must not move at all. Verified at a non-unit zoom, where the
+    /// graph→screen scaling makes an incorrect offset obvious.
+    @Test func edgeEndpointsFollowLiveNodeDrag() {
+        let model = ScriptGraphEditorModel(graph: Self.sampleGraph())
+        // Wire n1.exec.out → n2.exec.in so we have one edge with an endpoint on each.
+        let from = GraphPortRef(nodeID: "n1", pinID: "exec.out")
+        let to = GraphPortRef(nodeID: "n2", pinID: "exec.in")
+        #expect(model.connect(from, to) != nil)
+
+        let view = ScriptGraphCanvasView(model: model)
+        let zoom: CGFloat = 2.5
+        view.configureViewportForTesting(
+            size: CGSize(width: 1280, height: 800), zoom: zoom, pan: .zero
+        )
+
+        // Baseline screen positions of both endpoints, with no active drag.
+        guard
+            let n1ScreenBefore = view.screenPortPointForTesting(from, draggingNodeID: nil, dragTranslation: .zero),
+            let n2ScreenBefore = view.screenPortPointForTesting(to, draggingNodeID: nil, dragTranslation: .zero)
+        else { Issue.record("expected resolvable port points"); return }
+
+        // Simulate dragging n2 by a screen-space translation.
+        let translation = CGSize(width: 120, height: -80)
+        guard
+            let n1ScreenAfter = view.screenPortPointForTesting(from, draggingNodeID: "n2", dragTranslation: translation),
+            let n2ScreenAfter = view.screenPortPointForTesting(to, draggingNodeID: "n2", dragTranslation: translation)
+        else { Issue.record("expected resolvable port points"); return }
+
+        // n1 (not dragged) stays put; n2 (dragged) moves by exactly the screen drag.
+        #expect(abs(n1ScreenAfter.x - n1ScreenBefore.x) < 0.0001)
+        #expect(abs(n1ScreenAfter.y - n1ScreenBefore.y) < 0.0001)
+        #expect(abs(n2ScreenAfter.x - (n2ScreenBefore.x + translation.width)) < 0.0001)
+        #expect(abs(n2ScreenAfter.y - (n2ScreenBefore.y + translation.height)) < 0.0001)
+
+        // The model itself was never mutated during the drag.
+        #expect(model.node("n2")?.position == ScriptGraphEditorModel(graph: Self.sampleGraph()).node("n2")?.position)
+    }
+
+    /// After a live drag is cleared and the move is committed to the model, the routed
+    /// endpoint lands exactly where the live drag had it — no jump on commit.
+    @Test func committedMoveMatchesLiveDragEndpoint() {
+        let model = ScriptGraphEditorModel(graph: Self.sampleGraph())
+        let to = GraphPortRef(nodeID: "n2", pinID: "exec.in")
+        let from = GraphPortRef(nodeID: "n1", pinID: "exec.out")
+        #expect(model.connect(from, to) != nil)
+
+        let view = ScriptGraphCanvasView(model: model)
+        let zoom: CGFloat = 1.75
+        view.configureViewportForTesting(
+            size: CGSize(width: 1280, height: 800), zoom: zoom, pan: CGSize(width: 40, height: -20)
+        )
+
+        let translation = CGSize(width: 90, height: 140)
+        guard let liveScreen = view.screenPortPointForTesting(to, draggingNodeID: "n2", dragTranslation: translation) else {
+            Issue.record("expected a resolvable port point"); return
+        }
+
+        // Commit the move the way `handleDragEnded` does (same graph delta the live drag
+        // previewed), then read with no active drag.
+        let origin = model.node("n2")!.position
+        let graphOffset = view.graphDragOffsetForTesting(translation: translation)
+        model.moveNode("n2", to: CGPoint(x: origin.x + graphOffset.x, y: origin.y + graphOffset.y))
+
+        guard let committedScreen = view.screenPortPointForTesting(to, draggingNodeID: nil, dragTranslation: .zero) else {
+            Issue.record("expected a resolvable port point"); return
+        }
+        #expect(abs(committedScreen.x - liveScreen.x) < 0.0001)
+        #expect(abs(committedScreen.y - liveScreen.y) < 0.0001)
+    }
+
     /// The public entry builds a model-backed canvas without touching SwiftFlow.
     @Test func publicCanvasBuilds() {
         let canvas = ScriptGraphCanvas(graph: Self.sampleGraph())
