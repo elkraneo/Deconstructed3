@@ -145,6 +145,11 @@ public enum ScriptGraphNodeLibrary {
     /// independently; this is the single place they are merged.
     static let registeredComponents: [ComponentSpec] =
         spatialComponents
+            + renderingComponents
+            + physicsComponents
+            + lightingComponents
+            + anchoringComponents
+            + audioAnimationComponents
 
     /// `componentSpec` keyed by `murmur64a(name)` for O(1) lookup from a
     /// `component_type` literal hash.
