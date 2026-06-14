@@ -214,13 +214,30 @@ public enum ScriptGraphFlowBridge {
         return pins
     }
 
-    /// The SwiftFlow handle declaration matching a pin: inputs are `.target` on the
-    /// `.left`, outputs are `.source` on the `.right`.
+    /// The SwiftFlow handle declaration matching a pin.
+    ///
+    /// Exec (control-flow) pins go to `.top` so the exec connection renders as a
+    /// separate line across the top of the nodes (as RCP draws it) instead of
+    /// overlapping the side data wires; data inputs are `.target` on the `.left`,
+    /// data outputs `.source` on the `.right`.
+    ///
+    /// NOTE: SwiftFlow routes every edge endpoint to one of five fixed points per
+    /// node (`FlowStore.handlePoint(for:in:)` — top/bottom/left/right/center), so
+    /// multiple pins sharing a side collapse to a single connection point. With
+    /// many data pins per side their wires still overlap; only our own canvas
+    /// renderer (per-pin-row handles) can fully separate them. See
+    /// `Docs/StageView-Adoption.md`-style friction note for SwiftFlow.
     static func handle(for pin: ScriptGraphNodePayload.Pin) -> HandleDeclaration {
-        HandleDeclaration(
+        let position: HandlePosition
+        if pin.isExec {
+            position = .top
+        } else {
+            position = pin.isInput ? .left : .right
+        }
+        return HandleDeclaration(
             id: pin.id,
             type: pin.isInput ? .target : .source,
-            position: pin.isInput ? .left : .right
+            position: position
         )
     }
 

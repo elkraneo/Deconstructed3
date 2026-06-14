@@ -59,10 +59,11 @@ struct ScriptGraphFlowBridgeTests {
         let handleIDs = Set(n1.handles.map(\.id))
         #expect(handleIDs.contains("exec.out"))
         #expect(handleIDs.contains("out." + Self.dragOutputHex))
-        // The exec source handle is a `.source` on the right edge.
+        // The exec source handle is a `.source` routed to `.top` so the exec
+        // (control-flow) connection renders separately from the side data wires.
         let execOut = try! #require(n1.handles.first { $0.id == "exec.out" })
         #expect(execOut.type == .source)
-        #expect(execOut.position == .right)
+        #expect(execOut.position == .top)
         // n1 only emits, so it should declare no input handles.
         #expect(n1.handles.allSatisfy { $0.type == .source })
     }
