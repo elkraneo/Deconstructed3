@@ -1,5 +1,5 @@
 {
-  "originHash" : "a3669106767e4df9d246f1d4250b4772deb11b1cf4da1ec9f9d4e658f679955c",
+  "originHash" : "5bb1b270f209a328dc71842696117aacca1fda75372f5daac2796c105c19fb81",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "dcccb979a2183b8df3334237e3dc1ae2b4116a86",
         "version" : "1.2.0"
+      }
+    },
+    {
+      "identity" : "realitykitscripting",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/realitykitscripting.git",
+      "state" : {
+        "revision" : "e0a8a395f3c0f935e98df715f021770dcd3f47f1",
+        "version" : "1.0.0"
       }
     },
     {

@@ -15,11 +15,10 @@ import PackageDescription
 // local path. See `Docs/StageView-Adoption.md` for the trade-off.
 let package = Package(
     name: "Deconstructed3Kit",
-    // The SwiftUI viewport/editor targets (`RCP3Viewport`, `RCP3GraphEditor`,
-    // `DeconstructedFeature`) build against modern SwiftUI/RealityKit. Deconstructed
-    // 3 is macOS 27-only anyway, so the package floor sits at 26; the pure-Swift
-    // parser/document targets still build fine here.
-    platforms: [.macOS("26.0")],
+    // Deconstructed 3 is macOS 27-only. The floor is 27 because the canonical
+    // runtime target (`RCP3CanonicalRuntime`) depends on `apple/realitykitscripting`
+    // (macOS 27), and SPM applies the platform floor per *package*, not per target.
+    platforms: [.macOS("27.0")],
     products: [
         .library(name: "TMFormat", targets: ["TMFormat"]),
         .library(name: "RCP3Document", targets: ["RCP3Document"]),
@@ -27,6 +26,7 @@ let package = Package(
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
         .library(name: "RCP3GraphEditor", targets: ["RCP3GraphEditor"]),
         .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
+        .library(name: "RCP3CanonicalRuntime", targets: ["RCP3CanonicalRuntime"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
     ],
     dependencies: [
@@ -39,6 +39,9 @@ let package = Package(
         // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
         // Pinned to the same revision StageView resolves (1.26.0).
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.26.0"),
+        // Apple's public (MIT) RealityKit Script Graph runtime. Used ONLY by
+        // `RCP3CanonicalRuntime` to run a compiled graph on the real runtime.
+        .package(url: "https://github.com/apple/realitykitscripting.git", from: "1.0.0"),
     ],
     targets: [
         .target(name: "TMFormat"),
@@ -47,6 +50,17 @@ let package = Package(
         // compiled graph against an entity model, plus the `tm_graph`→JS compiler.
         // `JavaScriptCore` is a public system framework (auto-links via `import`).
         .target(name: "RCP3Runtime", dependencies: ["RCP3Document", "TMFormat"]),
+        // Canonical runtime bridge (macOS 27): runs a compiled script graph on
+        // Apple's real `RealityKitScripting` runtime. Depends on the JS emitter in
+        // `RCP3Runtime` (`CanonicalScriptGraphCompiler`) and the public package.
+        .target(
+            name: "RCP3CanonicalRuntime",
+            dependencies: [
+                "RCP3Document",
+                "RCP3Runtime",
+                .product(name: "RealityKitScripting", package: "realitykitscripting"),
+            ]
+        ),
         .target(
             name: "RCP3Viewport",
             dependencies: [
