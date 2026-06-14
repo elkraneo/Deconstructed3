@@ -99,6 +99,10 @@ public struct ScriptGraphCanvasView: View {
         .onTapGesture { focused = true }
         .onKeyPress(.delete) { deleteSelection() }
         .onKeyPress(.deleteForward) { deleteSelection() }
+        // The responder-chain delete (Delete/Backspace + the Edit menu). More
+        // reliable than `.onKeyPress` for a focusable view inside a split-view
+        // column, where key events may not reach the focused subview.
+        .onDeleteCommand { model.deleteSelection() }
         .onKeyPress(.escape) {
             if model.draftSource != nil { model.cancelConnection(); return .handled }
             return .ignored
