@@ -192,6 +192,13 @@ Observed by inspecting the shipped app bundle and the running editor (black-box)
   (vector/quaternion/matrix/color/…), **variables**, **delays**, and cloning.
   Each node carries a label, category, and description; nodes are marked
   `supported` / `experimental` / `deprecated`.
+- **Script context API.** A running script's `this` (its scripting component) exposes a
+  **fixed** set of members: properties `entity`, `scene`, `input`, `hostTime`,
+  `osVersion`, and platform flags (`isVisionOS`/`isMacOS`/`isIOS`/`isTVOS`/
+  `isSimulator`); methods `on`/`off`/`send` (event subscribe/unsubscribe/dispatch),
+  `getRemoteValue`/`setRemoteValue` (synced variables), and timers `setInterval`/
+  `setTimeout`/`clearInterval`/`clearTimeout`/`isTimerFinished`. The entity's specific
+  components (`Transform`, …) are exposed on top, named by the type schema.
 - **Implication for Deconstructed 3 (path 2).** A faithful runtime is a **public
   JavaScriptCore** context that (1) installs an equivalent module system +
   iterable-collection mixin, (2) exposes the entity/components as JS objects
