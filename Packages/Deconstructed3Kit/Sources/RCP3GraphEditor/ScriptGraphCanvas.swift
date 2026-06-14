@@ -1,29 +1,29 @@
 import SwiftUI
-import SwiftFlow
 import RCP3Document
 
-/// A visual, pannable/zoomable node-graph view of an `RCP3ScriptGraph`, rendered
-/// on a SwiftFlow canvas with RCP-styled nodes and exec/data wires.
+/// A visual, interactive node-graph editor for an `RCP3ScriptGraph`.
 ///
-/// This is the read-first MVP of the script-graph editor: it bridges the decoded
-/// graph into a `FlowStore` (`ScriptGraphFlowBridge`) and draws each node with
-/// `ScriptGraphNodeView`. Editing (moving nodes, connecting pins, a node palette)
-/// builds on top of this — SwiftFlow already supports node dragging, pan/zoom, and
-/// selection out of the box.
+/// This is the public entry the app hosts (`DocumentView`). It builds the
+/// renderer-agnostic `ScriptGraphEditorModel` from the decoded graph and renders it
+/// with the interactive SwiftUI **Canvas** editor (`ScriptGraphCanvasView`): drag
+/// nodes, drag-to-connect ports, pan/zoom, select, and delete — with per-port
+/// wiring that matches `ScriptGraphLayout` exactly. (This replaces the earlier
+/// SwiftFlow-backed canvas, which could not give us per-port connection points.)
+///
+/// The public API is unchanged — `ScriptGraphCanvas(graph:)` — so callers don't
+/// move.
 public struct ScriptGraphCanvas: View {
-    @State private var store: FlowStore<ScriptGraphNodePayload>
+    @State private var model: ScriptGraphEditorModel
 
-    /// Builds the canvas for `graph`. `@MainActor` because `FlowStore` (and the
-    /// bridge's `store(for:)`) are main-actor isolated; SwiftUI constructs views on
-    /// the main actor, so callers already satisfy this.
+    /// Builds the editor for `graph`. `@MainActor` because `ScriptGraphEditorModel`
+    /// is main-actor isolated; SwiftUI constructs views on the main actor, so
+    /// callers already satisfy this.
     @MainActor
     public init(graph: RCP3ScriptGraph) {
-        _store = State(initialValue: ScriptGraphFlowBridge.store(for: graph))
+        _model = State(initialValue: ScriptGraphEditorModel(graph: graph))
     }
 
     public var body: some View {
-        FlowCanvas(store: store) { node, context in
-            ScriptGraphNodeView(node: node, context: context)
-        }
+        ScriptGraphCanvasView(model: model)
     }
 }
