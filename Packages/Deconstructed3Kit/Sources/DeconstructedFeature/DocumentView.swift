@@ -42,6 +42,9 @@ public struct DocumentView: View {
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
 
+    /// Whether the canonical "Simulate" sheet is presented. Pure presentation state.
+    @State private var showsCanonicalSimulate = false
+
     // MARK: Play mode (spatial run)
 
     /// Whether the script graph is running LIVE in the 3D viewport (Play). When on,
@@ -66,8 +69,19 @@ public struct DocumentView: View {
     /// entity in place and never restored it otherwise. `nil` when not playing.
     @State private var authoredSnapshot: LiveTransform?
 
-    public init(store: StoreOf<DocumentFeature>) {
+    /// An optional builder for the canonical "Simulate" view (runs the graph on
+    /// Apple's real `RealityKitScripting` runtime). Injected by the **app** target,
+    /// which links the binary `RealityKitScripting` framework — this layer stays free
+    /// of it so `swift test` can load `DeconstructedFeatureTests`. When `nil`, the
+    /// Simulate affordance is hidden.
+    private let canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)?
+
+    public init(
+        store: StoreOf<DocumentFeature>,
+        canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)? = nil
+    ) {
         self.store = store
+        self.canonicalSimulate = canonicalSimulate
     }
 
     /// Whether a script-graph canvas is currently shown (graph mode with a graph).
@@ -135,6 +149,13 @@ public struct DocumentView: View {
                 .sheet(isPresented: $showsPreview) {
                     if let graph = previewableGraph {
                         ScriptGraphPreviewView(graph: graph)
+                    }
+                }
+                // SIMULATE (canonical): the app injects a view that runs the graph on
+                // Apple's real RealityKitScripting runtime (3D RealityView).
+                .sheet(isPresented: $showsCanonicalSimulate) {
+                    if let graph = previewableGraph, let make = canonicalSimulate {
+                        make(graph).frame(minWidth: 480, minHeight: 360)
                     }
                 }
         } detail: {
@@ -342,6 +363,16 @@ public struct DocumentView: View {
             }
             .disabled(!canRunPreview)
             .help("Compile and run this script graph with a 2D drag simulator")
+        }
+        // SIMULATE (canonical): shown only when the app injected the runtime view.
+        if canonicalSimulate != nil {
+            ToolbarItem {
+                Button("Simulate", systemImage: "cube.transparent") {
+                    showsCanonicalSimulate = true
+                }
+                .disabled(!canRunPreview)
+                .help("Run this script graph on Apple's RealityKitScripting runtime")
+            }
         }
     }
 
