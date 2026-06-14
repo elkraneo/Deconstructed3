@@ -1,3 +1,4 @@
+import CoreGraphics
 import RCP3Document
 import RealityKit
 import RealityKitStageView
@@ -96,6 +97,33 @@ import simd
         if let boxEntity {
             #expect(provider.primPath(for: boxEntity) == "/world-uuid/box-uuid")
         }
+    }
+
+    @Test func entityByNodeIDMapsUUIDsToTheirEntities() throws {
+        // The node→entity map backs Play mode's live transform drive: a node uuid
+        // must resolve to the entity carrying that uuid as its name. The entities
+        // returned are the very ones in `build.root`, so mutating them moves the
+        // reconstructed tree the provider holds.
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        let world = try #require(build.entityByNodeID["world-uuid"])
+        let box = try #require(build.entityByNodeID["box-uuid"])
+        #expect(world.name == "world-uuid")
+        #expect(box.name == "box-uuid")
+        // The map points at the live tree, not copies.
+        let liveWorld = try sceneRoot(of: build)
+        #expect(world === liveWorld)
+        #expect(box === liveWorld.children.first)
+        // An unknown uuid is absent (so `applyLiveTransform` is a no-op for it).
+        #expect(build.entityByNodeID["nope"] == nil)
+    }
+
+    @Test func sceneDeltaMapsScreenDragToSceneSpace() {
+        // Screen +x → scene +x; screen +y (down) → scene −y (so a drag up moves up);
+        // z is untouched. Points are scaled down (1/200).
+        let right = RCP3ViewportView.sceneDelta(for: CGSize(width: 200, height: 0))
+        #expect(right == SIMD3(1, 0, 0))
+        let down = RCP3ViewportView.sceneDelta(for: CGSize(width: 0, height: 200))
+        #expect(down == SIMD3(0, -1, 0))
     }
 
     @Test func nodeIDDecodesFromLeafOfPrimPath() {

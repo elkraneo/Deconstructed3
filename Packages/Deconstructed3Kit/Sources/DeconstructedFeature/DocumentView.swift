@@ -2,8 +2,10 @@ import AppKit
 import ComposableArchitecture
 import RCP3Document
 import RCP3GraphEditor
+import RCP3Runtime
 import RCP3Viewport
 import SwiftUI
+import simd
 
 /// The Deconstructed 3 main window: a 3-pane `NavigationSplitView` driven entirely
 /// by `StoreOf<DocumentFeature>`.
@@ -40,6 +42,25 @@ public struct DocumentView: View {
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
 
+    // MARK: Play mode (spatial run)
+
+    /// Whether the script graph is running LIVE in the 3D viewport (Play). When on,
+    /// the viewport reports drags to the runtime instead of orbiting the camera, and
+    /// the resulting transform drives the real reconstructed entity.
+    @State private var isPlaying = false
+    /// The live entity model the running graph mutates (the runtime's authored side
+    /// of the bridge). Held across body passes so drags accumulate. `nil` when not
+    /// playing.
+    @State private var playState: RuntimeEntityState?
+    /// The running JS host (compiled graph + bound `playState`). `nil` when stopped.
+    @State private var playHost: ScriptJSHost?
+    /// The node uuid Play is driving (captured when Play starts, so the target is
+    /// stable even if the selection changes while playing). `nil` when stopped.
+    @State private var playTargetNodeID: String?
+    /// The transform published to the viewport to apply live to `playTargetNodeID`.
+    /// Set after each drag dispatch; the viewport applies it via `applyLiveTransform`.
+    @State private var liveTransform: LiveTransform?
+
     public init(store: StoreOf<DocumentFeature>) {
         self.store = store
     }
@@ -54,6 +75,25 @@ public struct DocumentView: View {
     /// so the Play button is useful in either path. `nil` when there's nothing to run.
     private var previewableGraph: RCP3ScriptGraph? {
         store.openScriptGraph ?? store.selectedScriptGraph
+    }
+
+    /// The graph the spatial Play would run in the 3D viewport. v1 drives the
+    /// *selected* entity, so this is the selected entity's graph (the box, when
+    /// selected). `nil` when the selection has no graph — Play is then disabled.
+    private var playableGraph: RCP3ScriptGraph? {
+        store.selectedScriptGraph
+    }
+
+    /// The node uuid Play would drive: the selected entity (v1 limitation — see the
+    /// Play button doc). Valid only when that entity actually carries a graph.
+    private var playableTargetNodeID: String? {
+        store.selectedScriptGraph == nil ? nil : store.selection
+    }
+
+    /// Whether the spatial Play toggle is available: the center shows the viewport
+    /// and the selected entity has a runnable graph + a resolvable target uuid.
+    private var canPlay: Bool {
+        centerMode == .viewport && playableGraph != nil && playableTargetNodeID != nil
     }
 
     public var body: some View {
@@ -143,10 +183,28 @@ public struct DocumentView: View {
             // The reconstructed 3D viewport (StageView-backed), fed the live
             // (possibly unsaved) scene graph + a selection binding so renames
             // reflect and picks flow back to the store.
+            //
+            // PLAY: while `isPlaying`, drags are reported to the runtime (camera
+            // orbit suppressed by the viewport's play overlay) and the resulting
+            // transform is pushed back through `liveTransform` to move the real
+            // reconstructed entity. With Play OFF every input is `nil`/false, so the
+            // viewport behaves exactly as before.
             RCP3ViewportView(
                 sceneGraph: store.sceneGraph,
-                selection: $store.selection.sending(\.selected)
+                selection: $store.selection.sending(\.selected),
+                playMode: isPlaying,
+                liveTransform: $liveTransform,
+                onPlayDrag: handlePlayDrag
             )
+            // If the run target disappears (selection/graph change) while playing,
+            // stop cleanly rather than driving a stale uuid.
+            .onChange(of: canPlay) { _, possible in
+                if isPlaying && !possible { stopPlaying() }
+            }
+            // Leaving the viewport (to the graph canvas) stops a running graph.
+            .onChange(of: centerMode) { _, mode in
+                if mode != .viewport && isPlaying { stopPlaying() }
+            }
         case .graph:
             // An asset opened from the sidebar takes precedence; otherwise fall back
             // to the selected entity's graph.
@@ -205,16 +263,85 @@ public struct DocumentView: View {
             }
             .pickerStyle(.segmented)
         }
+        // PLAY / STOP: run the script graph LIVE in the 3D viewport, driving the
+        // real reconstructed entity. Only available in viewport mode when the
+        // selected entity has a runnable graph (v1 drives the selection).
+        ToolbarItem {
+            Button(
+                isPlaying ? "Stop" : "Play",
+                systemImage: isPlaying ? "stop.fill" : "play.fill"
+            ) {
+                if isPlaying { stopPlaying() } else { startPlaying() }
+            }
+            .disabled(!canPlay && !isPlaying)
+            .help(isPlaying
+                ? "Stop the running graph and restore the entity"
+                : "Run this script graph live in the viewport (drag to drive the entity)")
+        }
         // RUN / PREVIEW affordance: shown whenever there's a graph to run (an open
         // asset, or the selected entity's graph). Opens `ScriptGraphPreviewView` in a
         // sheet, which compiles + runs the graph on the RCP3 runtime.
         ToolbarItem {
-            Button("Run Preview", systemImage: "play.fill") {
+            Button("Run Preview", systemImage: "rectangle.on.rectangle") {
                 showsPreview = true
             }
             .disabled(previewableGraph == nil)
-            .help("Compile and run this script graph with a drag simulator")
+            .help("Compile and run this script graph with a 2D drag simulator")
         }
+    }
+
+    // MARK: Play lifecycle (spatial run)
+
+    /// Starts a live spatial run: compiles + runs the selected entity's graph on the
+    /// RCP3 runtime, captures the target uuid, and flips the viewport into play mode.
+    /// Idempotent and a no-op if there's nothing runnable.
+    private func startPlaying() {
+        guard !isPlaying, let graph = playableGraph, let target = playableTargetNodeID else { return }
+        let state = RuntimeEntityState()
+        playHost = ScriptGraphRunner.run(graph, into: state)
+        playState = state
+        playTargetNodeID = target
+        isPlaying = true
+        // Publish the initial (identity) transform so the entity starts from a known
+        // pose; subsequent drags accumulate from here.
+        publishLiveTransform()
+    }
+
+    /// Stops the run, tears down the runtime, and clears the live transform so the
+    /// entity keeps its authored pose (the viewport rebuilds from the scene graph,
+    /// which still holds the authored transform — we just stop driving it).
+    private func stopPlaying() {
+        isPlaying = false
+        playHost = nil
+        playState = nil
+        playTargetNodeID = nil
+        liveTransform = nil
+    }
+
+    /// A play-mode drag from the viewport: dispatch a `"drag"` to the runtime, then
+    /// publish the updated transform so the viewport moves the real entity.
+    private func handlePlayDrag(_ delta: SIMD3<Double>) {
+        guard isPlaying, let host = playHost else { return }
+        host.dispatch(event: "drag", payload: ["delta": [delta.x, delta.y, delta.z]])
+        publishLiveTransform()
+    }
+
+    /// Reads the runtime's live `RuntimeEntityState` and publishes it as a
+    /// `LiveTransform` (converted to `Float`) for the viewport's target entity.
+    private func publishLiveTransform() {
+        guard let state = playState, let target = playTargetNodeID else { return }
+        let t = state.translation, s = state.scale, q = state.rotation
+        liveTransform = LiveTransform(
+            nodeID: target,
+            translation: SIMD3(Float(t.x), Float(t.y), Float(t.z)),
+            rotation: simd_quatf(
+                ix: Float(q.imag.x),
+                iy: Float(q.imag.y),
+                iz: Float(q.imag.z),
+                r: Float(q.real)
+            ),
+            scale: SIMD3(Float(s.x), Float(s.y), Float(s.z))
+        )
     }
 
     @ToolbarContentBuilder

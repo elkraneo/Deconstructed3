@@ -32,19 +32,57 @@ public struct RCP3ViewportView: View {
     /// The host's selected entity uuid (`RCP3SceneNode.id` == `RCP3Entity.id`).
     @Binding private var selection: String?
 
+    /// Play mode: when `true`, a viewport drag is captured by an overlay and
+    /// reported to `onPlayDrag` as a **scene-space delta** instead of orbiting the
+    /// camera. When `false`, this view behaves exactly as before — the overlay does
+    /// not exist, so orbit / pan / pick / selection round-trip are untouched.
+    private let playMode: Bool
+    /// Called during a play-mode drag with the incremental scene-space delta since
+    /// the last callback. The host (e.g. a `DocumentView` running a script graph)
+    /// turns this into a runtime `"drag"` event and then publishes the resulting
+    /// transform back via the `liveTransform` binding. No-op closure when not playing.
+    private let onPlayDrag: (SIMD3<Double>) -> Void
+    /// A host-published transform to apply live to one entity (by node uuid). The
+    /// viewport applies it via `applyLiveTransform` whenever it changes. This binding
+    /// is the robust host→viewport application path: because `RCP3ViewportView` is a
+    /// value type recreated each `body` pass, a stored reference to call a method on
+    /// would be brittle; an observed input is the SwiftUI-idiomatic alternative. The
+    /// public `applyLiveTransform(...)` method is also available for direct callers.
+    @Binding private var liveTransform: LiveTransform?
+
     @State private var provider = RealityKitProvider()
     @State private var store = Store(initialState: StageViewFeature.State()) {
         StageViewFeature()
     }
     /// `node.id` (uuid) → StageView prim-path string, rebuilt with the entities.
     @State private var primPathByNodeID: [String: String] = [:]
+    /// `node.id` (uuid) → the reconstructed RealityKit entity, rebuilt with the
+    /// tree. Used as a fallback for `applyLiveTransform` when the provider's
+    /// prim-path mapping hasn't resolved (the entities are the very ones the
+    /// provider holds via `setModel`, so mutating them is the same object).
+    @State private var entityByNodeID: [String: Entity] = [:]
+    /// The last drag location during a play-mode drag, to compute incremental
+    /// deltas. `nil` between drags.
+    @State private var lastPlayDragLocation: CGPoint?
 
     /// - Parameters:
     ///   - sceneGraph: the `.tm_*`-reconstructed scene to materialize, or `nil`.
     ///   - selection: a two-way binding to the selected entity uuid.
-    public init(sceneGraph: RCP3SceneNode?, selection: Binding<String?>) {
+    ///   - playMode: when `true`, drags drive `onPlayDrag` instead of the camera.
+    ///   - liveTransform: a host-published transform applied live to one entity.
+    ///   - onPlayDrag: receives the incremental scene-space drag delta in play mode.
+    public init(
+        sceneGraph: RCP3SceneNode?,
+        selection: Binding<String?>,
+        playMode: Bool = false,
+        liveTransform: Binding<LiveTransform?> = .constant(nil),
+        onPlayDrag: @escaping (SIMD3<Double>) -> Void = { _ in }
+    ) {
         self.sceneGraph = sceneGraph
         self._selection = selection
+        self.playMode = playMode
+        self._liveTransform = liveTransform
+        self.onPlayDrag = onPlayDrag
     }
 
     public var body: some View {
@@ -55,6 +93,12 @@ public struct RCP3ViewportView: View {
                     store: store,
                     configuration: configuration
                 )
+                // Play-mode drag capture: a transparent overlay that exists ONLY
+                // while playing. It sits above the StageView and consumes the drag,
+                // so the underlying camera gesture never sees it (no orbit). When
+                // `playMode` is false the overlay is absent and the viewport behaves
+                // exactly as before.
+                .overlay { playDragOverlay }
             } else {
                 ContentUnavailableView("No scene", systemImage: "cube.transparent")
             }
@@ -67,6 +111,91 @@ public struct RCP3ViewportView: View {
         .onChange(of: provider.selectionGeneration) { _, _ in
             adoptViewportSelection(provider.selectedPrimPath)
         }
+        // Host → viewport live transform (Play mode): apply each published value to
+        // the target entity. A no-op when `nil` or the node isn't found.
+        .onChange(of: liveTransform) { _, newValue in apply(newValue) }
+    }
+
+    /// Applies a published `LiveTransform` to its target entity (no-op if `nil`).
+    @MainActor
+    private func apply(_ transform: LiveTransform?) {
+        guard let transform else { return }
+        applyLiveTransform(
+            translation: transform.translation,
+            rotation: transform.rotation,
+            scale: transform.scale,
+            toNodeID: transform.nodeID
+        )
+    }
+
+    // MARK: - Play-mode drag capture
+
+    /// A transparent gesture surface shown only in play mode. It reads incremental
+    /// drag deltas and maps screen drag → scene delta (see `sceneDelta(for:)`),
+    /// reporting them to `onPlayDrag`. Returns `EmptyView` when not playing so the
+    /// off path is allocation- and behavior-identical to before.
+    @ViewBuilder
+    private var playDragOverlay: some View {
+        if playMode {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let last = lastPlayDragLocation ?? value.location
+                            let dScreen = CGSize(
+                                width: value.location.x - last.x,
+                                height: value.location.y - last.y
+                            )
+                            lastPlayDragLocation = value.location
+                            let delta = Self.sceneDelta(for: dScreen)
+                            if delta != .zero { onPlayDrag(delta) }
+                        }
+                        .onEnded { _ in lastPlayDragLocation = nil }
+                )
+        }
+    }
+
+    /// Maps an incremental **screen** drag (points) to a **scene-space** delta.
+    ///
+    /// Convention: screen +x → scene +x; screen +y (downward) → scene **−y** (so a
+    /// drag up moves the entity up). The z axis is left untouched (0). Points are
+    /// scaled down so a typical drag moves the entity a sensible distance.
+    static func sceneDelta(for screen: CGSize) -> SIMD3<Double> {
+        let scale = 1.0 / 200.0 // points → scene units
+        return SIMD3(
+            Double(screen.width) * scale,
+            Double(-screen.height) * scale,
+            0
+        )
+    }
+
+    /// Drives one entity's local transform live, by node uuid, on the reconstructed
+    /// RealityKit entity the provider holds. A no-op if the node isn't found. Does
+    /// NOT touch the camera or selection.
+    ///
+    /// Resolution order: the provider's prim-path mapping (`entity(for:)`, the
+    /// canonical live entity) first, then the builder's `entityByNodeID` as a
+    /// fallback (same object — the entities passed to `setModel`).
+    @MainActor
+    public func applyLiveTransform(
+        translation: SIMD3<Float>,
+        rotation: simd_quatf,
+        scale: SIMD3<Float>,
+        toNodeID nodeID: String
+    ) {
+        guard let entity = entity(forNodeID: nodeID) else { return }
+        entity.transform = Transform(scale: scale, rotation: rotation, translation: translation)
+    }
+
+    /// Resolves the live RealityKit entity for `nodeID`, preferring the provider's
+    /// mapping and falling back to the builder map.
+    @MainActor
+    private func entity(forNodeID nodeID: String) -> Entity? {
+        if let path = primPathByNodeID[nodeID], let entity = provider.entity(for: path) {
+            return entity
+        }
+        return entityByNodeID[nodeID]
     }
 
     /// Minimal viewport configuration: RealityKit Y-up, 1 unit = 1 meter (matching
@@ -87,11 +216,13 @@ public struct RCP3ViewportView: View {
         guard let node else {
             store.send(.clearRequested)
             primPathByNodeID = [:]
+            entityByNodeID = [:]
             return
         }
 
         let build = RCP3EntityBuilder.build(from: node)
         primPathByNodeID = build.primPathByNodeID
+        entityByNodeID = build.entityByNodeID
 
         store.send(.setSceneBounds(build.bounds))
         setSentinelModelURL()
@@ -138,5 +269,28 @@ public struct RCP3ViewportView: View {
         if selection != nodeID {
             selection = nodeID
         }
+    }
+}
+
+/// A target entity's full local transform to apply live in the viewport, addressed
+/// by node uuid. Published by a host (Play mode) through `RCP3ViewportView`'s
+/// `liveTransform` binding; `Equatable` so `.onChange` only fires on real changes.
+public struct LiveTransform: Equatable, Sendable {
+    /// The node uuid (`RCP3SceneNode.id`) of the entity to drive.
+    public let nodeID: String
+    public let translation: SIMD3<Float>
+    public let rotation: simd_quatf
+    public let scale: SIMD3<Float>
+
+    public init(
+        nodeID: String,
+        translation: SIMD3<Float>,
+        rotation: simd_quatf,
+        scale: SIMD3<Float>
+    ) {
+        self.nodeID = nodeID
+        self.translation = translation
+        self.rotation = rotation
+        self.scale = scale
     }
 }

@@ -29,11 +29,22 @@ public enum RCP3EntityBuilder {
         /// `node.id` (our uuid) → StageView prim-path string, for pushing a
         /// host selection into the viewport (`provider.setSelection`).
         public let primPathByNodeID: [String: String]
+        /// `node.id` (our uuid) → the reconstructed RealityKit `Entity`, for driving
+        /// a single entity's transform live (Play mode `applyLiveTransform`). This is
+        /// the same entity injected into the provider via `setModel(root:)`, so it can
+        /// be mutated in place; the provider observes nothing about transforms.
+        public let entityByNodeID: [String: Entity]
 
-        public init(root: Entity, bounds: SceneBounds, primPathByNodeID: [String: String]) {
+        public init(
+            root: Entity,
+            bounds: SceneBounds,
+            primPathByNodeID: [String: String],
+            entityByNodeID: [String: Entity]
+        ) {
             self.root = root
             self.bounds = bounds
             self.primPathByNodeID = primPathByNodeID
+            self.entityByNodeID = entityByNodeID
         }
     }
 
@@ -49,7 +60,13 @@ public enum RCP3EntityBuilder {
     @MainActor
     public static func build(from node: RCP3SceneNode) -> Build {
         var primPathByNodeID: [String: String] = [:]
-        let sceneRoot = makeEntity(from: node, parentPrimPath: "", primPathByNodeID: &primPathByNodeID)
+        var entityByNodeID: [String: Entity] = [:]
+        let sceneRoot = makeEntity(
+            from: node,
+            parentPrimPath: "",
+            primPathByNodeID: &primPathByNodeID,
+            entityByNodeID: &entityByNodeID
+        )
 
         // Anonymous wrapper: matches the shape `Entity(contentsOf:)` produces, so
         // the provider's prim-path mapping treats `sceneRoot` (our `world`) as the
@@ -58,7 +75,12 @@ public enum RCP3EntityBuilder {
         container.addChild(sceneRoot)
 
         let bounds = sceneBounds(of: container)
-        return Build(root: container, bounds: bounds, primPathByNodeID: primPathByNodeID)
+        return Build(
+            root: container,
+            bounds: bounds,
+            primPathByNodeID: primPathByNodeID,
+            entityByNodeID: entityByNodeID
+        )
     }
 
     // MARK: - Reconstruction
@@ -73,7 +95,8 @@ public enum RCP3EntityBuilder {
     private static func makeEntity(
         from node: RCP3SceneNode,
         parentPrimPath: String,
-        primPathByNodeID: inout [String: String]
+        primPathByNodeID: inout [String: String],
+        entityByNodeID: inout [String: Entity]
     ) -> Entity {
         let entity: Entity
         if let mesh = mesh(for: node.primitiveKind) {
@@ -93,13 +116,15 @@ public enum RCP3EntityBuilder {
         let primPath = parentPrimPath.isEmpty ? "/\(node.id)" : "\(parentPrimPath)/\(node.id)"
         entity.components.set(USDPrimPathComponent(primPath: primPath))
         primPathByNodeID[node.id] = primPath
+        entityByNodeID[node.id] = entity
 
         for child in node.children {
             entity.addChild(
                 makeEntity(
                     from: child,
                     parentPrimPath: primPath,
-                    primPathByNodeID: &primPathByNodeID
+                    primPathByNodeID: &primPathByNodeID,
+                    entityByNodeID: &entityByNodeID
                 )
             )
         }
