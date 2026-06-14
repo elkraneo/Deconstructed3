@@ -7,18 +7,30 @@ import SwiftUI
 // `ScriptGraphLayout`, so the edges this view routes and the ports it hit-tests
 // agree with the dots `ScriptGraphCanvasNodeView` draws.
 //
-// Coordinate spaces
-// -----------------
-// The model stores node positions in GRAPH space. The view keeps `zoom` and `pan`
-// and maps:
+// Coordinate spaces — ONE transform
+// ---------------------------------
+// The model stores node positions in GRAPH space. ALL graph content — the grid,
+// every edge path, the draft wire, and every node card — lives in a SINGLE
+// container that is itself laid out in GRAPH coordinates. One transform is applied
+// to the whole container:
 //
-//     canvas = graph * zoom + pan + center
-//     graph  = (canvas - pan - center) / zoom
+//     .scaleEffect(zoom, anchor: .topLeading)
+//     .offset(x: pan.width + center.width, y: pan.height + center.height)
 //
-// `center` keeps the unscaled graph origin near the middle of the view, so
-// graphs authored around (0,0) are visible without panning. Every node placement,
-// edge endpoint, and hit-test goes through `canvasPoint(fromGraph:)` /
-// `graphPoint(fromCanvas:)`, so the whole scene stays consistent under pan/zoom.
+// which means, for any graph point `p`:
+//
+//     screen = p * zoom + pan + center               (`canvasPoint(fromGraph:)`)
+//     graph  = (screen - pan - center) / zoom         (`graphPoint(fromCanvas:)`)
+//
+// Because nodes and edges share the *exact same* single transform, ports and wires
+// stay attached at every zoom. `center` keeps the unscaled graph origin near the
+// middle of the view, so graphs authored around (0,0) are visible without panning.
+//
+// Hit-testing inverts that single transform: a gesture location reported in the
+// gesture view's local (screen) space is converted to graph space via
+// `graphPoint(fromCanvas:)` — the one inverse — so `model.canvasPort(near:)` and
+// node hit-tests work at any zoom. Routing ALL conversions through that pair keeps
+// the placement, the routing, and the hit-testing in lock-step.
 
 public struct ScriptGraphCanvasView: View {
     @Bindable var model: ScriptGraphEditorModel
@@ -35,11 +47,15 @@ public struct ScriptGraphCanvasView: View {
     // Live gesture state. A single drag gesture multiplexes between panning,
     // moving a node, and drawing a connection, decided on the first change event.
     @State private var activeGesture: ActiveGesture?
-    @State private var cursorCanvas: CGPoint?
+    /// Cursor position in GRAPH space (draft wire endpoint, hover validation).
+    @State private var cursorGraph: CGPoint?
     @State private var hoverTargetValid = false
 
     // Pinch-zoom accumulation.
     @State private var zoomBase: CGFloat = 1
+
+    // Keyboard focus — required for `.onKeyPress` delete to fire.
+    @FocusState private var focused: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -47,19 +63,40 @@ public struct ScriptGraphCanvasView: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            ZStack {
-                background
-                edges
-                nodes
+            ZStack(alignment: .topLeading) {
+                // Solid backing fills the whole viewport (drawn in screen space).
+                gridBackground.ignoresSafeArea()
+
+                // The single graph-space container: grid dots, edges, draft wire,
+                // and node cards — all placed in GRAPH coordinates, then scaled and
+                // offset by ONE transform so they can never desync. The container's
+                // own coordinate origin IS graph (0,0) (it is pinned top-leading), so
+                // the resulting screen mapping is exactly
+                //   screen = graph * zoom + pan + center      (== `canvasPoint`).
+                graphContainer
+                    .scaleEffect(zoom, anchor: .topLeading)
+                    .offset(x: pan.width + center.width, y: pan.height + center.height)
+
+                // A discoverable delete affordance for the selected wire, floated in
+                // screen space at the wire's midpoint (edges live in a non-hit-testing
+                // Canvas, so they can't host their own context menu).
+                selectedConnectionDeleteButton
             }
             .contentShape(Rectangle())
+            // Gestures are observed in this view's LOCAL (screen) space; every
+            // location is converted to graph space via `graphPoint(fromCanvas:)`.
             .gesture(dragGesture)
             .gesture(magnifyGesture)
-            .onAppear { viewportSize = proxy.size }
+            .onAppear {
+                viewportSize = proxy.size
+                focused = true
+            }
             .onChange(of: proxy.size) { _, new in viewportSize = new }
         }
         .focusable()
+        .focused($focused)
         .focusEffectDisabled()
+        .onTapGesture { focused = true }
         .onKeyPress(.delete) { deleteSelection() }
         .onKeyPress(.deleteForward) { deleteSelection() }
         .onKeyPress(.escape) {
@@ -70,24 +107,16 @@ public struct ScriptGraphCanvasView: View {
         .accessibilityLabel("Script graph canvas")
         .accessibilityHint("Nodes connected by control-flow and data wires. Select a node, then use the Delete action to remove it.")
         .accessibilityAction(named: Text("Delete selection")) { model.deleteSelection() }
-        #if os(macOS)
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let p): cursorCanvas = p
-            case .ended: cursorCanvas = nil
-            }
-        }
-        #endif
     }
 
-    // MARK: Coordinate transforms
+    // MARK: Coordinate transforms (single source of truth)
 
     /// The centering offset that maps the graph origin to the viewport middle.
     private var center: CGSize {
         CGSize(width: viewportSize.width / 2, height: viewportSize.height / 2)
     }
 
-    /// Graph point → canvas (view) point.
+    /// Graph point → canvas (screen) point. Matches the container's transform exactly.
     public func canvasPoint(fromGraph p: CGPoint) -> CGPoint {
         CGPoint(
             x: p.x * zoom + pan.width + center.width,
@@ -95,7 +124,7 @@ public struct ScriptGraphCanvasView: View {
         )
     }
 
-    /// Canvas (view) point → graph point. Inverse of `canvasPoint(fromGraph:)`.
+    /// Canvas (screen) point → graph point. Inverse of `canvasPoint(fromGraph:)`.
     public func graphPoint(fromCanvas p: CGPoint) -> CGPoint {
         CGPoint(
             x: (p.x - pan.width - center.width) / zoom,
@@ -103,24 +132,55 @@ public struct ScriptGraphCanvasView: View {
         )
     }
 
-    // MARK: Background grid
+    /// Test hook: seed the viewport transform directly so coordinate round-trips can
+    /// be exercised at representative zoom/pan values outside the SwiftUI graph.
+    func configureViewportForTesting(size: CGSize, zoom: CGFloat, pan: CGSize) {
+        viewportSize = size
+        self.zoom = zoom
+        self.pan = pan
+    }
 
-    private var background: some View {
+    // MARK: Graph-space container
+
+    /// Everything that lives in graph coordinates. The container is a ZERO-size view
+    /// pinned so its coordinate origin is graph (0,0); all content is overlaid and
+    /// allowed to overflow in every direction (graph coordinates can be negative).
+    /// A single transform on the caller scales/offsets the whole thing, so edges and
+    /// nodes can never diverge. Because the container origin is graph (0,0), the
+    /// screen mapping is exactly `screen = graph * zoom + pan + center`.
+    private var graphContainer: some View {
+        // A zero-size anchor at graph origin. `.overlay` content is centered on this
+        // point and unclipped, so a child drawn at graph `g` lands at container-local
+        // `g` — matching `.position(x: g.x, y: g.y)` for node cards.
+        Color.clear
+            .frame(width: 0, height: 0)
+            .overlay(alignment: .center) { grid }
+            .overlay(alignment: .center) { edges }
+            .overlay(alignment: .center) { nodes }
+            .allowsHitTesting(false)
+    }
+
+    /// The graph-space extent the grid/edge Canvases reserve around the origin. Large
+    /// enough to cover any authored graph and panning at min zoom.
+    private var containerSpan: CGFloat { 20_000 }
+
+    // MARK: Background grid (graph space)
+
+    private var grid: some View {
         Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(gridBackground))
-            // A dotted grid that tracks pan/zoom. Spacing grows with zoom; skip when
-            // it would be too dense or motion is reduced (then a flat fill is fine).
             guard !reduceMotion else { return }
-            let spacing = 32 * zoom
-            guard spacing > 6 else { return }
-            let originX = (pan.width + center.width).truncatingRemainder(dividingBy: spacing)
-            let originY = (pan.height + center.height).truncatingRemainder(dividingBy: spacing)
+            // The Canvas is centered on graph origin (its center == container origin),
+            // so translate the context so drawing is in graph coordinates.
+            ctx.translateBy(x: size.width / 2, y: size.height / 2)
+            // Spacing is in GRAPH units (the container transform scales it on screen).
+            let spacing: CGFloat = 32
+            let half = size.width / 2
             var dots = Path()
             let dot: CGFloat = 1
-            var y = originY
-            while y < size.height {
-                var x = originX
-                while x < size.width {
+            var y = -half
+            while y < half {
+                var x = -half
+                while x < half {
                     dots.addEllipse(in: CGRect(x: x - dot, y: y - dot, width: dot * 2, height: dot * 2))
                     x += spacing
                 }
@@ -128,7 +188,8 @@ public struct ScriptGraphCanvasView: View {
             }
             ctx.fill(dots, with: .color(.primary.opacity(0.10)))
         }
-        .ignoresSafeArea()
+        .frame(width: containerSpan, height: containerSpan)
+        .allowsHitTesting(false)
     }
 
     private var gridBackground: Color {
@@ -139,34 +200,36 @@ public struct ScriptGraphCanvasView: View {
         #endif
     }
 
-    // MARK: Edges
+    // MARK: Edges (graph space)
 
     private var edges: some View {
-        Canvas { ctx, _ in
+        Canvas { ctx, size in
+            // Graph origin is drawn at the Canvas center (matching the node `.position`
+            // origin shift), so translate the context by half the span once.
+            ctx.translateBy(x: size.width / 2, y: size.height / 2)
             for connection in model.connections {
                 guard
-                    let fromGraph = model.canvasPortPoint(connection.from),
-                    let toGraph = model.canvasPortPoint(connection.to)
+                    let a = model.canvasPortPoint(connection.from),
+                    let b = model.canvasPortPoint(connection.to)
                 else { continue }
-                let a = canvasPoint(fromGraph: fromGraph)
-                let b = canvasPoint(fromGraph: toGraph)
                 let selected = connection.id == model.selectedConnectionID
                 drawEdge(ctx, from: a, to: b, isExec: connection.isExec,
                          color: edgeColor(connection), selected: selected, label: connection.label)
             }
 
             // The in-progress (draft) connection: from the draft port to the cursor,
-            // tinted by whether the hovered target is a valid completion.
+            // tinted by whether the hovered target is a valid completion. All points
+            // are GRAPH-space — same as the edges above.
             if let source = model.draftSource,
-               let fromGraph = model.canvasPortPoint(source),
-               let cursor = cursorCanvas ?? activeGesture?.lastCanvas {
-                let a = canvasPoint(fromGraph: fromGraph)
+               let a = model.canvasPortPoint(source),
+               let cursor = cursorGraph ?? activeGesture?.lastGraph {
                 let isExec = model.pin(source)?.isExec ?? false
                 let color: Color = hoverTargetValid ? .green : .accentColor
                 drawEdge(ctx, from: a, to: cursor, isExec: isExec, color: color,
                          selected: true, label: nil, dashed: !hoverTargetValid)
             }
         }
+        .frame(width: containerSpan, height: containerSpan)
         .allowsHitTesting(false)
     }
 
@@ -179,7 +242,7 @@ public struct ScriptGraphCanvasView: View {
         var path = Path()
         path.move(to: a)
         // Horizontal-ish bezier: control points pushed out along x by half the gap
-        // (clamped), giving the classic node-editor "S" routing.
+        // (clamped), giving the classic node-editor "S" routing. All in graph units.
         let dx = max(40, abs(b.x - a.x) * 0.5)
         path.addCurve(
             to: b,
@@ -187,8 +250,9 @@ public struct ScriptGraphCanvasView: View {
             control2: CGPoint(x: b.x - dx, y: b.y)
         )
 
+        // Widths are graph-space; the container scale renders them at the right size.
         let baseWidth: CGFloat = isExec ? 3.0 : 2.0
-        let width = (selected ? baseWidth + 1.5 : baseWidth) * max(0.6, min(zoom, 1.4))
+        let width = selected ? baseWidth + 1.5 : baseWidth
         var style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
         if dashed { style.dash = [6, 5] }
 
@@ -200,7 +264,7 @@ public struct ScriptGraphCanvasView: View {
         ctx.stroke(path, with: .color(color), style: style)
 
         // Data wires show their label near the midpoint.
-        if let label, !isExec, !label.isEmpty, zoom > 0.6 {
+        if let label, !isExec, !label.isEmpty {
             let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             let text = Text(label).font(.caption2).foregroundStyle(.secondary)
             ctx.draw(text, at: CGPoint(x: mid.x, y: mid.y - 8), anchor: .center)
@@ -216,81 +280,126 @@ public struct ScriptGraphCanvasView: View {
         return .secondary
     }
 
-    // MARK: Nodes
+    // MARK: Nodes (graph space)
 
     private var nodes: some View {
-        ForEach(model.nodes) { box in
-            let topLeft = canvasPoint(fromGraph: box.position)
-            ScriptGraphCanvasNodeView(
-                payload: box.payload,
-                isSelected: box.id == model.selectedNodeID,
-                onDelete: {
-                    model.selectNode(box.id)
-                    model.deleteSelection()
+        // Hosted in a `containerSpan` frame centered on graph origin (matching the
+        // Canvases, which draw graph (0,0) at their center). `.position` is measured
+        // from this frame's top-left, so graph point `g` maps to `containerSpan/2 + g`.
+        let originShift = containerSpan / 2
+        return ZStack(alignment: .topLeading) {
+            ForEach(model.nodes) { box in
+                let size = ScriptGraphLayout.size(box.payload)
+                ScriptGraphCanvasNodeView(
+                    payload: box.payload,
+                    isSelected: box.id == model.selectedNodeID,
+                    onDelete: {
+                        model.selectNode(box.id)
+                        model.deleteSelection()
+                    }
+                )
+                // NO per-node scaleEffect — the container transform scales it. Place
+                // the card at its graph-space frame (`.position` centers it; add half).
+                .position(
+                    x: originShift + box.position.x + size.width / 2,
+                    y: originShift + box.position.y + size.height / 2
+                )
+                // A discoverable delete affordance that doesn't rely on the keyboard.
+                .contextMenu {
+                    Button(role: .destructive) {
+                        model.selectNode(box.id)
+                        model.deleteSelection()
+                    } label: {
+                        Label("Delete Node", systemImage: "trash")
+                    }
                 }
-            )
-            .scaleEffect(zoom, anchor: .topLeading)
-            // `.position` centers the frame, so offset by the (scaled) half-size to
-            // place the node's top-left at `topLeft`.
-            .position(centerForNode(box, topLeft: topLeft))
+            }
+        }
+        .frame(width: containerSpan, height: containerSpan)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: Selection affordance
+
+    /// A small "delete" button floated over the midpoint of the selected wire, so the
+    /// selection can be removed without the keyboard. Positioned in screen space via
+    /// the single transform, so it tracks the wire under pan/zoom.
+    @ViewBuilder
+    private var selectedConnectionDeleteButton: some View {
+        if let id = model.selectedConnectionID,
+           let connection = model.connections.first(where: { $0.id == id }),
+           let a = model.canvasPortPoint(connection.from),
+           let b = model.canvasPortPoint(connection.to) {
+            let midGraph = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+            let screen = canvasPoint(fromGraph: midGraph)
+            Button {
+                model.removeConnection(id)
+            } label: {
+                Image(systemName: "trash.fill")
+                    .font(.caption)
+                    .padding(6)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.red.opacity(0.6), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.red)
+            .accessibilityLabel("Delete connection")
+            .position(screen)
         }
     }
 
-    private func centerForNode(_ box: GraphNodeBox, topLeft: CGPoint) -> CGPoint {
-        let size = ScriptGraphLayout.size(box.payload)
-        return CGPoint(
-            x: topLeft.x + size.width / 2 * zoom,
-            y: topLeft.y + size.height / 2 * zoom
-        )
-    }
-
     // MARK: Gestures
+    //
+    // The drag gesture is observed in the view's LOCAL (screen) space. Every location
+    // is converted to graph space via `graphPoint(fromCanvas:)` — the single inverse —
+    // so hit-tests work identically at any zoom.
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in handleDragChanged(value) }
             .onEnded { value in handleDragEnded(value) }
     }
 
     private func handleDragChanged(_ value: DragGesture.Value) {
-        cursorCanvas = value.location
-        let cursorGraph = graphPoint(fromCanvas: value.location)
+        focused = true
+        // Convert the screen-space location to graph space through the one inverse.
+        let location = graphPoint(fromCanvas: value.location)
+        cursorGraph = location
 
-        // Decide the gesture's role on the first change.
+        // Decide the gesture's role on the first change. Port hit-test takes PRIORITY
+        // over node-body drag when the press is near a port.
         if activeGesture == nil {
-            let startGraph = graphPoint(fromCanvas: value.startLocation)
-            if let port = model.canvasPort(near: startGraph) {
-                // Begin a connection from this port.
-                model.beginConnection(from: port)
-                activeGesture = ActiveGesture(kind: .connect(from: port), lastCanvas: value.location)
-            } else if let nodeID = nodeID(atGraph: startGraph) {
+            let start = graphPoint(fromCanvas: value.startLocation)
+            if let port = model.canvasPort(near: start) {
+                beginConnectionGesture(from: port, at: location)
+            } else if let nodeID = nodeID(atGraph: start) {
                 // Move (and select) this node.
                 model.selectNode(nodeID)
                 let origin = model.node(nodeID)?.position ?? .zero
                 activeGesture = ActiveGesture(kind: .moveNode(id: nodeID, origin: origin),
-                                              lastCanvas: value.location)
+                                              lastGraph: location)
             } else {
                 // Pan the canvas.
-                activeGesture = ActiveGesture(kind: .pan(origin: pan), lastCanvas: value.location)
+                activeGesture = ActiveGesture(kind: .pan(origin: pan), lastGraph: location)
             }
         }
 
         guard var gesture = activeGesture else { return }
-        gesture.lastCanvas = value.location
+        gesture.lastGraph = location
         activeGesture = gesture
 
         switch gesture.kind {
         case .pan(let origin):
+            // `pan` is a screen-space offset; the drag translation is screen-space too.
             pan = CGSize(width: origin.width + value.translation.width,
                          height: origin.height + value.translation.height)
         case .moveNode(let id, let origin):
-            // Translation is in canvas space; convert to graph space.
-            let dx = value.translation.width / zoom
-            let dy = value.translation.height / zoom
-            model.moveNode(id, to: CGPoint(x: origin.x + dx, y: origin.y + dy))
+            // Translation is screen-space; convert to graph units by dividing by zoom.
+            model.moveNode(id, to: CGPoint(x: origin.x + value.translation.width / zoom,
+                                           y: origin.y + value.translation.height / zoom))
         case .connect:
             // Live-validate the target under the cursor for affordance.
-            if let target = model.canvasPort(near: cursorGraph),
+            if let target = model.canvasPort(near: location),
                let source = model.draftSource {
                 hoverTargetValid = model.canConnect(source, target)
             } else {
@@ -299,24 +408,46 @@ public struct ScriptGraphCanvasView: View {
         }
     }
 
+    /// Begins a connection from `port`. If `port` is an INPUT that already has an
+    /// incoming wire, this RECONNECTS: it detaches the existing wire and starts a new
+    /// drag from that wire's original OUTPUT source (so the user can rewire). If
+    /// dropped on empty, the detached wire stays removed.
+    private func beginConnectionGesture(from port: GraphPortRef, at location: CGPoint) {
+        if let pin = model.pin(port), pin.isInput,
+           let existing = model.connections(touching: port).first(where: { $0.to == port }) {
+            // Detach the existing wire and rewire from its source output.
+            let source = existing.from
+            model.removeConnection(existing.id)
+            model.beginConnection(from: source)
+            activeGesture = ActiveGesture(kind: .connect(from: source), lastGraph: location)
+        } else {
+            model.beginConnection(from: port)
+            activeGesture = ActiveGesture(kind: .connect(from: port), lastGraph: location)
+        }
+    }
+
     private func handleDragEnded(_ value: DragGesture.Value) {
+        let kind = activeGesture?.kind
         defer {
             activeGesture = nil
             hoverTargetValid = false
+            cursorGraph = nil
         }
-        let dropGraph = graphPoint(fromCanvas: value.location)
+        let drop = graphPoint(fromCanvas: value.location)
+        // Screen-space movement threshold (so a click reads as a tap, not a pan).
         let moved = abs(value.translation.width) + abs(value.translation.height) > 4
 
-        switch activeGesture?.kind {
+        switch kind {
         case .connect:
-            if let target = model.canvasPort(near: dropGraph) {
+            if let target = model.canvasPort(near: drop) {
                 model.completeConnection(to: target)
             } else {
+                // Dropped on empty: cancel (a reconnect's detached wire stays removed).
                 model.cancelConnection()
             }
         case .pan where !moved:
             // A tap on empty canvas (or an edge): hit-test edges, else clear.
-            if let edgeID = connectionID(nearCanvas: value.location) {
+            if let edgeID = connectionID(nearGraph: drop) {
                 model.selectConnection(edgeID)
             } else {
                 model.selectNode(nil)
@@ -329,29 +460,32 @@ public struct ScriptGraphCanvasView: View {
     private var magnifyGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                // Zoom toward the gesture's start anchor.
-                let anchor = cursorCanvas ?? CGPoint(x: center.width, y: center.height)
+                // `startLocation` is in the gesture view's local (screen) space; map it
+                // to graph space so we can keep that graph point fixed under the pinch.
+                let anchorGraph = graphPoint(fromCanvas: value.startLocation)
                 let newZoom = (zoomBase * value.magnification).clamped(to: zoomRange)
-                applyZoom(newZoom, anchor: anchor)
+                applyZoom(newZoom, anchorGraph: anchorGraph)
             }
             .onEnded { _ in zoomBase = zoom }
     }
 
-    /// Sets `zoom` to `newZoom` while keeping the graph point under `anchor` fixed.
-    private func applyZoom(_ newZoom: CGFloat, anchor: CGPoint) {
-        let graphAtAnchor = graphPoint(fromCanvas: anchor)
+    /// Sets `zoom` to `newZoom` while keeping the graph point `anchorGraph` fixed on
+    /// screen.
+    private func applyZoom(_ newZoom: CGFloat, anchorGraph: CGPoint) {
+        // Where the anchor currently sits on screen.
+        let screen = canvasPoint(fromGraph: anchorGraph)
         zoom = newZoom
-        // Solve pan so that `canvasPoint(graphAtAnchor) == anchor` after the change.
+        // Solve pan so that `canvasPoint(anchorGraph) == screen` after the change.
         pan = CGSize(
-            width: anchor.x - graphAtAnchor.x * zoom - center.width,
-            height: anchor.y - graphAtAnchor.y * zoom - center.height
+            width: screen.x - anchorGraph.x * zoom - center.width,
+            height: screen.y - anchorGraph.y * zoom - center.height
         )
     }
 
-    // MARK: Hit-testing helpers
+    // MARK: Hit-testing helpers (graph space)
 
-    /// The topmost node whose body (header + rows, excluding the port columns)
-    /// contains `graphPoint`. Iterated in reverse so later-drawn nodes win.
+    /// The topmost node whose body contains `graphPoint`. Iterated in reverse so
+    /// later-drawn nodes win.
     private func nodeID(atGraph graphPoint: CGPoint) -> String? {
         for box in model.nodes.reversed() {
             let size = ScriptGraphLayout.size(box.payload)
@@ -361,21 +495,21 @@ public struct ScriptGraphCanvasView: View {
         return nil
     }
 
-    /// The id of a connection whose routed path passes near `canvasPoint`, or `nil`.
-    private func connectionID(nearCanvas point: CGPoint, tolerance: CGFloat = 8) -> String? {
+    /// The id of a connection whose routed path passes near `graphPoint`, or `nil`.
+    /// Tolerance is in graph units, so the on-screen pick radius scales with zoom.
+    private func connectionID(nearGraph point: CGPoint, tolerance: CGFloat = 8) -> String? {
+        let tol = tolerance / zoom
         var best: (id: String, distance: CGFloat)?
         for connection in model.connections {
             guard
-                let fromGraph = model.canvasPortPoint(connection.from),
-                let toGraph = model.canvasPortPoint(connection.to)
+                let a = model.canvasPortPoint(connection.from),
+                let b = model.canvasPortPoint(connection.to)
             else { continue }
-            let a = canvasPoint(fromGraph: fromGraph)
-            let b = canvasPoint(fromGraph: toGraph)
             let dx = max(40, abs(b.x - a.x) * 0.5)
             let c1 = CGPoint(x: a.x + dx, y: a.y)
             let c2 = CGPoint(x: b.x - dx, y: b.y)
             let distance = Self.distanceToBezier(point, a, c1, c2, b)
-            if distance <= tolerance, distance < (best?.distance ?? .greatestFiniteMagnitude) {
+            if distance <= tol, distance < (best?.distance ?? .greatestFiniteMagnitude) {
                 best = (connection.id, distance)
             }
         }
@@ -443,7 +577,8 @@ private struct ActiveGesture {
         case connect(from: GraphPortRef)
     }
     var kind: Kind
-    var lastCanvas: CGPoint
+    /// Last cursor location in GRAPH space.
+    var lastGraph: CGPoint
 }
 
 private extension Comparable {

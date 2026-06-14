@@ -62,6 +62,58 @@ import RCP3Document
         #expect(model.connections.filter { $0.to == setTranslation }.count == 1)
     }
 
+    /// Reconnect (Bug 2): grabbing a wired INPUT detaches the wire and starts a new
+    /// drag from its original OUTPUT source. Dropping on a NEW input rewires it;
+    /// dropping on empty (cancel) leaves it detached. This mirrors what the canvas
+    /// view does on a press near an already-wired input port.
+    @Test func reconnectFromWiredInputRewires() {
+        // Three nodes so we have a second valid exec target.
+        let n1 = RCP3ScriptGraph.Node(id: "n1", type: "tm_gesture_event_drag")
+        let n2 = RCP3ScriptGraph.Node(id: "n2", type: "tm_set_component", label: "A")
+        let n3 = RCP3ScriptGraph.Node(id: "n3", type: "tm_set_component", label: "B")
+        let exec = RCP3ScriptGraph.Wire(id: "c1", from: "n1", to: "n2")
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [n1, n2, n3], wires: [exec], data: []))
+
+        let n2ExecIn = GraphPortRef(nodeID: "n2", pinID: "exec.in")
+        let n3ExecIn = GraphPortRef(nodeID: "n3", pinID: "exec.in")
+
+        // Grab the wired input: detach + begin from the original source output.
+        let existing = model.connections(touching: n2ExecIn).first { $0.to == n2ExecIn }
+        #expect(existing != nil)
+        let source = existing!.from
+        model.removeConnection(existing!.id)
+        model.beginConnection(from: source)
+        #expect(model.connections.isEmpty)               // detached while dragging
+        #expect(model.draftSource == source)
+
+        // Drop on a different input → rewired to the new target.
+        let newID = model.completeConnection(to: n3ExecIn)
+        #expect(newID != nil)
+        #expect(model.connections.count == 1)
+        #expect(model.connections.first?.to == n3ExecIn)
+        #expect(model.connections.first?.from == source)
+
+        // Reconnect again, this time drop on empty (cancel) → stays detached.
+        let again = model.connections.first!
+        model.removeConnection(again.id)
+        model.beginConnection(from: again.from)
+        model.cancelConnection()
+        #expect(model.connections.isEmpty)
+        #expect(model.draftSource == nil)
+    }
+
+    /// Deleting via the connection-selection path (Bug 3): a tapped/selected wire is
+    /// removed by `deleteSelection()` (the same call the canvas's delete key reaches).
+    @Test func deleteSelectedConnection() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        let exec = model.connections.first { $0.isExec }
+        #expect(exec != nil)
+        model.selectConnection(exec!.id)
+        model.deleteSelection()
+        #expect(!model.connections.contains { $0.id == exec!.id })
+        #expect(model.selectedConnectionID == nil)
+    }
+
     @Test func moveAndDelete() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         model.moveNode("n1", to: CGPoint(x: 100, y: 50))
