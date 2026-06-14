@@ -60,6 +60,11 @@ public struct DocumentView: View {
     /// The transform published to the viewport to apply live to `playTargetNodeID`.
     /// Set after each drag dispatch; the viewport applies it via `applyLiveTransform`.
     @State private var liveTransform: LiveTransform?
+    /// The target entity's AUTHORED transform, snapshotted when Play begins (keyed by
+    /// node uuid). On Stop it is published back through `liveTransform` so the entity
+    /// returns exactly to its authored pose — `applyLiveTransform` mutates the live
+    /// entity in place and never restored it otherwise. `nil` when not playing.
+    @State private var authoredSnapshot: LiveTransform?
 
     public init(store: StoreOf<DocumentFeature>) {
         self.store = store
@@ -183,16 +188,29 @@ public struct DocumentView: View {
 
     // MARK: Center column (viewport ⇄ script-graph canvas)
 
-    /// The center column: the 3D viewport, or the visual script-graph canvas when
-    /// the user switches to it (via the toolbar segmented control, which only
-    /// appears while the selected entity carries a script graph).
+    /// The center column: the 3D viewport, with the visual script-graph canvas
+    /// overlaid ON TOP when the user switches to Graph mode (via the toolbar
+    /// segmented control).
+    ///
+    /// CRITICAL (box-vanish fix): the `RCP3ViewportView` is ALWAYS mounted — it is
+    /// the bottom layer of a `ZStack` and is never torn down by a mode switch. Were
+    /// it conditionally swapped out for the graph canvas (as it once was), switching
+    /// to Graph would destroy the viewport's `@State` (provider/store + the injected
+    /// RealityKit model); switching back would create a fresh viewport whose
+    /// re-injection doesn't reliably re-render (StageView recreation fragility), so
+    /// the reconstructed box disappeared. Keeping the viewport mounted means it
+    /// builds ONCE (on `onAppear`) and only updates on `sceneGraph` changes —
+    /// `setModel` is not re-run on each Graph↔Viewport toggle, so the box persists.
+    ///
+    /// When `centerMode == .graph`, the graph canvas is drawn on top with an OPAQUE
+    /// background so the (still-live) viewport is fully hidden behind it.
     @ViewBuilder
     private var centerColumn: some View {
-        switch centerMode {
-        case .viewport:
+        ZStack {
             // The reconstructed 3D viewport (StageView-backed), fed the live
             // (possibly unsaved) scene graph + a selection binding so renames
-            // reflect and picks flow back to the store.
+            // reflect and picks flow back to the store. ALWAYS present so it is
+            // never torn down (see the type doc above).
             //
             // PLAY: while `isPlaying`, drags are reported to the runtime (camera
             // orbit suppressed by the viewport's play overlay) and the resulting
@@ -215,23 +233,43 @@ public struct DocumentView: View {
             .onChange(of: centerMode) { _, mode in
                 if mode != .viewport && isPlaying { stopPlaying() }
             }
-        case .graph:
-            // An asset opened from the sidebar takes precedence; otherwise fall back
-            // to the selected entity's graph.
-            if let graph = store.openScriptGraph ?? store.selectedScriptGraph {
-                let key = graphKey
-                // The model is owned HERE (not by the canvas) so Save can write its
-                // live edits back to the `.tm_script_graph`. It is (re)built by
-                // `syncGraphModel(for:)` whenever the shown graph changes; `id` keys
-                // the canvas to the graph so SwiftUI rebuilds it too.
-                graphCanvas(for: graph, key: key)
-            } else {
-                ContentUnavailableView(
-                    "No script graph",
-                    systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Open a script graph from the sidebar, or select an entity that has one.")
-                )
+
+            // GRAPH overlay: only present in Graph mode, drawn on top of the live
+            // viewport with an opaque background so the viewport doesn't show
+            // through. The canvas/placeholder is unchanged; only its mounting moved
+            // from a `switch` branch to this overlay.
+            if centerMode == .graph {
+                graphOverlay
+                    // Fill the whole column and back it with an OPAQUE surface so the
+                    // live viewport behind it is fully hidden — including the
+                    // placeholder case, whose `ContentUnavailableView` doesn't fill
+                    // on its own. (The real canvas already paints an opaque grid.)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.windowBackground)
             }
+        }
+    }
+
+    /// The Graph-mode overlay content: the script-graph canvas over the
+    /// host-owned model, or a placeholder when there's no graph to show. Drawn on
+    /// top of the always-mounted viewport (see `centerColumn`).
+    @ViewBuilder
+    private var graphOverlay: some View {
+        // An asset opened from the sidebar takes precedence; otherwise fall back
+        // to the selected entity's graph.
+        if let graph = store.openScriptGraph ?? store.selectedScriptGraph {
+            let key = graphKey
+            // The model is owned HERE (not by the canvas) so Save can write its
+            // live edits back to the `.tm_script_graph`. It is (re)built by
+            // `graphCanvas(for:key:)`'s `.task(id:)` whenever the shown graph
+            // changes; `id` keys the canvas to the graph so SwiftUI rebuilds it too.
+            graphCanvas(for: graph, key: key)
+        } else {
+            ContentUnavailableView(
+                "No script graph",
+                systemImage: "point.3.connected.trianglepath.dotted",
+                description: Text("Open a script graph from the sidebar, or select an entity that has one.")
+            )
         }
     }
 
@@ -308,29 +346,86 @@ public struct DocumentView: View {
     // MARK: Play lifecycle (spatial run)
 
     /// Starts a live spatial run: compiles + runs the selected entity's graph on the
-    /// RCP3 runtime, captures the target uuid, and flips the viewport into play mode.
-    /// Idempotent and a no-op if there's nothing runnable.
+    /// RCP3 runtime, captures the target uuid, snapshots the target's AUTHORED pose
+    /// (for restore on Stop), seeds the runtime from that pose, and flips the
+    /// viewport into play mode. Idempotent and a no-op if there's nothing runnable.
     private func startPlaying() {
         guard !isPlaying, let graph = playableGraph, let target = playableTargetNodeID else { return }
+
+        // Make the result visible: Play from the Graph view would otherwise be blind.
+        centerMode = .viewport
+
+        // Snapshot the authored pose so Stop can restore the entity exactly.
+        let authored = authoredTransform(forNodeID: target)
+        authoredSnapshot = authored
+
+        // Seed the runtime from the AUTHORED transform so the run starts at the box's
+        // real pose; drags then accumulate from there (publishing identity here would
+        // teleport the box to the origin on Play). Falls back to identity if the node
+        // has no resolvable authored transform.
         let state = RuntimeEntityState()
+        if let authored {
+            state.translation = SIMD3(
+                Double(authored.translation.x),
+                Double(authored.translation.y),
+                Double(authored.translation.z)
+            )
+            let q = authored.rotation
+            state.rotation = simd_quatd(ix: Double(q.imag.x), iy: Double(q.imag.y), iz: Double(q.imag.z), r: Double(q.real))
+            state.scale = SIMD3(Double(authored.scale.x), Double(authored.scale.y), Double(authored.scale.z))
+        }
+
         playHost = ScriptGraphRunner.run(graph, into: state)
         playState = state
         playTargetNodeID = target
         isPlaying = true
-        // Publish the initial (identity) transform so the entity starts from a known
-        // pose; subsequent drags accumulate from here.
-        publishLiveTransform()
+        // Don't publish a transform on start — the entity is already at the authored
+        // pose (and the runtime is seeded from it). The first drag publishes the first
+        // delta from there, so Play start is visually a no-op.
     }
 
-    /// Stops the run, tears down the runtime, and clears the live transform so the
-    /// entity keeps its authored pose (the viewport rebuilds from the scene graph,
-    /// which still holds the authored transform — we just stop driving it).
+    /// Stops the run, restores the entity to its authored pose, and tears down the
+    /// runtime. Restore publishes the snapshot through `liveTransform` so the viewport
+    /// (kept mounted — Bug 1) sets the live entity back exactly; clearing the snapshot
+    /// + runtime then leaves the box at its authored transform.
     private func stopPlaying() {
         isPlaying = false
         playHost = nil
         playState = nil
+        // Restore the authored pose: re-publish the snapshot as the final live
+        // transform so the viewport sets the entity back. (The viewport mutated it in
+        // place during the run; nothing else restores it.)
+        if let snapshot = authoredSnapshot {
+            liveTransform = snapshot
+        } else {
+            liveTransform = nil
+        }
         playTargetNodeID = nil
-        liveTransform = nil
+        authoredSnapshot = nil
+    }
+
+    /// The authored local transform of `nodeID` from the live scene graph, as a
+    /// `LiveTransform` (so it round-trips through the same viewport apply path). `nil`
+    /// if the node isn't in the scene graph.
+    private func authoredTransform(forNodeID nodeID: String) -> LiveTransform? {
+        guard let node = sceneNode(id: nodeID, in: store.sceneGraph) else { return nil }
+        let t = node.translation, r = node.rotation, s = node.scale
+        return LiveTransform(
+            nodeID: nodeID,
+            translation: SIMD3(Float(t.x), Float(t.y), Float(t.z)),
+            rotation: simd_quatf(ix: Float(r.x), iy: Float(r.y), iz: Float(r.z), r: Float(r.w)),
+            scale: SIMD3(Float(s.x), Float(s.y), Float(s.z))
+        )
+    }
+
+    /// Depth-first search for the scene node with `id` in the reconstructed tree.
+    private func sceneNode(id: String, in node: RCP3SceneNode?) -> RCP3SceneNode? {
+        guard let node else { return nil }
+        if node.id == id { return node }
+        for child in node.children {
+            if let found = sceneNode(id: id, in: child) { return found }
+        }
+        return nil
     }
 
     /// A play-mode drag from the viewport: dispatch a `"drag"` to the runtime, then

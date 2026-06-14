@@ -174,6 +174,12 @@ public struct RCP3ViewportView: View {
     /// RealityKit entity the provider holds. A no-op if the node isn't found. Does
     /// NOT touch the camera or selection.
     ///
+    /// GUARD (box-vanish safety): a non-finite (NaN/Inf) translation, rotation, or
+    /// scale, or a zero/negative scale on any axis, would collapse the entity to an
+    /// invisible point or push it off-screen. Such an apply is REJECTED (no-op) so a
+    /// bad runtime value can't make the entity disappear; the entity keeps its last
+    /// good transform.
+    ///
     /// Resolution order: the provider's prim-path mapping (`entity(for:)`, the
     /// canonical live entity) first, then the builder's `entityByNodeID` as a
     /// fallback (same object — the entities passed to `setModel`).
@@ -184,8 +190,39 @@ public struct RCP3ViewportView: View {
         scale: SIMD3<Float>,
         toNodeID nodeID: String
     ) {
+        guard Self.isApplicable(translation: translation, rotation: rotation, scale: scale) else { return }
         guard let entity = entity(forNodeID: nodeID) else { return }
         entity.transform = Transform(scale: scale, rotation: rotation, translation: translation)
+    }
+
+    /// Whether a live transform is safe to apply: every component finite, and every
+    /// scale axis strictly positive (a zero/negative scale collapses or mirrors the
+    /// entity). Static + pure so it is unit-testable without a viewport.
+    public static func isApplicable(
+        translation: SIMD3<Float>,
+        rotation: simd_quatf,
+        scale: SIMD3<Float>
+    ) -> Bool {
+        let finite = translation.x.isFinite && translation.y.isFinite && translation.z.isFinite
+            && rotation.vector.x.isFinite && rotation.vector.y.isFinite
+            && rotation.vector.z.isFinite && rotation.vector.w.isFinite
+            && scale.x.isFinite && scale.y.isFinite && scale.z.isFinite
+        let positiveScale = scale.x > 0 && scale.y > 0 && scale.z > 0
+        return finite && positiveScale
+    }
+
+    /// The authored local transform of `nodeID`'s entity, for snapshotting before a
+    /// live run so the caller can restore it on Stop. `nil` if the node isn't found.
+    @MainActor
+    public func authoredTransform(forNodeID nodeID: String) -> LiveTransform? {
+        guard let entity = entity(forNodeID: nodeID) else { return nil }
+        let t = entity.transform
+        return LiveTransform(
+            nodeID: nodeID,
+            translation: t.translation,
+            rotation: t.rotation,
+            scale: t.scale
+        )
     }
 
     /// Resolves the live RealityKit entity for `nodeID`, preferring the provider's

@@ -117,6 +117,34 @@ import simd
         #expect(build.entityByNodeID["nope"] == nil)
     }
 
+    @Test func authoredTransformSnapshotRestoresEntityOnStop() throws {
+        // Play snapshots the entity's authored pose, the run mutates it live, and
+        // Stop restores from the snapshot. This exercises that round-trip at the
+        // entity level (the snapshot is a `Transform` captured before mutation, then
+        // re-applied after), which is the contract `stopPlaying`/`applyLiveTransform`
+        // rely on: restoring the snapshot returns the entity exactly to authored.
+        let build = RCP3EntityBuilder.build(from: makeScene())
+        let box = try #require(build.entityByNodeID["box-uuid"])
+
+        // Authored pose (from makeScene): translation (1,2,3), scale (2,2,2).
+        let authored = box.transform
+        #expect(authored.translation == SIMD3<Float>(1, 2, 3))
+        #expect(authored.scale == SIMD3<Float>(2, 2, 2))
+
+        // A live run moves it somewhere else (a drag would do this).
+        box.transform = Transform(
+            scale: SIMD3(5, 5, 5),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            translation: SIMD3(10, 20, 30)
+        )
+        #expect(box.transform.translation == SIMD3<Float>(10, 20, 30))
+
+        // Stop restores the snapshot exactly.
+        box.transform = authored
+        #expect(box.transform.translation == SIMD3<Float>(1, 2, 3))
+        #expect(box.transform.scale == SIMD3<Float>(2, 2, 2))
+    }
+
     @Test func sceneDeltaMapsScreenDragToSceneSpace() {
         // Screen +x → scene +x; screen +y (down) → scene −y (so a drag up moves up);
         // z is untouched. Points are scaled down (1/200).
@@ -124,6 +152,59 @@ import simd
         #expect(right == SIMD3(1, 0, 0))
         let down = RCP3ViewportView.sceneDelta(for: CGSize(width: 0, height: 200))
         #expect(down == SIMD3(0, -1, 0))
+    }
+
+    @Test func applicableTransformIsAccepted() {
+        // A finite transform with positive scale is safe to apply.
+        #expect(RCP3ViewportView.isApplicable(
+            translation: SIMD3(1, 2, 3),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(2, 2, 2)
+        ))
+    }
+
+    @Test func nonFiniteTranslationIsRejected() {
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: SIMD3(.nan, 0, 0),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(1, 1, 1)
+        ))
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: SIMD3(.infinity, 0, 0),
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(1, 1, 1)
+        ))
+    }
+
+    @Test func nonFiniteRotationIsRejected() {
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: .zero,
+            rotation: simd_quatf(ix: .nan, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(1, 1, 1)
+        ))
+    }
+
+    @Test func nonFiniteScaleIsRejected() {
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: .zero,
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(.nan, 1, 1)
+        ))
+    }
+
+    @Test func zeroOrNegativeScaleIsRejected() {
+        // A zero scale collapses the entity to a point (vanishes); a negative scale
+        // mirrors it. Both are rejected so a bad runtime value can't hide the box.
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: .zero,
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(0, 1, 1)
+        ))
+        #expect(!RCP3ViewportView.isApplicable(
+            translation: .zero,
+            rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            scale: SIMD3(1, -1, 1)
+        ))
     }
 
     @Test func nodeIDDecodesFromLeafOfPrimPath() {
