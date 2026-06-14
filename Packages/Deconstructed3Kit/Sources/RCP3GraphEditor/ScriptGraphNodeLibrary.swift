@@ -83,6 +83,56 @@ public enum ScriptGraphNodeLibrary {
         }
     }
 
+    // MARK: - Palette (insertable node types)
+
+    /// One entry in the node-insert palette: a node type the editor can author onto
+    /// the canvas. `id` IS the type, so the palette is keyed by node type.
+    public struct PaletteItem: Identifiable, Sendable {
+        /// The node type id (e.g. `"tm_set_component"`); identical to `type`.
+        public let id: String
+        /// The on-disk node type to instantiate.
+        public let type: String
+        /// The human-readable name shown in the palette (e.g. `"Set Component"`).
+        public let displayName: String
+
+        public init(id: String, type: String, displayName: String) {
+            self.id = id
+            self.type = type
+            self.displayName = displayName
+        }
+    }
+
+    /// The node types the user can INSERT — exactly the types that have a `NodeSpec`,
+    /// so every inserted node arrives with its full named interface (pins). Sorted by
+    /// display name for a stable, readable palette. Data-driven: it grows automatically
+    /// as node specs are added to ``specsByType``.
+    public static var paletteItems: [PaletteItem] {
+        specsByType.keys
+            .map { type in PaletteItem(id: type, type: type, displayName: paletteDisplayName(for: type)) }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    /// A readable palette name for a node `type`: the curated label where we have one,
+    /// else a humanized form of the raw type (drop a leading `tm_`, split on `_`,
+    /// Title Case the words).
+    static func paletteDisplayName(for type: String) -> String {
+        if let curated = paletteDisplayNames[type] { return curated }
+        var name = type
+        if name.hasPrefix("tm_") { name.removeFirst(3) }
+        return name
+            .split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    /// Curated, RCP-matching display names for the insertable node types. (Node specs
+    /// describe a node's pins, not the node's own title, so the title lives here.)
+    private static let paletteDisplayNames: [String: String] = [
+        "tm_gesture_event_drag": "On Drag",
+        "tm_gesture_event_tap": "On Tap",
+        "tm_set_component": "Set Component",
+    ]
+
     // MARK: - Node specs
 
     /// The declared interface for a node `type`, or `nil` for an unknown type (the

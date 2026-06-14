@@ -27,6 +27,33 @@ struct ScriptGraphNodeLibraryTests {
         ])
     }
 
+    @Test("Palette lists every node type that has a spec, with readable names")
+    func paletteItems() throws {
+        let items = ScriptGraphNodeLibrary.paletteItems
+        #expect(!items.isEmpty)
+
+        // Every palette item maps to a real spec (so inserted nodes have an interface),
+        // and id == type.
+        for item in items {
+            #expect(item.id == item.type)
+            #expect(ScriptGraphNodeLibrary.spec(for: item.type) != nil)
+        }
+
+        // The known insertable types appear with their curated display names.
+        let byType = Dictionary(uniqueKeysWithValues: items.map { ($0.type, $0.displayName) })
+        #expect(byType["tm_set_component"] == "Set Component")
+        #expect(byType["tm_gesture_event_drag"] == "On Drag")
+        #expect(byType["tm_gesture_event_tap"] == "On Tap")
+
+        // Data-driven: one palette item per type that has a spec.
+        #expect(items.count == ["tm_set_component", "tm_gesture_event_drag", "tm_gesture_event_tap"].count)
+    }
+
+    @Test("Humanized fallback name drops the tm_ prefix and Title Cases the type")
+    func humanizedPaletteName() {
+        #expect(ScriptGraphNodeLibrary.paletteDisplayName(for: "tm_some_new_node") == "Some New Node")
+    }
+
     @Test("Transform component type resolves by hash")
     func transformTypeName() {
         #expect(ScriptGraphNodeLibrary.componentTypeName(forHash: TMHash.murmur64a("Transform")) == "Transform")

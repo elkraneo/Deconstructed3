@@ -142,6 +142,28 @@ public final class ScriptGraphEditorModel {
         connections.filter { $0.from == ref || $0.to == ref }
     }
 
+    // MARK: Node authoring (insert)
+
+    /// Inserts a new node of `type` at `position` (graph space) and selects it.
+    ///
+    /// The node gets its full named interface from the shared pin derivation
+    /// (``ScriptGraphFlowBridge/payload(for:in:)``): for a lone node with no wires
+    /// that yields exactly the type's declared pins, so the inserted node is
+    /// immediately connectable/movable/deletable like any authored one. A fresh UUID
+    /// id avoids collisions with the loaded graph. Returns the new node's id.
+    @discardableResult
+    public func addNode(type: String, label: String? = nil, at position: CGPoint) -> String {
+        let newID = UUID().uuidString
+        let node = RCP3ScriptGraph.Node(id: newID, type: type, label: label)
+        let payload = ScriptGraphFlowBridge.payload(
+            for: node,
+            in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+        )
+        nodes.append(GraphNodeBox(id: newID, position: position, payload: payload))
+        selectNode(newID)
+        return newID
+    }
+
     // MARK: Node movement (position is renderer-space-agnostic data)
 
     public func moveNode(_ id: String, to position: CGPoint) {

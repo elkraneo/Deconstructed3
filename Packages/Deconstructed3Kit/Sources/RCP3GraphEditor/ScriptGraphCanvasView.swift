@@ -63,6 +63,9 @@ public struct ScriptGraphCanvasView: View {
     // Pinch-zoom accumulation.
     @State private var zoomBase: CGFloat = 1
 
+    // Whether the node-insert palette popover is open.
+    @State private var showingPalette = false
+
     // Keyboard focus — required for `.onKeyPress` delete to fire.
     @FocusState private var focused: Bool
 
@@ -97,6 +100,12 @@ public struct ScriptGraphCanvasView: View {
                 // screen space at the wire's midpoint (edges live in a non-hit-testing
                 // Canvas, so they can't host their own context menu).
                 selectedConnectionDeleteButton
+
+                // The node-insert palette: a toolbar-style "+" pinned top-leading. It
+                // is the LAST child, so it sits above the gesture layer; being a
+                // `Button` it also takes hit priority over the canvas `DragGesture`, so
+                // tapping it doesn't pan/connect.
+                paletteButton
             }
             .contentShape(Rectangle())
             // Gestures are observed in this view's LOCAL (screen) space; every
@@ -439,6 +448,70 @@ public struct ScriptGraphCanvasView: View {
             .accessibilityLabel("Delete connection")
             .position(screen)
         }
+    }
+
+    // MARK: Node-insert palette
+
+    /// The "+" button that opens the node palette, pinned to the top-leading corner in
+    /// SCREEN space. As a `Button` it takes hit priority over the canvas drag gesture,
+    /// so the affordance and its popover are not swallowed by pan/connect.
+    private var paletteButton: some View {
+        Button {
+            showingPalette = true
+        } label: {
+            Image(systemName: "plus")
+                .font(.body.weight(.semibold))
+                .padding(8)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(.secondary.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .padding(12)
+        .accessibilityLabel("Add node")
+        .accessibilityHint("Insert a new node at the center of the canvas.")
+        .popover(isPresented: $showingPalette, arrowEdge: .leading) {
+            palettePopover
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The palette contents: one labeled, keyboard-navigable button per insertable
+    /// node type. Selecting one inserts that node at the viewport center.
+    private var palettePopover: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Add Node")
+                .font(.headline)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(ScriptGraphNodeLibrary.paletteItems) { item in
+                Button {
+                    insertNode(type: item.type)
+                } label: {
+                    Text(item.displayName)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.displayName)
+            }
+        }
+        .padding(.bottom, 8)
+        .frame(minWidth: 200, alignment: .leading)
+    }
+
+    /// Inserts a node of `type` at the GRAPH point under the viewport center, then
+    /// closes the palette. The new node flows through the same model + rendering, so it
+    /// appears centered, selected, and is immediately connectable/movable/deletable.
+    private func insertNode(type: String) {
+        let centerScreen = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
+        let centerGraph = graphPoint(fromCanvas: centerScreen)
+        model.addNode(type: type, at: centerGraph)
+        showingPalette = false
+        focused = true
     }
 
     // MARK: Gestures

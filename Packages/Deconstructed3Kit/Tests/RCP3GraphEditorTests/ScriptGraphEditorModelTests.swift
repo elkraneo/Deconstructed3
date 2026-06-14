@@ -126,6 +126,49 @@ import RCP3Document
         #expect(model.connections.allSatisfy { $0.from.nodeID != "n2" && $0.to.nodeID != "n2" })
     }
 
+    /// `addNode` inserts a node with the requested id/type, gives it the type's full
+    /// named interface (non-empty pins — exec + data), and selects it.
+    @Test func addNodeInsertsWithFullInterfaceAndSelects() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        let before = model.nodes.count
+
+        let position = CGPoint(x: 42, y: 17)
+        let id = model.addNode(type: "tm_set_component", at: position)
+
+        // Appended and selected.
+        #expect(model.nodes.count == before + 1)
+        #expect(model.selectedNodeID == id)
+        let box = model.node(id)
+        #expect(box != nil)
+        #expect(box?.position == position)
+        #expect(box?.payload.type == "tm_set_component")
+
+        // A lone Set Component yields its declared interface: an exec pair plus a
+        // `component_type` data input — i.e. a non-empty named pin set.
+        let pins = box?.payload.pins ?? []
+        #expect(!pins.isEmpty)
+        #expect(pins.contains { $0.isExec && $0.isInput })
+        #expect(pins.contains { $0.isExec && !$0.isInput })
+        let componentTypeID = "in." + TMHash.hex(TMHash.murmur64a("component_type"))
+        #expect(pins.contains { $0.id == componentTypeID && $0.isInput && !$0.isExec })
+    }
+
+    /// An inserted node participates in the connection rules with an existing node:
+    /// its exec output can wire into an existing node's exec input.
+    @Test func addedNodeParticipatesInCanConnect() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        let newID = model.addNode(type: "tm_gesture_event_drag", at: .zero)
+
+        let newExecOut = GraphPortRef(nodeID: newID, pinID: "exec.out")
+        let existingExecIn = GraphPortRef(nodeID: "n2", pinID: "exec.in")
+        #expect(model.canConnect(newExecOut, existingExecIn))
+
+        // And the wire actually forms.
+        let connID = model.connect(newExecOut, existingExecIn)
+        #expect(connID != nil)
+        #expect(model.connections.contains { $0.from == newExecOut && $0.to == existingExecIn })
+    }
+
     @Test func canvasGeometryResolvesPorts() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let setTranslation = GraphPortRef(nodeID: "n2", pinID: "in." + TMHash.hex(TMHash.murmur64a("translation")))
