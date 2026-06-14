@@ -199,6 +199,8 @@ Observed by inspecting the shipped app bundle and the running editor (black-box)
   `getRemoteValue`/`setRemoteValue` (synced variables), and timers `setInterval`/
   `setTimeout`/`clearInterval`/`clearTimeout`/`isTimerFinished`. The entity's specific
   components (`Transform`, …) are exposed on top, named by the type schema.
+  Globals available outside `this` include a `console` (`log`/`warn`), the module
+  system, and the iterable-collection mixin.
 - **Implication for Deconstructed 3 (path 2).** A faithful runtime is a **public
   JavaScriptCore** context that (1) installs an equivalent module system +
   iterable-collection mixin, (2) exposes the entity/components as JS objects
