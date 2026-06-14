@@ -37,6 +37,9 @@ public struct DocumentView: View {
     /// when the shown graph actually changes (not on every body re-evaluation).
     @State private var graphModelKey: String?
 
+    /// Whether the Run / Preview sheet is presented. Pure presentation state.
+    @State private var showsPreview = false
+
     public init(store: StoreOf<DocumentFeature>) {
         self.store = store
     }
@@ -44,6 +47,13 @@ public struct DocumentView: View {
     /// Whether a script-graph canvas is currently shown (graph mode with a graph).
     private var isGraphShown: Bool {
         centerMode == .graph && (store.openScriptGraph ?? store.selectedScriptGraph) != nil
+    }
+
+    /// The graph the Run / Preview affordance would run: the open asset's graph (the
+    /// brief's `store.openScriptGraph`), falling back to the selected entity's graph
+    /// so the Play button is useful in either path. `nil` when there's nothing to run.
+    private var previewableGraph: RCP3ScriptGraph? {
+        store.openScriptGraph ?? store.selectedScriptGraph
     }
 
     public var body: some View {
@@ -65,6 +75,12 @@ public struct DocumentView: View {
                 // Opening a graph asset from the sidebar switches the center to it.
                 .onChange(of: store.openScriptGraphID) { _, id in
                     if id != nil { centerMode = .graph }
+                }
+                // RUN / PREVIEW: compile + run the shown graph on the RCP3 runtime.
+                .sheet(isPresented: $showsPreview) {
+                    if let graph = previewableGraph {
+                        ScriptGraphPreviewView(graph: graph)
+                    }
                 }
         } detail: {
             if let entity = store.selectedEntity {
@@ -188,6 +204,16 @@ public struct DocumentView: View {
                 }
             }
             .pickerStyle(.segmented)
+        }
+        // RUN / PREVIEW affordance: shown whenever there's a graph to run (an open
+        // asset, or the selected entity's graph). Opens `ScriptGraphPreviewView` in a
+        // sheet, which compiles + runs the graph on the RCP3 runtime.
+        ToolbarItem {
+            Button("Run Preview", systemImage: "play.fill") {
+                showsPreview = true
+            }
+            .disabled(previewableGraph == nil)
+            .help("Compile and run this script graph with a drag simulator")
         }
     }
 

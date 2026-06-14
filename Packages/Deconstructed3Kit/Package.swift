@@ -62,6 +62,7 @@ let package = Package(
             name: "DeconstructedFeature",
             dependencies: [
                 "RCP3Document",
+                "RCP3Runtime",
                 "RCP3Viewport",
                 "RCP3GraphEditor",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
@@ -93,6 +94,9 @@ let package = Package(
             name: "DeconstructedFeatureTests",
             dependencies: [
                 "DeconstructedFeature",
+                "RCP3Runtime",
+                "RCP3Document",
+                "TMFormat",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ]
         ),

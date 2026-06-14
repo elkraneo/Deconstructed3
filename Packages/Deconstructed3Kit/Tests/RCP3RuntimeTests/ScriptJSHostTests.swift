@@ -100,4 +100,16 @@ import RCP3Runtime
 
         #expect(host.lastException?.contains("boom") == true)
     }
+
+    @Test func consoleLogIsCollected() {
+        let state = RuntimeEntityState()
+        let host = ScriptJSHost(state: state)
+
+        host.load("console.log(\"hello\", 42);")
+        host.load("entity.on(\"tap\", (e) => { console.log(\"tapped\"); });")
+        host.dispatch(event: "tap")
+
+        #expect(host.consoleMessages == ["hello 42", "tapped"])
+        #expect(host.lastException == nil)
+    }
 }

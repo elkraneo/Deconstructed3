@@ -38,6 +38,11 @@ public final class ScriptJSHost {
     /// `dispatch`). Useful for tests and diagnostics.
     public private(set) var lastException: String?
 
+    /// Lines the running script emitted via `console.log(...)`, in order, across the
+    /// host's lifetime (not cleared per `dispatch`). Surfaced in the preview so a
+    /// graph's diagnostics are visible.
+    public private(set) var consoleMessages: [String] = []
+
     public init(state: RuntimeEntityState) {
         self.state = state
         guard let context = JSContext() else {
@@ -124,6 +129,14 @@ public final class ScriptJSHost {
             self.handlers[event, default: []].append(fn)
         }
 
+        // console.log(...args) — collect into `consoleMessages` for diagnostics.
+        let log: @convention(block) (JSValue) -> Void = { [weak self] args in
+            guard let self else { return }
+            // `arguments` arrives as a JS array (see prelude); join its parts.
+            let parts = (args.toArray() ?? []).map { String(describing: $0) }
+            self.consoleMessages.append(parts.joined(separator: " "))
+        }
+
         // Define `entity` with a `transform` whose components are JS accessor
         // properties bridging to the blocks above. Building the object in JS (with
         // Object.defineProperty getters/setters) keeps the natural
@@ -136,6 +149,7 @@ public final class ScriptJSHost {
         bridge?.setObject(getScale, forKeyedSubscript: "__getScale" as NSString)
         bridge?.setObject(setScale, forKeyedSubscript: "__setScale" as NSString)
         bridge?.setObject(on, forKeyedSubscript: "__on" as NSString)
+        bridge?.setObject(log, forKeyedSubscript: "__log" as NSString)
 
         context.evaluateScript(Self.bridgePrelude)
     }
@@ -160,6 +174,9 @@ public final class ScriptJSHost {
         get: function() { return __getScale(); },
         set: function(v) { __setScale(v); }
     });
+    var console = {
+        log: function() { __log(Array.prototype.slice.call(arguments)); }
+    };
     """
 
     /// Builds a `SIMD3<Double>` from a JS array, keeping `default` for missing or
