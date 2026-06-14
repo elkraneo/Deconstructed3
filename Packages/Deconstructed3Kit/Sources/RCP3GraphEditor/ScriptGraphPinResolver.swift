@@ -1,46 +1,39 @@
-import CoreGraphics
 import Foundation
 import RCP3Document
-import SwiftFlow
 import TMFormat
 
-/// Maps a parsed ``RCP3ScriptGraph`` onto SwiftFlow's document model.
+/// Derives the renderer-agnostic pin/payload model for a ``RCP3ScriptGraph``.
 ///
-/// The bridge is the *data* half of the editor (the ``ScriptGraphNodeView`` is the
-/// *visual* half): it turns each ``RCP3ScriptGraph/Node`` into a
-/// `FlowNode<ScriptGraphNodePayload>` whose `handles` mirror the payload's `pins`,
-/// and each ``RCP3ScriptGraph/Wire`` into a `FlowEdge` joining two of those handles.
+/// This is the *data* half of the editor (the SwiftUI ``ScriptGraphCanvasNodeView``
+/// is the *visual* half): it turns each ``RCP3ScriptGraph/Node`` into a
+/// ``ScriptGraphNodePayload`` whose ordered `pins` mirror the node's interface —
+/// every named pin a node type declares (wired or not), with resolved labels and
+/// exposed literal values.
 ///
 /// Everything is derived deterministically from the source graph, so the same
-/// graph always produces the same nodes/edges/handle-ids — which is what lets the
-/// edges reference handles by a stable id.
+/// graph always produces the same pins/handle-ids — which is what lets wires
+/// reference pins by a stable id. The resolver knows nothing about any particular
+/// renderer; the live canvas (`ScriptGraphCanvas`/`ScriptGraphCanvasNodeView`)
+/// consumes its `payload(for:in:)` output.
 ///
 /// ## Handle-id scheme
-/// Each node declares one handle per pin; the pin's `id` *is* the SwiftFlow handle
-/// id an edge references:
-/// - exec input  — id `"exec.in"`,  `HandleType.target`, `HandlePosition.left`
-/// - exec output — id `"exec.out"`, `HandleType.source`, `HandlePosition.right`
-/// - data input  — id `"in.<hex>"`,  `HandleType.target`, `HandlePosition.left`
-/// - data output — id `"out.<hex>"`, `HandleType.source`, `HandlePosition.right`
+/// Each pin's `id` *is* the stable handle id a wire references:
+/// - exec input  — id `"exec.in"`
+/// - exec output — id `"exec.out"`
+/// - data input  — id `"in.<hex>"`
+/// - data output — id `"out.<hex>"`
 ///
 /// where `<hex>` is the lowercase, zero-padded 16-digit hex of the pin's
 /// `connector_hash` — `TMFormat.TMHash.hex(_:)`.
 ///
 /// ## Full named interfaces
 /// On its own the source graph only records *wired* pins. To match RCP 3 — which
-/// draws every named pin a node type declares, wired or not — the bridge first
-/// consults ``ScriptGraphNodeLibrary``: when a node type has a `NodeSpec`, the
-/// bridge emits a handle for each declared pin (computing data handle ids from
+/// draws every named pin a node type declares, wired or not — the resolver first
+/// consults ``ScriptGraphNodeLibrary``: when a node type has a `NodeSpec`, it emits
+/// a pin for each declared pin (computing data handle ids from
 /// `TMHash.murmur64a(connectorName)`, so they coincide with the wired-pin ids and
 /// edges keep resolving). Node types with no spec fall back to wire-derived pins.
-public enum ScriptGraphFlowBridge {
-
-    // MARK: - Layout constants
-
-    /// Default node size when one is not derived from content.
-    static let defaultNodeSize = CGSize(width: 200, height: 84)
-    /// Horizontal spacing used when a node carries no canvas position.
-    static let fallbackColumnWidth: Double = 220
+public enum ScriptGraphPinResolver {
 
     // MARK: - Handle ids
 
@@ -62,6 +55,19 @@ public enum ScriptGraphFlowBridge {
     /// Lowercase, zero-padded 16-digit hex for a 64-bit hash (`TMHash.hex`).
     static func hex(_ value: UInt64) -> String {
         TMHash.hex(value)
+    }
+
+    // MARK: - Payload
+
+    /// The payload (data) carried by a node: id, type, label, role, and pins.
+    static func payload(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> ScriptGraphNodePayload {
+        ScriptGraphNodePayload(
+            id: node.id,
+            type: node.type,
+            label: node.label,
+            role: ScriptGraphNodeRole.role(forType: node.type),
+            pins: pins(for: node, in: graph)
+        )
     }
 
     // MARK: - Pins
@@ -212,122 +218,6 @@ public enum ScriptGraphFlowBridge {
         }
 
         return pins
-    }
-
-    /// The SwiftFlow handle declaration matching a pin.
-    ///
-    /// Exec (control-flow) pins go to `.top` so the exec connection renders as a
-    /// separate line across the top of the nodes (as RCP draws it) instead of
-    /// overlapping the side data wires; data inputs are `.target` on the `.left`,
-    /// data outputs `.source` on the `.right`.
-    ///
-    /// NOTE: SwiftFlow routes every edge endpoint to one of five fixed points per
-    /// node (`FlowStore.handlePoint(for:in:)` — top/bottom/left/right/center), so
-    /// multiple pins sharing a side collapse to a single connection point. With
-    /// many data pins per side their wires still overlap; only our own canvas
-    /// renderer (per-pin-row handles) can fully separate them. See
-    /// `Docs/StageView-Adoption.md`-style friction note for SwiftFlow.
-    static func handle(for pin: ScriptGraphNodePayload.Pin) -> HandleDeclaration {
-        let position: HandlePosition
-        if pin.isExec {
-            position = .top
-        } else {
-            position = pin.isInput ? .left : .right
-        }
-        return HandleDeclaration(
-            id: pin.id,
-            type: pin.isInput ? .target : .source,
-            position: position
-        )
-    }
-
-    // MARK: - Nodes
-
-    /// The payload (data) carried by a node: id, type, label, role, and pins.
-    static func payload(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> ScriptGraphNodePayload {
-        ScriptGraphNodePayload(
-            id: node.id,
-            type: node.type,
-            label: node.label,
-            role: ScriptGraphNodeRole.role(forType: node.type),
-            pins: pins(for: node, in: graph)
-        )
-    }
-
-    /// All SwiftFlow nodes for a graph, in source order. A node carrying explicit
-    /// `x`/`y` is placed there; otherwise it is laid out left-to-right by index.
-    public static func nodes(for graph: RCP3ScriptGraph) -> [FlowNode<ScriptGraphNodePayload>] {
-        graph.nodes.enumerated().map { index, node in
-            let payload = payload(for: node, in: graph)
-            let position: CGPoint
-            if let x = node.x, let y = node.y {
-                position = CGPoint(x: x, y: y)
-            } else {
-                position = CGPoint(x: Double(index) * fallbackColumnWidth, y: 0)
-            }
-            return FlowNode(
-                id: node.id,
-                position: position,
-                size: defaultNodeSize,
-                data: payload,
-                handles: payload.pins.map(handle(for:))
-            )
-        }
-    }
-
-    // MARK: - Edges
-
-    /// All SwiftFlow edges for a graph. A wire is skipped only when one of its
-    /// endpoint nodes is missing from the graph. Exec wires use the exec handles and
-    /// a stepped path; data wires use the hashed data handles and a bezier path.
-    public static func edges(for graph: RCP3ScriptGraph) -> [FlowEdge] {
-        let nodeIDs = Set(graph.nodes.map(\.id))
-        return graph.wires.compactMap { wire -> FlowEdge? in
-            guard nodeIDs.contains(wire.from), nodeIDs.contains(wire.to) else { return nil }
-
-            if wire.isExec {
-                return FlowEdge(
-                    id: wire.id,
-                    sourceNodeID: wire.from,
-                    sourceHandleID: execOutHandleID,
-                    targetNodeID: wire.to,
-                    targetHandleID: execInHandleID,
-                    pathType: .smoothStep,
-                    label: "exec"
-                )
-            }
-
-            // Data wire: both pin hashes are present by construction (a wire with any
-            // hash is a data wire). Fall back defensively if one is somehow missing.
-            guard let fromPin = wire.fromPin, let toPin = wire.toPin else { return nil }
-            return FlowEdge(
-                id: wire.id,
-                sourceNodeID: wire.from,
-                sourceHandleID: outputHandleID(forHash: fromPin),
-                targetNodeID: wire.to,
-                targetHandleID: inputHandleID(forHash: toPin),
-                pathType: .bezier,
-                label: RCP3ScriptGraph.label(forHash: toPin)
-            )
-        }
-    }
-
-    // MARK: - Store
-
-    /// A ready-to-render `FlowStore` populated with the graph's nodes and edges.
-    ///
-    /// Edges are added after nodes so SwiftFlow's `addEdge` endpoint validation
-    /// (which requires both nodes to exist) always passes for well-formed wires.
-    @MainActor
-    public static func store(for graph: RCP3ScriptGraph) -> FlowStore<ScriptGraphNodePayload> {
-        let store = FlowStore<ScriptGraphNodePayload>()
-        for node in nodes(for: graph) {
-            store.addNode(node)
-        }
-        for edge in edges(for: graph) {
-            store.addEdge(edge)
-        }
-        return store
     }
 
     // MARK: - Helpers

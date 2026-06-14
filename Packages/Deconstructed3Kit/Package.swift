@@ -15,10 +15,10 @@ import PackageDescription
 // local path. See `Docs/StageView-Adoption.md` for the trade-off.
 let package = Package(
     name: "Deconstructed3Kit",
-    // `RCP3GraphEditor` (the visual node editor) depends on SwiftFlow, which
-    // requires macOS 26+. Deconstructed 3 is macOS 27-only anyway, so we raise the
-    // package floor to 26 to satisfy it; the pure-Swift parser/document targets
-    // still build fine here.
+    // The SwiftUI viewport/editor targets (`RCP3Viewport`, `RCP3GraphEditor`,
+    // `DeconstructedFeature`) build against modern SwiftUI/RealityKit. Deconstructed
+    // 3 is macOS 27-only anyway, so the package floor sits at 26; the pure-Swift
+    // parser/document targets still build fine here.
     platforms: [.macOS("26.0")],
     products: [
         .library(name: "TMFormat", targets: ["TMFormat"]),
@@ -37,9 +37,6 @@ let package = Package(
         // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
         // Pinned to the same revision StageView resolves (1.26.0).
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.26.0"),
-        // SwiftFlow — the visual node-graph editor (MIT). Pinned exactly while it is
-        // pre-1.0 (0.x API churn). Powers `RCP3GraphEditor`.
-        .package(url: "https://github.com/1amageek/swift-flow.git", exact: "0.21.6"),
     ],
     targets: [
         .target(name: "TMFormat"),
@@ -68,14 +65,14 @@ let package = Package(
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ]
         ),
-        // The visual script-graph node editor: bridges `RCP3ScriptGraph` into a
-        // SwiftFlow canvas and renders RCP-styled nodes/wires.
+        // The visual script-graph node editor: derives a renderer-agnostic pin model
+        // from `RCP3ScriptGraph` (`ScriptGraphPinResolver`) and renders RCP-styled
+        // nodes/wires on its own SwiftUI `Canvas`.
         .target(
             name: "RCP3GraphEditor",
             dependencies: [
                 "RCP3Document",
                 "TMFormat",
-                .product(name: "SwiftFlow", package: "swift-flow"),
             ]
         ),
         .executableTarget(name: "RCP3Dump", dependencies: ["RCP3Document"]),

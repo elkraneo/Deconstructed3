@@ -1,18 +1,17 @@
 import Foundation
 import RCP3Document
 
-/// The per-node payload carried through the SwiftFlow canvas (`FlowNode`'s `Data`).
+/// The per-node payload carried through the SwiftUI canvas.
 ///
-/// `RCP3GraphEditor` renders an `RCP3ScriptGraph` on a SwiftFlow canvas. The
-/// *bridge* (`ScriptGraphFlowBridge`) maps each `RCP3ScriptGraph.Node` to a
-/// `FlowNode<ScriptGraphNodePayload>` whose handles match this payload's `pins`,
-/// and wires become `FlowEdge`s between those handles. The *node view*
-/// (`ScriptGraphNodeView`) renders this payload — title, type, role tint/icon, and
-/// a labelled handle per pin.
+/// `RCP3GraphEditor` renders an `RCP3ScriptGraph` on its own SwiftUI `Canvas`. The
+/// *resolver* (`ScriptGraphPinResolver`) maps each `RCP3ScriptGraph.Node` to a
+/// `ScriptGraphNodePayload` whose `pins` mirror the node's interface, and wires
+/// become connections between those pins (keyed by pin `id`). The *node view*
+/// (`ScriptGraphCanvasNodeView`) renders this payload — title, type, role
+/// tint/icon, and a labelled port per pin.
 ///
-/// This is the stable contract between the bridge (data) and the view (visual), so
-/// the two can evolve independently. It is `Sendable & Hashable` as SwiftFlow
-/// requires of a node's `Data`.
+/// This is the stable contract between the resolver (data) and the view (visual),
+/// so the two can evolve independently. It is `Sendable & Hashable`.
 public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
     /// The node's `__uuid` (matches `RCP3ScriptGraph.Node.id`).
     public let id: String
@@ -23,7 +22,7 @@ public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
     /// The node's clean-room role, used for tint/icon and grouping.
     public let role: ScriptGraphNodeRole
     /// The node's pins (exec + data, input + output), in display order. Each pin's
-    /// `id` is the SwiftFlow handle id the bridge uses for edges.
+    /// `id` is the stable handle id connections reference.
     public let pins: [Pin]
 
     public init(
@@ -50,7 +49,7 @@ public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
 
     /// A single pin (connection point) on a node.
     public struct Pin: Sendable, Hashable, Identifiable {
-        /// The SwiftFlow handle id (stable; what `FlowEdge` source/target reference).
+        /// The stable handle id (what a connection's source/target reference).
         public let id: String
         /// A readable label (resolved pin name, or hex hash, or "exec").
         public let label: String

@@ -1,5 +1,17 @@
 # Adopting SwiftFlow for the script-graph node editor — and its parity ceiling
 
+> **Status (2026-06): SwiftFlow has been removed.** The "Recommendation" below was
+> taken: `RCP3GraphEditor` now renders on our **own SwiftUI `Canvas`** node editor
+> (`ScriptGraphCanvas` / `ScriptGraphCanvasNodeView` / `ScriptGraphLayout`) with
+> per-pin connection points — the parity the SwiftFlow canvas could not give us.
+> The `swift-flow` package dependency, the SwiftFlow-importing bridge
+> (`ScriptGraphFlowBridge`), and the SwiftFlow node view (`ScriptGraphNodeView`)
+> are gone. The renderer-agnostic pin/payload derivation that *was* in the bridge
+> moved verbatim into `ScriptGraphPinResolver` (no SwiftFlow import); the stable
+> pin handle-ids (`exec.in` / `exec.out` / `in.<hex>` / `out.<hex>`) are unchanged.
+> This document is kept as the record of why we adopted SwiftFlow and why we
+> outgrew it.
+
 Deconstructed 3's visual script-graph editor (`RCP3GraphEditor`) renders an
 `RCP3ScriptGraph` on a [SwiftFlow](https://github.com/1amageek/swift-flow) canvas
 (MIT). SwiftFlow gave us node dragging, pan/zoom, selection, and edge drawing for
