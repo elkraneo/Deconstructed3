@@ -159,9 +159,14 @@ equals that prototype uuid**. Resolution = scan the bundle dir for
   delta. Hashes are stored as lowercase 16-digit hex; reverse via a known-name table,
   else show the hex.
 
-Captured graph decodes as: *on drag, set the box's transform `translation`* — one
-exec wire drag→set, one data wire drag→set.`translation`, and a `component_type`
-data literal on the set node.
+Captured graph decodes as: *while dragging, set the box's `Transform` component
+`translation` to the world-space drag delta* — one exec wire drag→set, one data wire
+drag.`sceneTranslation` → set.`translation`, and a `component_type` literal on the set
+node. The literal's `type` is `MurmurHash64A` of the **RealityKit component name**
+(here `"Transform"` → `af53dc359e631774`), i.e. scripts target the runtime RealityKit
+components (not the `.tm_*` `tm_transform_component` truth object). Gesture event nodes
+expose local + scene-space pin variants (`translation`/`sceneTranslation`,
+`location`/`sceneLocation`).
 
 ## Script-graph runtime — execution model (observed)
 
