@@ -19,23 +19,30 @@ import SwiftUI
 ///   back to our uuid and write the `selection` binding.
 ///
 /// ## Store wiring
-/// `RealityKitStageView`'s load flow is URL/command driven and its pick gate
-/// (`shouldAcceptViewportPick`) refuses picks unless `store.modelURL != nil`. We
-/// drive the viewport entirely through the provider (`setModel`), so we set a
-/// **sentinel `modelURL`** in the store to satisfy that gate without ever issuing
-/// a real load command (`activeLoadCommand` is cleared immediately). The store is
-/// otherwise used only for `sceneBounds` and selection state. See
-/// `Docs/StageView-Adoption.md`.
+/// We drive the viewport entirely through the provider (`setModel`). StageView
+/// 0.3.27's `RealityKitConfiguration.source = .injectedEntity` gates picking on
+/// the runtime being loaded alone, so no `modelURL` (or sentinel load command) is
+/// needed. The store is otherwise used only for `sceneBounds` and selection
+/// state. See `Docs/StageView-Adoption.md`.
+///
+/// ## Play-mode drag
+/// In Play, the viewport uses StageView's native `.entityDrag` interaction mode:
+/// a drag on the selected (Play target) entity is reported in scene space via
+/// `RealityKitProvider.setEntityDragHandler`, which we forward to `onPlayDrag`.
+/// StageView does the camera-basis screen→scene projection and does not move the
+/// entity itself — Play routes the move through the script graph and publishes the
+/// result back via `liveTransform`.
 public struct RCP3ViewportView: View {
     /// The reconstructed scene to display. A new graph rebuilds the hierarchy.
     private let sceneGraph: RCP3SceneNode?
     /// The host's selected entity uuid (`RCP3SceneNode.id` == `RCP3Entity.id`).
     @Binding private var selection: String?
 
-    /// Play mode: when `true`, a viewport drag is captured by an overlay and
-    /// reported to `onPlayDrag` as a **scene-space delta** instead of orbiting the
-    /// camera. When `false`, this view behaves exactly as before — the overlay does
-    /// not exist, so orbit / pan / pick / selection round-trip are untouched.
+    /// Play mode: when `true`, the viewport runs StageView's `.entityDrag`
+    /// interaction mode, reporting a drag on the selected entity to `onPlayDrag`
+    /// as a **scene-space delta** instead of orbiting the camera. When `false`,
+    /// interaction mode is `.camera`, so orbit / pan / pick / selection round-trip
+    /// are untouched.
     private let playMode: Bool
     /// Called during a play-mode drag with the incremental scene-space delta since
     /// the last callback. The host (e.g. a `DocumentView` running a script graph)
@@ -61,9 +68,6 @@ public struct RCP3ViewportView: View {
     /// prim-path mapping hasn't resolved (the entities are the very ones the
     /// provider holds via `setModel`, so mutating them is the same object).
     @State private var entityByNodeID: [String: Entity] = [:]
-    /// The last drag location during a play-mode drag, to compute incremental
-    /// deltas. `nil` between drags.
-    @State private var lastPlayDragLocation: CGPoint?
 
     /// - Parameters:
     ///   - sceneGraph: the `.tm_*`-reconstructed scene to materialize, or `nil`.
@@ -93,18 +97,18 @@ public struct RCP3ViewportView: View {
                     store: store,
                     configuration: configuration
                 )
-                // Play-mode drag capture: a transparent overlay that exists ONLY
-                // while playing. It sits above the StageView and consumes the drag,
-                // so the underlying camera gesture never sees it (no orbit). When
-                // `playMode` is false the overlay is absent and the viewport behaves
-                // exactly as before.
-                .overlay { playDragOverlay }
             } else {
                 ContentUnavailableView("No scene", systemImage: "cube.transparent")
             }
         }
-        .onAppear { rebuild(from: sceneGraph) }
+        .onAppear {
+            rebuild(from: sceneGraph)
+            installEntityDragHandler()
+        }
         .onChange(of: sceneGraph) { _, newValue in rebuild(from: newValue) }
+        // Re-bind the entity-drag forwarder when play mode toggles so it captures
+        // the current `onPlayDrag`.
+        .onChange(of: playMode) { _, _ in installEntityDragHandler() }
         // Host → viewport selection.
         .onChange(of: selection) { _, newValue in pushSelection(newValue) }
         // Viewport → host selection: a pick bumps the provider's selection state.
@@ -114,6 +118,18 @@ public struct RCP3ViewportView: View {
         // Host → viewport live transform (Play mode): apply each published value to
         // the target entity. A no-op when `nil` or the node isn't found.
         .onChange(of: liveTransform) { _, newValue in apply(newValue) }
+    }
+
+    /// Forwards StageView's scene-space entity-drag samples to `onPlayDrag` as
+    /// incremental deltas while playing. Registered on appear and whenever play
+    /// mode toggles (to capture the current `onPlayDrag`).
+    @MainActor
+    private func installEntityDragHandler() {
+        let forward = onPlayDrag
+        provider.setEntityDragHandler { sample in
+            guard sample.phase == .changed else { return }
+            if sample.delta != .zero { forward(sample.delta) }
+        }
     }
 
     /// Applies a published `LiveTransform` to its target entity (no-op if `nil`).
@@ -126,74 +142,6 @@ public struct RCP3ViewportView: View {
             scale: transform.scale,
             toNodeID: transform.nodeID
         )
-    }
-
-    // MARK: - Play-mode drag capture
-
-    /// A transparent gesture surface shown only in play mode. It reads incremental
-    /// drag deltas and maps screen drag → scene delta (see `sceneDelta(for:)`),
-    /// reporting them to `onPlayDrag`. Returns `EmptyView` when not playing so the
-    /// off path is allocation- and behavior-identical to before.
-    @ViewBuilder
-    private var playDragOverlay: some View {
-        if playMode {
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let last = lastPlayDragLocation ?? value.location
-                            let dScreen = CGSize(
-                                width: value.location.x - last.x,
-                                height: value.location.y - last.y
-                            )
-                            lastPlayDragLocation = value.location
-                            // Project the screen drag onto the *current* camera view
-                            // plane so the move is correct from any orbit, not front-on.
-                            let delta = Self.sceneDelta(
-                                for: dScreen,
-                                cameraRotation: provider.cameraRotation,
-                                distance: provider.cameraDistance
-                            )
-                            if delta != .zero { onPlayDrag(delta) }
-                        }
-                        .onEnded { _ in lastPlayDragLocation = nil }
-                )
-        }
-    }
-
-    /// Maps an incremental **screen** drag (points) to a **scene-space** delta,
-    /// projected onto the *camera's* view plane so the entity tracks the cursor from
-    /// any orbit — not a fixed front-on world plane.
-    ///
-    /// The drag moves the entity in the plane facing the camera: screen +x follows
-    /// the camera's world **right**, and screen +y (downward) follows the camera's
-    /// world **down** (so a drag up moves the entity up on screen). The camera looks
-    /// down its local −Z, so its world basis is `rotation·(+X)` = right and
-    /// `rotation·(+Y)` = up. With the default front-on camera this reduces to the old
-    /// world x / −y mapping; once orbited, the axes follow the view — which is the
-    /// 3D-correct behavior (the previous version ignored the camera, applying a flat
-    /// front-on transform). Magnitude is proportional to the camera distance, mirroring
-    /// StageView's pan feel (`distance * 0.00125`, which at the canonical distance of 4
-    /// equals the old fixed 1/200), so the move tracks the cursor whether zoomed in or
-    /// out.
-    static func sceneDelta(
-        for screen: CGSize,
-        cameraRotation: simd_quatf,
-        distance: Float
-    ) -> SIMD3<Double> {
-        // The camera's world right/up axes (it looks down local −Z).
-        let right = cameraRotation.act(SIMD3<Float>(1, 0, 0))
-        let up = cameraRotation.act(SIMD3<Float>(0, 1, 0))
-        // Points → scene units, proportional to distance (so a fixed-pixel drag moves
-        // farther when zoomed out). Clamped so a degenerate distance can't zero it out.
-        let perPoint = Double(max(distance, 0.001)) * 0.00125
-        let dRight = Double(screen.width) * perPoint
-        let dUp = Double(-screen.height) * perPoint
-        func d(_ v: SIMD3<Float>) -> SIMD3<Double> {
-            SIMD3(Double(v.x), Double(v.y), Double(v.z))
-        }
-        return d(right) * dRight + d(up) * dUp
     }
 
     /// Drives one entity's local transform live, by node uuid, on the reconstructed
@@ -261,14 +209,18 @@ public struct RCP3ViewportView: View {
         return entityByNodeID[nodeID]
     }
 
-    /// Minimal viewport configuration: RealityKit Y-up, 1 unit = 1 meter (matching
-    /// what we pass to `setModel`); everything else is StageView's default. Dark-
-    /// mode theming is an open StageView-adoption friction — see
-    /// `Docs/StageView-Adoption.md`.
+    /// Viewport configuration: RealityKit Y-up, 1 unit = 1 meter (matching what we
+    /// pass to `setModel`). `source = .injectedEntity` unlocks picking without a
+    /// `modelURL`; `appearance = .dark` themes the background + grid; and play mode
+    /// switches the interaction mode to `.entityDrag` so a drag on the Play target
+    /// is reported in scene space instead of orbiting the camera.
     private var configuration: RealityKitConfiguration {
         var config = RealityKitConfiguration()
         config.metersPerUnit = 1
         config.isZUp = false
+        config.source = .injectedEntity
+        config.appearance = .dark
+        config.interactionMode = playMode ? .entityDrag : .camera
         return config
     }
 
@@ -288,31 +240,14 @@ public struct RCP3ViewportView: View {
         entityByNodeID = build.entityByNodeID
 
         store.send(.setSceneBounds(build.bounds))
-        setSentinelModelURL()
 
+        // `source = .injectedEntity` (see `configuration`) unlocks picking on the
+        // injected model without a sentinel `modelURL` — no load command needed.
         provider.setModel(build.root, metersPerUnit: 1, isZUp: false)
         provider.setExternalSceneBounds(build.bounds)
 
         // Re-apply any standing host selection to the freshly built tree.
         pushSelection(selection)
-    }
-
-    /// Sets a non-file sentinel `modelURL` so `shouldAcceptViewportPick` passes,
-    /// then clears the load command so the URL/command lane never runs. The
-    /// provider owns the actual entity via `setModel`.
-    @MainActor
-    private func setSentinelModelURL() {
-        guard store.modelURL == nil else { return }
-        store.send(
-            .loadRequested(
-                commandID: UUID(),
-                url: URL(string: "rcp3-viewport://injected")!,
-                preserveCamera: false
-            )
-        )
-        if let command = store.activeLoadCommand {
-            store.send(.loadCommandCompleted(command.id))
-        }
     }
 
     // MARK: - Selection bridge

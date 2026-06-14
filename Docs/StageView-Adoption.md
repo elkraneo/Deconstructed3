@@ -77,23 +77,58 @@ non-obvious step; it is covered by `providerMappingAgreesWithOurPrimPaths` test.
 
 ### 4. Store wiring (`StageViewFeature`)
 `RealityKitStageView` requires a `StoreOf<StageViewFeature>`. We instantiate a
-private store and use it for three things:
+private store and use it for:
 
 - `setSceneBounds(_:)` — the view forwards `store.sceneBounds` to the provider on
   appear and on change, so authored bounds must live in the store too (we set both
   the store and call `provider.setExternalSceneBounds`).
 - selection state mirror.
-- **The pick gate.** `RealityKitStageView.shouldAcceptViewportPick` refuses all
-  picks unless `store.modelURL != nil` **and** `store.activeLoadCommand == nil`
-  **and** `runtime.isLoaded` **and** `runtime.modelEntity != nil`. Because we never
-  issue a URL load, `modelURL` would stay nil and **clicking would silently do
-  nothing**. We work around this by sending a **sentinel** `loadRequested` with a
-  dummy `rcp3-viewport://injected` URL and then immediately completing the command
-  (`loadCommandCompleted`) so `activeLoadCommand` returns to nil while `modelURL`
-  stays set. We never load from that URL; the provider owns the entity via
-  `setModel`.
 
-## (b) Friction (concrete)
+The pick gate no longer requires a sentinel URL — see "Resolved in StageView
+0.3.27" below.
+
+### 5. Play-mode entity drag
+In Play, the viewport runs StageView's native `.entityDrag` interaction mode
+(`RealityKitConfiguration.interactionMode = .entityDrag`). A drag on the selected
+(Play target) entity is reported in scene space via
+`RealityKitProvider.setEntityDragHandler`, which `RCP3ViewportView` forwards to
+`onPlayDrag`. StageView performs the camera-basis screen→scene projection and does
+**not** move the entity; Play routes the move through the script graph
+(`handlePlayDrag` → `RCP3Runtime`) and publishes the result back via the
+`liveTransform` binding. Stop restores the authored pose; the box stays mounted.
+
+## Resolved in StageView 0.3.27
+
+The following frictions were addressed in StageView 0.3.27 and the corresponding
+workarounds were removed here:
+
+- **#3 sentinel-URL pick gate — RESOLVED.** `RealityKitConfiguration.source =
+  .injectedEntity` gates picking on `runtime.isLoaded && runtime.modelEntity !=
+  nil` alone. The dummy `rcp3-viewport://injected` load command is gone.
+- **#5 mandatory external `SceneBounds` — RESOLVED.** The provider now derives
+  frameable bounds from the injected entity's visual bounds when none are
+  supplied. We still pass authored bounds via `setExternalSceneBounds` (the
+  builder pads degenerate scenes), but the host-free fallback exists.
+- **#9 viewport appearance — RESOLVED.** `RealityKitConfiguration.appearance`
+  (set to `.dark` here) themes both the solid background and the grid and
+  suppresses the environment background sphere, with no skybox/`showEnvironment
+  Background` knowledge required.
+- **Native scene-space drag API — ADDED.** The hand-rolled play-drag overlay and
+  `RCP3ViewportView.sceneDelta` camera-basis projection were replaced by
+  StageView's `.entityDrag` mode + `setEntityDragHandler` (the projection now
+  lives in StageView's unit-tested `SceneSpaceDragMath`). One behavioral note: a
+  Play drag must now **begin on the selected entity** (StageView grabs the object
+  under the cursor) rather than anywhere in the viewport.
+- **#4 anonymous-wrapper contract — DOCUMENTED + alternative added.** StageView
+  now documents that `setModel(_:)` treats its argument as an anonymous wrapper,
+  and adds `setModel(rootNode:)` that maps the passed entity itself as the first
+  node. We still use `setModel(_:)` with `RCP3EntityBuilder`'s wrapper container
+  (unchanged, still covered by `providerMappingAgreesWithOurPrimPaths`);
+  `setModel(rootNode:)` is available as a cleaner alternative.
+
+The items below remain open / deferred.
+
+## (b) Friction (remaining / deferred)
 
 1. **Identity is USD-prim-path-string-centric.** The whole selection API
    (`setSelection(_ path: String?)`, `userDidPick`, `selectedPrimPath`,
@@ -112,23 +147,17 @@ private store and use it for three things:
    - `realityKitInternalNames` (`usdPrimitiveAxis`) and the `_N` duplicate-suffix
      stripping are USD-importer artifacts; harmless for us but extra surface.
 
-3. **`setModel` does *not* cleanly bypass the URL/command load flow.** `setModel`
-   injects the entity fine, but the *view* still assumes a `modelURL`-driven
-   lifecycle: the pick gate, the `handleLoadRequestIfNeeded` task, and teardown all
-   branch on `store.modelURL`/`activeLoadCommand`. We had to inject a **sentinel
-   URL** purely to unlock picking. This is the single largest adoption wart.
+3. ~~**`setModel` does *not* cleanly bypass the URL/command load flow.**~~
+   **RESOLVED in StageView 0.3.27** — `source = .injectedEntity` gates picking on
+   `runtime.isLoaded` alone; the sentinel URL is gone. See the resolved section.
 
-4. **The "anonymous wrapper" contract is undocumented.** That `setModel` discards
-   the top entity and only maps its children is implicit in
-   `refreshPrimPathMapping`. Discovered empirically (the first integration test
-   failed); a non-USD client has no reason to expect it.
+4. ~~**The "anonymous wrapper" contract is undocumented.**~~ **RESOLVED in
+   StageView 0.3.27** — the contract is now documented and `setModel(rootNode:)`
+   maps the passed entity itself. See the resolved section.
 
-5. **Externally-supplied `SceneBounds` is mandatory.** `restoreExternallySupplied
-   SceneBounds` logs an error and clears bounds if none were supplied, which breaks
-   camera auto-frame and the grid. We must compute bounds ourselves (walk the entity
-   tree's `visualBounds`) and pad degenerate scenes to a frameable cube. A provider
-   that can derive bounds from the injected entity when the host doesn't supply them
-   would remove this obligation.
+5. ~~**Externally-supplied `SceneBounds` is mandatory.**~~ **RESOLVED in StageView
+   0.3.27** — the provider derives frameable bounds from the injected entity's
+   visual bounds when none are supplied. See the resolved section.
 
 6. **TCA store coupling for a simple viewport.** Embedding `RealityKitStageView`
    requires constructing a `StoreOf<StageViewFeature>` even though our app is
@@ -150,22 +179,11 @@ private store and use it for three things:
    **macOS-27-only**. None of it breaks us, but it is dead surface we compile and
    must reason around, and the `platforms` floor (`.macOS(.v15)`) is below ours.
 
-9. **Viewport appearance doesn't follow the host color scheme.** With the default
-   configuration the viewport renders **light even when the embedding app is in
-   system Dark mode** (the rest of our window — sidebar, inspector — is correctly
-   dark). `StageViewFeature.State.appearance` defaults to `.automatic`, which
-   `StageViewAppearance.resolvedAppearance(for:)` resolves from
-   `@Environment(\.colorScheme)` *inside* `RealityKitStageView` — but in our
-   embedding that comes out light despite the app content being dark. Compounding
-   it, the visible backdrop is the **skybox sphere** (`showEnvironmentBackground`,
-   default `true`) drawing StageView's default environment *over* the appearance
-   background — so even forcing `.updateAppearance(.dark)` doesn't darken the
-   viewport; only `showEnvironmentBackground: false` lets the (appearance-colored)
-   background show, at which point the scene loses its environment entirely. Net:
-   "make the viewport match system dark mode" — which should be a one-liner —
-   required reading the skybox + appearance internals, and we still could not get a
-   clean theme-following result from the embedding side alone. **Deferred**: we ship
-   the minimal default config and leave the viewport theming open.
+9. ~~**Viewport appearance doesn't follow the host color scheme.**~~ **RESOLVED in
+   StageView 0.3.27** — `RealityKitConfiguration.appearance` (we set `.dark`)
+   themes both the solid background and grid in one line and suppresses the skybox
+   so the themed background shows. See the resolved section. (We currently hard-set
+   `.dark`; following the live system scheme would be a further refinement.)
 
 ## (c) Proposed StageView improvements (constructive)
 
