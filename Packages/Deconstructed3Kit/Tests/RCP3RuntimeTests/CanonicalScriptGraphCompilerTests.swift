@@ -27,6 +27,10 @@ import RCP3Runtime
     @Test func compilesDragToCanonicalDidAddHandler() {
         let js = CanonicalScriptGraphCompiler().compile(Self.dragToSetTranslationGraph())
 
+        // Built-in modules must be require()'d before use, else the runtime throws
+        // "Can't find variable: RealityKit".
+        #expect(js.contains("const RealityKit = require(\"RealityKit\")"))
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
         // The public-package surface: lifecycle assigned on `this`, gesture against
         // RealityKit.DragGestureEvent.name, entity.position moved via Math3D.
         #expect(js.contains("this.didAdd = function()"))

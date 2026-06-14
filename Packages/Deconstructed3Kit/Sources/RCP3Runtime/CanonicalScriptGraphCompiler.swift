@@ -23,6 +23,8 @@ import TMFormat
 /// entity's transform translation **is** `entity.position`, so it emits:
 ///
 /// ```js
+/// const RealityKit = require("RealityKit");
+/// const Math3D = require("Math3D");
 /// this.didAdd = function() {
 ///   this.entity.setComponent(new RealityKit.InputTargetComponent());
 ///   this.entity.generateCollisionShapes(true);
@@ -52,8 +54,8 @@ public struct CanonicalScriptGraphCompiler {
         lines.append("// Compiled from an RCP 3 script graph (\(graph.nodes.count) nodes)")
         lines.append("// for the RealityKit Script Graph runtime (ScriptingComponent source).")
 
+        var handlerLines: [String] = []
         var handledNodeIDs: Set<String> = []
-        var emittedHandler = false
 
         // A drag gesture wired to a Set Transform translation = "drag the entity."
         for node in graph.nodes where node.type == "tm_gesture_event_drag" {
@@ -64,8 +66,16 @@ public struct CanonicalScriptGraphCompiler {
                     handledNodeIDs.insert(target.id)
                 }
             }
-            lines.append(Self.dragToPositionHandler)
-            emittedHandler = true
+            handlerLines.append(Self.dragToPositionHandler)
+        }
+
+        if !handlerLines.isEmpty {
+            // The runtime exposes built-in modules through `require`; bind the ones our
+            // handlers use BEFORE referencing them (the script has no `RealityKit` /
+            // `Math3D` globals — referencing them unbound throws "Can't find variable").
+            lines.append("const RealityKit = require(\"RealityKit\");")
+            lines.append("const Math3D = require(\"Math3D\");")
+            lines.append(contentsOf: handlerLines)
         }
 
         // Any node we didn't fold into a handler: honest no-op.
@@ -73,7 +83,7 @@ public struct CanonicalScriptGraphCompiler {
             lines.append("// unsupported node: \(node.type)")
         }
 
-        if !emittedHandler {
+        if handlerLines.isEmpty {
             lines.append("// No canonical behavior emitted for this graph yet.")
         }
 
