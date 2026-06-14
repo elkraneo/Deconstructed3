@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import RCP3Document
 import SwiftUI
 
 /// The app-facing entry point for the document feature.
@@ -11,10 +12,18 @@ public struct AppRootView: View {
         DocumentFeature()
     }
 
-    public init() {}
+    /// An optional builder for the canonical "Simulate" view (runs a graph on Apple's
+    /// real `RealityKitScripting` runtime). The **app** target injects it — the app
+    /// links the binary framework; this layer stays free of that dependency so
+    /// `swift test` works. When `nil`, the Simulate affordance is hidden.
+    private let canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)?
+
+    public init(canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)? = nil) {
+        self.canonicalSimulate = canonicalSimulate
+    }
 
     public var body: some View {
-        DocumentView(store: store)
+        DocumentView(store: store, canonicalSimulate: canonicalSimulate)
     }
 }
 
