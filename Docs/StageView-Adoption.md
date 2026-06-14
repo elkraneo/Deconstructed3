@@ -150,6 +150,23 @@ private store and use it for three things:
    **macOS-27-only**. None of it breaks us, but it is dead surface we compile and
    must reason around, and the `platforms` floor (`.macOS(.v15)`) is below ours.
 
+9. **Viewport appearance doesn't follow the host color scheme.** With the default
+   configuration the viewport renders **light even when the embedding app is in
+   system Dark mode** (the rest of our window — sidebar, inspector — is correctly
+   dark). `StageViewFeature.State.appearance` defaults to `.automatic`, which
+   `StageViewAppearance.resolvedAppearance(for:)` resolves from
+   `@Environment(\.colorScheme)` *inside* `RealityKitStageView` — but in our
+   embedding that comes out light despite the app content being dark. Compounding
+   it, the visible backdrop is the **skybox sphere** (`showEnvironmentBackground`,
+   default `true`) drawing StageView's default environment *over* the appearance
+   background — so even forcing `.updateAppearance(.dark)` doesn't darken the
+   viewport; only `showEnvironmentBackground: false` lets the (appearance-colored)
+   background show, at which point the scene loses its environment entirely. Net:
+   "make the viewport match system dark mode" — which should be a one-liner —
+   required reading the skybox + appearance internals, and we still could not get a
+   clean theme-following result from the embedding side alone. **Deferred**: we ship
+   the minimal default config and leave the viewport theming open.
+
 ## (c) Proposed StageView improvements (constructive)
 
 These would make StageView pleasant to adopt for **any entity source**, not just USD
@@ -197,3 +214,16 @@ imports — without losing the USD path.
 7. **Publish tagged releases / SemVer.** A tagged release stream makes the git-URL
    dependency (friction #7) the obvious default and lets consumers pin reproducibly,
    relegating local-path to active StageView development only.
+
+8. **Make appearance follow the host color scheme by default, with a trivial knob.**
+   Either (a) resolve `.automatic` from the embedding environment reliably (a macOS
+   app in Dark gets a dark viewport with zero config), or (b) expose a simple
+   `appearance:` input on `RealityKitStageView.init` / `RealityKitConfiguration` that
+   takes a `ColorScheme` (or `.dark`/`.light`/`.system`) and themes **both** the
+   solid background and the grid — without the caller needing to know about the
+   skybox, `showEnvironmentBackground`, or `StageViewAppearanceOverrides`. "Pass the
+   system appearance and the viewport themes itself" is the expected ergonomics
+   (friction #9). A common workaround is a bespoke
+   `RealityKitViewportAppearanceMapper` that builds a `.custom` appearance with
+   light/dark background palettes — useful, but more than a simple adopter should
+   need.

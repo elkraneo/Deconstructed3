@@ -69,28 +69,15 @@ public struct RCP3ViewportView: View {
         }
     }
 
-    /// Viewport configuration: grid + axes on, RealityKit Y-up / 1 unit = 1 meter.
-    ///
-    /// `showEnvironmentBackground: false` disables StageView's skybox sphere; the
-    /// viewport then shows StageView's solid background color, which follows the
-    /// host color scheme (dark in dark mode) via the default `.automatic`
-    /// appearance. (With the skybox enabled, its bright default environment renders
-    /// over everything and ignores dark mode.) Image-based lighting is unaffected,
-    /// so the scene stays lit.
-    ///
-    /// Selection uses `.boundingBox`, NOT `.postProcessOutline`: this viewport
-    /// injects reconstructed RealityKit entities via `provider.setModel` rather than
-    /// going through StageView's USD load path, and the post-process outline pass
-    /// crashes without the pipeline that the load path sets up.
+    /// Minimal viewport configuration: RealityKit Y-up, 1 unit = 1 meter (matching
+    /// what we pass to `setModel`); everything else is StageView's default. Dark-
+    /// mode theming is an open StageView-adoption friction — see
+    /// `Docs/StageView-Adoption.md`.
     private var configuration: RealityKitConfiguration {
-        RealityKitConfiguration(
-            showGrid: true,
-            showAxes: true,
-            metersPerUnit: 1,
-            isZUp: false,
-            showEnvironmentBackground: false,
-            selectionHighlightStyle: .boundingBox
-        )
+        var config = RealityKitConfiguration()
+        config.metersPerUnit = 1
+        config.isZUp = false
+        return config
     }
 
     // MARK: - Model injection

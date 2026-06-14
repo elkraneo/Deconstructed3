@@ -110,19 +110,18 @@ public struct DocumentView: View {
         }
     }
 
-    /// The Viewport / Graph segmented switch, shown in the toolbar only while the
-    /// selected entity has a script graph (otherwise there is nothing to switch to).
+    /// The Viewport / Graph segmented switch. Always present (so it can't get
+    /// dropped by conditional toolbar rebuilds); selecting `.graph` for an entity
+    /// without a script graph shows a placeholder in the center column.
     @ToolbarContentBuilder
     private var centerToolbar: some ToolbarContent {
-        if store.selectedScriptGraph != nil {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: $centerMode) {
-                    ForEach(CenterMode.allCases, id: \.self) { mode in
-                        Label(mode.title, systemImage: mode.symbol).tag(mode)
-                    }
+        ToolbarItem(placement: .principal) {
+            Picker("View", selection: $centerMode) {
+                ForEach(CenterMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol).tag(mode)
                 }
-                .pickerStyle(.segmented)
             }
+            .pickerStyle(.segmented)
         }
     }
 
