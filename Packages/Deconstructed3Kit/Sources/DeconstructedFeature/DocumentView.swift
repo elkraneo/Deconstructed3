@@ -41,7 +41,7 @@ public struct DocumentView: View {
         } content: {
             centerColumn
                 .frame(minWidth: 320)
-                .navigationTitle(centerMode == .graph ? "Script Graph" : "Viewport")
+                .toolbar { centerToolbar }
                 // Fall back to the viewport whenever the current selection has no
                 // script graph, so the mode can't get stuck on an empty canvas.
                 .onChange(of: store.selectedScriptGraph == nil) { _, noGraph in
@@ -80,38 +80,11 @@ public struct DocumentView: View {
 
     // MARK: Center column (viewport ⇄ script-graph canvas)
 
-    /// The center column: the 3D viewport, with an in-content mode switch to the
-    /// visual script-graph canvas when the selected entity carries a graph. The
-    /// switch is an in-view header (not a toolbar item) so it renders reliably in
-    /// the split view's content column.
+    /// The center column: the 3D viewport, or the visual script-graph canvas when
+    /// the user switches to it (via the toolbar segmented control, which only
+    /// appears while the selected entity carries a script graph).
     @ViewBuilder
     private var centerColumn: some View {
-        VStack(spacing: 0) {
-            if store.selectedScriptGraph != nil {
-                modeSwitcher
-                Divider()
-            }
-            centerContent
-        }
-    }
-
-    /// The segmented Viewport / Graph switch, shown only when a script graph exists.
-    private var modeSwitcher: some View {
-        Picker("View", selection: $centerMode) {
-            ForEach(CenterMode.allCases, id: \.self) { mode in
-                Label(mode.title, systemImage: mode.symbol).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(maxWidth: 260)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity)
-        .background(.bar)
-    }
-
-    @ViewBuilder
-    private var centerContent: some View {
         switch centerMode {
         case .viewport:
             // The reconstructed 3D viewport (StageView-backed), fed the live
@@ -133,6 +106,22 @@ public struct DocumentView: View {
                     systemImage: "point.3.connected.trianglepath.dotted",
                     description: Text("Select an entity with a script graph to see its nodes.")
                 )
+            }
+        }
+    }
+
+    /// The Viewport / Graph segmented switch, shown in the toolbar only while the
+    /// selected entity has a script graph (otherwise there is nothing to switch to).
+    @ToolbarContentBuilder
+    private var centerToolbar: some ToolbarContent {
+        if store.selectedScriptGraph != nil {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: $centerMode) {
+                    ForEach(CenterMode.allCases, id: \.self) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
         }
     }
