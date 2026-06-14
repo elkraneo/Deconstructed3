@@ -158,6 +158,37 @@ Captured graph decodes as: *on drag, set the box's transform `translation`* — 
 exec wire drag→set, one data wire drag→set.`translation`, and a `component_type`
 data literal on the set node.
 
+## Script-graph runtime — execution model (observed)
+
+Observed by inspecting the shipped app bundle and the running editor (black-box):
+
+- **The script graph executes as JavaScript.** The visual `tm_graph` is the
+  authoring form; at play/build it is compiled to a JS program and run in a
+  JavaScript engine, with the entity and its components exposed as JS objects.
+- **Host scaffolding.** Before the compiled program, the runtime loads two small
+  JS helpers (shipped as plain resources): a CommonJS-style **module system**
+  (`define(name, factory)` / `require(name)`, lazy + memoized) and a **`Sequence`
+  collection mixin** (`[Symbol.iterator]`, `entries`, `values`, `forEach`,
+  `filter`, `map`, `find`, `includes`, operating over a `keys` list). The node
+  library is delivered as **modules** the compiled program `require`s; a
+  component collection (e.g. an entity's components) is exposed as an **iterable
+  Sequence**.
+- **Events drive it.** Gesture events (drag, tap) are dispatched to entities and
+  invoke the handlers the program registered (matching the `tm_gesture_event_*`
+  nodes).
+- **Node palette.** The editor ships a catalog of ~**380 node types** spanning
+  gesture/animation/audio/collision **events**, **component** get/set, **arrays**,
+  **logic/math**, **destructure** (`break_*`) of composite types
+  (vector/quaternion/matrix/color/…), **variables**, **delays**, and cloning.
+  Each node carries a label, category, and description; nodes are marked
+  `supported` / `experimental` / `deprecated`.
+- **Implication for Deconstructed 3 (path 2).** A faithful runtime is a **public
+  JavaScriptCore** context that (1) installs an equivalent module system +
+  iterable-collection mixin, (2) exposes the entity/components as JS objects
+  (property names from the type schema), (3) loads node-behavior modules, (4)
+  runs the compiled graph program, and (5) dispatches gesture events to it. Our
+  implementations are written independently to this behavioral contract.
+
 ## Open questions / next captures
 
 - [ ] Grammar edge cases: enums, asset references, and how text objects link to
