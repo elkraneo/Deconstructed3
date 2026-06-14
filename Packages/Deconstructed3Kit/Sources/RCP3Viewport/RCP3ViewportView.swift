@@ -69,11 +69,15 @@ public struct RCP3ViewportView: View {
         }
     }
 
-    /// Mirrors the viewport configuration the prior Deconstructed app used: grid +
-    /// axes on, RealityKit Y-up / 1 unit = 1 meter, the system environment
-    /// background, and a cyan post-process selection outline. Appearance
-    /// (dark/light) is left to StageView, which resolves its `.automatic` default
-    /// from the host color scheme.
+    /// Viewport configuration: grid + axes on, RealityKit Y-up / 1 unit = 1 meter,
+    /// the system environment background. Appearance (dark/light) is left to
+    /// StageView, which resolves its `.automatic` default from the host color scheme.
+    ///
+    /// Selection uses `.boundingBox`, NOT the prior app's `.postProcessOutline`:
+    /// this viewport injects reconstructed RealityKit entities via
+    /// `provider.setModel` rather than going through StageView's USD load path, and
+    /// the post-process outline pass crashes without the pipeline that the load path
+    /// sets up. The bounding-box cage works with the injection path.
     private var configuration: RealityKitConfiguration {
         RealityKitConfiguration(
             showGrid: true,
@@ -81,12 +85,7 @@ public struct RCP3ViewportView: View {
             metersPerUnit: 1,
             isZUp: false,
             showEnvironmentBackground: true,
-            outlineConfiguration: OutlineConfiguration(
-                color: .cyan,
-                width: 0.15,
-                referenceDistance: 2.0
-            ),
-            selectionHighlightStyle: .postProcessOutline
+            selectionHighlightStyle: .boundingBox
         )
     }
 
