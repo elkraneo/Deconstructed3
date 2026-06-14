@@ -208,6 +208,51 @@ Observed by inspecting the shipped app bundle and the running editor (black-box)
   runs the compiled graph program, and (5) dispatches gesture events to it. Our
   implementations are written independently to this behavioral contract.
 
+## The runtime is Apple's public package — `apple/RealityKitScripting` (MIT)
+
+RCP 3's script-graph runtime is a **public, MIT-licensed Apple Swift package**:
+`https://github.com/apple/RealityKitScripting` ("JavaScript bindings for RealityKit
+with type-safe Swift interop", currently beta). An RCP 3 **Build/Export** emits a
+normal Xcode app that depends on it; the compiled script is baked into the
+`.reality` file and runs on this package's runtime. The runtime ships as a binary
+`xcframework`; its `@Scriptable` macro + compiler plugin are open Swift source.
+
+This documents the real API directly (no inference needed):
+
+- **Entry points:** `try RKS.initialize()` (or `.initialize(with: RKS.Configuration(id:)
+  .onInitialize { … })`); attach a script with
+  `entity.components.set(ScriptingComponent(source: jsString))`; enable systems with
+  `.scriptingSystem()` / `.realityScripting()` (the latter also enables gesture + input).
+- **Script `this`** is the scripting component; lifecycle methods are **assigned on `this`**:
+  `this.update = function(deltaTime) { … }`, `this.didAdd`, `this.didActivate`,
+  `this.scriptChanged`, `this.willDeactivate`, `this.willRemove`.
+- **Entity API is the RealityKit `Entity` directly:** `this.entity.position` /
+  `.orientation` / `.scale` / `.name` (a position is a `Math3D` vector with
+  `.x/.y/.z`, `.add()`, `.clone()`). *(This corrects an earlier guess of
+  `entity.transform.translation`.)*
+- **Modules via `require`:** built-ins `RealityKit`, `Math3D`, `Foundation`,
+  `CoreGraphics`; custom types via `TypeSchema<T>("Name") { StoredProperty / …
+  Constructor / InstanceFunc / … }`, `EnumSchema`, grouped in `Module("Name") { … }`.
+- **Gesture (the `Random` graph, verbatim from the package docs):**
+  ```js
+  this.didAdd = function() {
+    this.entity.setComponent(new RealityKit.InputTargetComponent());
+    this.entity.generateCollisionShapes(true);
+    let dragStart;
+    this.entity.on(RealityKit.DragGestureEvent.name, (e) => {
+      const event = e.event;
+      dragStart ??= event.entity.position.clone();
+      event.entity.position = Math3D.add(dragStart, event.sceneTranslation);
+      if (event.phase.equals(RealityKit.DragGestureEvent.Phase.ended)) dragStart = undefined;
+    });
+  };
+  ```
+- **Path-2 options for Deconstructed 3:** (a) **depend on the public package** and run
+  genuine RCP scripts on Apple's runtime (most honest); or (b) keep our own public-
+  JavaScriptCore host for portability/injection. Either way the target API is public
+  and documented. *(Depending on Apple's public OSS does not touch our internal
+  clean-room rule.)*
+
 ## Open questions / next captures
 
 - [ ] Grammar edge cases: enums, asset references, and how text objects link to
