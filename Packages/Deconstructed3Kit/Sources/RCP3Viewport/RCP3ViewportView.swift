@@ -39,11 +39,6 @@ public struct RCP3ViewportView: View {
     /// `node.id` (uuid) → StageView prim-path string, rebuilt with the entities.
     @State private var primPathByNodeID: [String: String] = [:]
 
-    /// The host's color scheme. A RealityKit/Metal viewport does not inherit the
-    /// SwiftUI environment appearance, so we forward it explicitly to StageView
-    /// (background + grid) via `.updateAppearance`.
-    @Environment(\.colorScheme) private var colorScheme
-
     /// - Parameters:
     ///   - sceneGraph: the `.tm_*`-reconstructed scene to materialize, or `nil`.
     ///   - selection: a two-way binding to the selected entity uuid.
@@ -64,13 +59,8 @@ public struct RCP3ViewportView: View {
                 ContentUnavailableView("No scene", systemImage: "cube.transparent")
             }
         }
-        .onAppear {
-            rebuild(from: sceneGraph)
-            applyAppearance()
-        }
+        .onAppear { rebuild(from: sceneGraph) }
         .onChange(of: sceneGraph) { _, newValue in rebuild(from: newValue) }
-        // Forward the host theme (dark/light) to the viewport.
-        .onChange(of: colorScheme) { _, _ in applyAppearance() }
         // Host → viewport selection.
         .onChange(of: selection) { _, newValue in pushSelection(newValue) }
         // Viewport → host selection: a pick bumps the provider's selection state.
@@ -79,22 +69,25 @@ public struct RCP3ViewportView: View {
         }
     }
 
+    /// Mirrors the viewport configuration the prior Deconstructed app used: grid +
+    /// axes on, RealityKit Y-up / 1 unit = 1 meter, the system environment
+    /// background, and a cyan post-process selection outline. Appearance
+    /// (dark/light) is left to StageView, which resolves its `.automatic` default
+    /// from the host color scheme.
     private var configuration: RealityKitConfiguration {
-        var config = RealityKitConfiguration()
-        // RCP 3 entities are authored in RealityKit's own Y-up, 1 unit = 1 meter
-        // space — the same metadata we pass to `setModel`.
-        config.metersPerUnit = 1
-        config.isZUp = false
-        return config
-    }
-
-    // MARK: - Appearance
-
-    /// Pushes the host's current color scheme to StageView so the viewport
-    /// background and grid match dark/light mode.
-    @MainActor
-    private func applyAppearance() {
-        store.send(.updateAppearance(colorScheme == .dark ? .dark : .light))
+        RealityKitConfiguration(
+            showGrid: true,
+            showAxes: true,
+            metersPerUnit: 1,
+            isZUp: false,
+            showEnvironmentBackground: true,
+            outlineConfiguration: OutlineConfiguration(
+                color: .cyan,
+                width: 0.15,
+                referenceDistance: 2.0
+            ),
+            selectionHighlightStyle: .postProcessOutline
+        )
     }
 
     // MARK: - Model injection
