@@ -41,7 +41,7 @@ public struct DocumentView: View {
         } content: {
             centerColumn
                 .frame(minWidth: 320)
-                .toolbar { centerToolbar }
+                .navigationTitle(centerMode == .graph ? "Script Graph" : "Viewport")
                 // Fall back to the viewport whenever the current selection has no
                 // script graph, so the mode can't get stuck on an empty canvas.
                 .onChange(of: store.selectedScriptGraph == nil) { _, noGraph in
@@ -80,10 +80,38 @@ public struct DocumentView: View {
 
     // MARK: Center column (viewport ⇄ script-graph canvas)
 
-    /// The 3D viewport, or — when the selected entity has a script graph and the
-    /// user switches to it — the visual node-graph canvas.
+    /// The center column: the 3D viewport, with an in-content mode switch to the
+    /// visual script-graph canvas when the selected entity carries a graph. The
+    /// switch is an in-view header (not a toolbar item) so it renders reliably in
+    /// the split view's content column.
     @ViewBuilder
     private var centerColumn: some View {
+        VStack(spacing: 0) {
+            if store.selectedScriptGraph != nil {
+                modeSwitcher
+                Divider()
+            }
+            centerContent
+        }
+    }
+
+    /// The segmented Viewport / Graph switch, shown only when a script graph exists.
+    private var modeSwitcher: some View {
+        Picker("View", selection: $centerMode) {
+            ForEach(CenterMode.allCases, id: \.self) { mode in
+                Label(mode.title, systemImage: mode.symbol).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 260)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var centerContent: some View {
         switch centerMode {
         case .viewport:
             // The reconstructed 3D viewport (StageView-backed), fed the live
@@ -93,14 +121,12 @@ public struct DocumentView: View {
                 sceneGraph: store.sceneGraph,
                 selection: $store.selection.sending(\.selected)
             )
-            .navigationTitle("Viewport")
         case .graph:
             if let graph = store.selectedScriptGraph {
                 // Re-create the canvas when the selected graph changes (the bridge
                 // builds a fresh `FlowStore` per graph). `id` keys it to the graph.
                 ScriptGraphCanvas(graph: graph)
                     .id(store.selection)
-                    .navigationTitle("Script Graph")
             } else {
                 ContentUnavailableView(
                     "No script graph",
@@ -108,20 +134,6 @@ public struct DocumentView: View {
                     description: Text("Select an entity with a script graph to see its nodes.")
                 )
             }
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var centerToolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            Picker("View", selection: $centerMode) {
-                ForEach(CenterMode.allCases, id: \.self) { mode in
-                    Label(mode.title, systemImage: mode.symbol).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            // Graph mode is only meaningful when the selection carries a graph.
-            .disabled(store.selectedScriptGraph == nil)
         }
     }
 
