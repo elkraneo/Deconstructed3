@@ -12,18 +12,18 @@ public struct AppRootView: View {
         DocumentFeature()
     }
 
-    /// An optional builder for the canonical "Simulate" view (runs a graph on Apple's
-    /// real `RealityKitScripting` runtime). The **app** target injects it — the app
-    /// links the binary framework; this layer stays free of that dependency so
-    /// `swift test` works. When `nil`, the Simulate affordance is hidden.
-    private let canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)?
+    /// Invoked when the user asks to run a graph on Apple's real `RealityKitScripting`
+    /// runtime. The **app** target wires it (it owns the presentation + links the
+    /// binary framework); this layer stays free of that dependency so `swift test`
+    /// works. When `nil`, the Simulate affordance is hidden.
+    private let onCanonicalSimulate: ((RCP3ScriptGraph) -> Void)?
 
-    public init(canonicalSimulate: ((RCP3ScriptGraph) -> AnyView)? = nil) {
-        self.canonicalSimulate = canonicalSimulate
+    public init(onCanonicalSimulate: ((RCP3ScriptGraph) -> Void)? = nil) {
+        self.onCanonicalSimulate = onCanonicalSimulate
     }
 
     public var body: some View {
-        DocumentView(store: store, canonicalSimulate: canonicalSimulate)
+        DocumentView(store: store, onCanonicalSimulate: onCanonicalSimulate)
     }
 }
 

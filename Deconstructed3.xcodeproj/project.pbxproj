@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AE165DB52FDF2A170035DD73 /* RCP3CanonicalRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AE165DB42FDF2A170035DD73 /* RCP3CanonicalRuntime */; };
 		AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC72FDD937100F67BC4 /* RCP3Document */; };
 		AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BC92FDD937100F67BC4 /* TMFormat */; };
 		AE3E5BCC2FDD937100F67BC4 /* RCP3Viewport in Frameworks */ = {isa = PBXBuildFile; productRef = AE3E5BCB2FDD937100F67BC4 /* RCP3Viewport */; };
@@ -32,6 +33,7 @@
 				AE3E5BCA2FDD937100F67BC4 /* TMFormat in Frameworks */,
 				AE3E5BC82FDD937100F67BC4 /* RCP3Document in Frameworks */,
 				AE3E5BCC2FDD937100F67BC4 /* RCP3Viewport in Frameworks */,
+				AE165DB52FDF2A170035DD73 /* RCP3CanonicalRuntime in Frameworks */,
 				AE3E5BD02FDD937100F67BC4 /* DeconstructedFeature in Frameworks */,
 			);
 		};
@@ -42,6 +44,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* Deconstructed3 */,
+				AE165DB32FDF2A170035DD73 /* Frameworks */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -52,6 +55,13 @@
 				000000000000000000000120 /* Deconstructed3.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		AE165DB32FDF2A170035DD73 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -76,6 +86,7 @@
 				AE3E5BC92FDD937100F67BC4 /* TMFormat */,
 				AE3E5BCB2FDD937100F67BC4 /* RCP3Viewport */,
 				AE3E5BCF2FDD937100F67BC4 /* DeconstructedFeature */,
+				AE165DB42FDF2A170035DD73 /* RCP3CanonicalRuntime */,
 			);
 			productName = MyApp;
 			productReference = 000000000000000000000120 /* Deconstructed3.app */;
@@ -370,6 +381,11 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		AE165DB42FDF2A170035DD73 /* RCP3CanonicalRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AE3E5BC62FDD937100F67BC4 /* XCLocalSwiftPackageReference "Packages/Deconstructed3Kit" */;
+			productName = RCP3CanonicalRuntime;
+		};
 		AE3E5BC72FDD937100F67BC4 /* RCP3Document */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RCP3Document;
