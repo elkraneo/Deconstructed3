@@ -223,7 +223,6 @@ imports — without losing the USD path.
    solid background and the grid — without the caller needing to know about the
    skybox, `showEnvironmentBackground`, or `StageViewAppearanceOverrides`. "Pass the
    system appearance and the viewport themes itself" is the expected ergonomics
-   (friction #9). A common workaround is a bespoke
-   `RealityKitViewportAppearanceMapper` that builds a `.custom` appearance with
-   light/dark background palettes — useful, but more than a simple adopter should
-   need.
+   (friction #9). A common workaround is a bespoke appearance mapper that builds a
+   `.custom` appearance with light/dark background palettes — useful, but more than a
+   simple adopter should need.
