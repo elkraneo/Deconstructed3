@@ -52,8 +52,23 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byType["tm_gesture_event_drag"] == "On Drag")
         #expect(byType["tm_gesture_event_tap"] == "On Tap")
 
+        // The expanded palette: On Update, Get Component, and the lifecycle events.
+        #expect(byType["tm_update"] == "On Update")
+        #expect(byType["tm_get_component"] == "Get Component")
+        #expect(byType["tm_did_add"] == "On Added")
+        #expect(byType["tm_did_activate"] == "On Activated")
+        #expect(byType["tm_will_remove"] == "Will Remove")
+        #expect(byType["tm_will_deactivate"] == "Will Deactivate")
+        #expect(byType["tm_script_changed"] == "Script Changed")
+
         // Data-driven: one palette item per type that has a spec.
-        #expect(items.count == ["tm_set_component", "tm_gesture_event_drag", "tm_gesture_event_tap"].count)
+        let expectedTypes = [
+            "tm_set_component", "tm_gesture_event_drag", "tm_gesture_event_tap",
+            "tm_update", "tm_did_add", "tm_did_activate", "tm_will_remove",
+            "tm_will_deactivate", "tm_script_changed", "tm_get_component",
+        ]
+        #expect(items.count == expectedTypes.count)
+        #expect(Set(items.map(\.type)) == Set(expectedTypes))
     }
 
     @Test("Humanized fallback name drops the tm_ prefix and Title Cases the type")
@@ -115,6 +130,45 @@ struct ScriptGraphNodeLibraryTests {
         // Set Component is a passthrough — it declares both exec input and output.
         #expect(set.pins.contains { $0.isExec && $0.isInput })
         #expect(set.pins.contains { $0.isExec && !$0.isInput })
+    }
+
+    // MARK: - Bridge: Get Component interface (mirror — properties as OUTPUTS)
+
+    @Test("Get Component node renders Source/Component Type inputs + Transform properties as OUTPUTS")
+    func getComponentFullInterface() throws {
+        let get = try #require(Self.payloads(for: Self.getComponentGraph())["g1"])
+
+        // Source/Component Type are inputs, with the same exposed values as Set.
+        let inputs = get.inputPins
+        let source = try #require(inputs.first { $0.label == "Source" })
+        #expect(source.valueLabel == "(Self)")
+        let componentType = try #require(inputs.first { $0.label == "Component Type" })
+        #expect(componentType.valueLabel == "Transform")
+
+        // The four Transform properties appear as data OUTPUTS (you read them) — the
+        // mirror of Set Component, where they are inputs.
+        let outputLabels = Set(get.outputPins.filter { !$0.isExec }.map(\.label))
+        #expect(outputLabels.isSuperset(of: ["Translation", "Rotation", "Scale", "Matrix"]))
+
+        // They are NOT inputs on a Get node.
+        let inputLabels = Set(inputs.map(\.label))
+        #expect(inputLabels.isDisjoint(with: ["Translation", "Rotation", "Scale", "Matrix"]))
+
+        // Get Component is also a passthrough — exec input and output.
+        #expect(get.pins.contains { $0.isExec && $0.isInput })
+        #expect(get.pins.contains { $0.isExec && !$0.isInput })
+    }
+
+    @Test("Get Component without a component_type literal adds no Transform properties")
+    func getComponentWithoutType() throws {
+        let g1 = RCP3ScriptGraph.Node(id: "g1", type: "tm_get_component", label: "Get")
+        let graph = RCP3ScriptGraph(nodes: [g1], wires: [], data: [])
+
+        let get = try #require(Self.payloads(for: graph)["g1"])
+        let outputLabels = Set(get.outputPins.map(\.label))
+        #expect(!outputLabels.contains("Rotation"))
+        let componentType = try #require(get.inputPins.first { $0.label == "Component Type" })
+        #expect(componentType.valueLabel == nil)
     }
 
     @Test("Without a component_type literal, no Transform properties are added")
@@ -227,6 +281,21 @@ struct ScriptGraphNodeLibraryTests {
             valueHash: TMHash.murmur64a("Transform")
         )
         return RCP3ScriptGraph(nodes: [n1, n2], wires: [exec, data], data: [literal])
+    }
+
+    /// A lone Get Component node with a `component_type` literal naming `Transform`, so
+    /// the get node resolves its component and exposes Transform's property pins — as
+    /// OUTPUTS (the mirror of `dragToSetGraph`'s input properties).
+    static func getComponentGraph() -> RCP3ScriptGraph {
+        let g1 = RCP3ScriptGraph.Node(id: "g1", type: "tm_get_component", label: "Get Transform")
+        let literal = RCP3ScriptGraph.DataLiteral(
+            id: "d1",
+            toNode: "g1",
+            toPin: TMHash.murmur64a("component_type"),
+            valueType: "re_scripting_graph_component_type",
+            valueHash: TMHash.murmur64a("Transform")
+        )
+        return RCP3ScriptGraph(nodes: [g1], wires: [], data: [literal])
     }
 
     private static func allEntities(_ root: RCP3Entity) -> [RCP3Entity] {

@@ -83,32 +83,40 @@ public enum ScriptGraphPinResolver {
     }
 
     /// Pins for a node with a known interface: every declared input and output pin
-    /// (wired or not), plus — for a `tm_set_component` whose `component_type` literal
-    /// resolves to a known component — that component's property pins. Exposed
-    /// literal values (`source = (Self)`, `component_type = Transform`, …) are
-    /// carried on the pin's `valueLabel`. Finally, any pin actually referenced by a
-    /// wire/literal that the declared interface does not cover is appended (as a
-    /// hex-labelled data pin) so no edge is left dangling.
+    /// (wired or not), plus — for a `tm_set_component`/`tm_get_component` whose
+    /// `component_type` literal resolves to a known component — that component's
+    /// property pins. They are added as data INPUTS on a Set Component (you write
+    /// them) and as data OUTPUTS on a Get Component (you read them) — symmetric
+    /// mirrors of one another. Exposed literal values (`source = (Self)`,
+    /// `component_type = Transform`, …) are carried on the pin's `valueLabel`.
+    /// Finally, any pin actually referenced by a wire/literal that the declared
+    /// interface does not cover is appended (as a hex-labelled data pin) so no edge
+    /// is left dangling.
     private static func libraryPins(
         for node: RCP3ScriptGraph.Node,
         spec: ScriptGraphNodeLibrary.NodeSpec,
         in graph: RCP3ScriptGraph
     ) -> [ScriptGraphNodePayload.Pin] {
-        // Resolve the component type once (Set Component only): used both to add the
-        // component's property pins and to expose the `component_type` value label.
-        let componentTypeHash = node.type == "tm_set_component"
-            ? componentTypeHash(forNode: node, in: graph)
-            : nil
+        // Resolve the component type once (Set/Get Component only): used both to add
+        // the component's property pins and to expose the `component_type` value label.
+        let componentTypeHash = resolvedComponentTypeHash(forNode: node, in: graph)
         let resolvedComponentName = componentTypeHash.flatMap(ScriptGraphNodeLibrary.componentTypeName(forHash:))
+        let componentProperties = componentTypeHash
+            .flatMap(ScriptGraphNodeLibrary.componentProperties(forComponentTypeHash:)) ?? []
 
+        // Set Component writes the component's properties (INPUTS); Get Component reads
+        // them (OUTPUTS). A node that is neither — or that has no resolved component —
+        // gets no extra property pins.
         var inputSpecs = spec.inputs
-        if let componentTypeHash,
-           let properties = ScriptGraphNodeLibrary.componentProperties(forComponentTypeHash: componentTypeHash) {
-            inputSpecs.append(contentsOf: properties)
+        var outputSpecs = spec.outputs
+        switch node.type {
+        case "tm_set_component": inputSpecs.append(contentsOf: componentProperties)
+        case "tm_get_component": outputSpecs.append(contentsOf: componentProperties)
+        default: break
         }
 
         var pins: [ScriptGraphNodePayload.Pin] = []
-        pins.append(contentsOf: spec.outputs.map { pin(from: $0, isInput: false, componentTypeName: resolvedComponentName) })
+        pins.append(contentsOf: outputSpecs.map { pin(from: $0, isInput: false, componentTypeName: resolvedComponentName) })
         pins.append(contentsOf: inputSpecs.map { pin(from: $0, isInput: true, componentTypeName: resolvedComponentName) })
 
         // Safety net: include any wired/literal pin the declared interface omits, so
@@ -158,8 +166,16 @@ public enum ScriptGraphPinResolver {
         }
     }
 
-    /// The chosen component type's `murmur64a` hash for a `tm_set_component` node:
-    /// the `valueHash` of the data literal bound to its `component_type` pin.
+    /// The chosen component type's `murmur64a` hash for a Set/Get Component node (the
+    /// only node types with a `component_type` selector), or `nil` for any other node
+    /// type. Shared by both so they resolve their component identically.
+    private static func resolvedComponentTypeHash(forNode node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> UInt64? {
+        guard node.type == "tm_set_component" || node.type == "tm_get_component" else { return nil }
+        return componentTypeHash(forNode: node, in: graph)
+    }
+
+    /// The `valueHash` of the data literal bound to a node's `component_type` pin — the
+    /// chosen component type's `murmur64a` hash, or `nil` when no such literal exists.
     private static func componentTypeHash(forNode node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> UInt64? {
         let componentTypePin = TMHash.murmur64a("component_type")
         return graph.data.first { $0.toNode == node.id && $0.toPin == componentTypePin }?.valueHash

@@ -131,6 +131,13 @@ public enum ScriptGraphNodeLibrary {
         "tm_gesture_event_drag": "On Drag",
         "tm_gesture_event_tap": "On Tap",
         "tm_set_component": "Set Component",
+        "tm_update": "On Update",
+        "tm_did_add": "On Added",
+        "tm_did_activate": "On Activated",
+        "tm_will_remove": "Will Remove",
+        "tm_will_deactivate": "Will Deactivate",
+        "tm_script_changed": "Script Changed",
+        "tm_get_component": "Get Component",
     ]
 
     // MARK: - Node specs
@@ -185,6 +192,27 @@ public enum ScriptGraphNodeLibrary {
             ],
             outputs: [exec]
         ),
+        // On Update — per-frame event source. exec out + readouts. (entity is the
+        // script's self.) NOTE: the `deltaTime`/`scene` connector names here are
+        // best-effort — they are *not* yet murmur-verified against a real capture, so a
+        // wired `deltaTime`/`scene` from a true RCP graph may not coincide with these
+        // hashed handle ids until confirmed. (`entity` mirrors the verified drag/tap
+        // `entity` connector.)
+        "tm_update": NodeSpec(inputs: [], outputs: [exec, data("deltaTime", "Delta Time"), data("scene", "Scene"), data("entity", "Entity")]),
+        // Lifecycle events — simple exec-output event sources (each carries only a
+        // hidden self entity). Exec-only, so these are faithful: no data connector
+        // names to verify.
+        "tm_did_add":         NodeSpec(inputs: [], outputs: [exec]),
+        "tm_did_activate":    NodeSpec(inputs: [], outputs: [exec]),
+        "tm_will_remove":     NodeSpec(inputs: [], outputs: [exec]),
+        "tm_will_deactivate": NodeSpec(inputs: [], outputs: [exec]),
+        "tm_script_changed":  NodeSpec(inputs: [], outputs: [exec]),
+        // Get Component — mirror of Set Component, but the component's properties are
+        // OUTPUTS (you read them). Its `source`/`component_type` connector names mirror
+        // the verified `tm_set_component` names, so this node is faithful. The chosen
+        // component type's property pins are added *dynamically* by the resolver as
+        // data OUTPUTS (see `ScriptGraphPinResolver`).
+        "tm_get_component": NodeSpec(inputs: [exec, data("source", "Source"), data("component_type", "Component Type")], outputs: [exec]),
     ]
 
     // MARK: - Component types (registry)

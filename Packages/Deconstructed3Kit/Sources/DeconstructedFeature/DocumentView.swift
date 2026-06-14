@@ -77,6 +77,16 @@ public struct DocumentView: View {
         store.openScriptGraph ?? store.selectedScriptGraph
     }
 
+    /// Whether the Run/Preview affordances should be ENABLED: whenever a graph is open
+    /// in the editor (`store.openScriptGraph`), falling back to the selected entity's
+    /// graph (`store.selectedScriptGraph`). Deliberately independent of the center
+    /// mode and of *which* entity is selected — with "world" selected the graph lives
+    /// on a box child, so gating on the selected entity (or on viewport mode) wrongly
+    /// greyed these out. Run/Preview just needs a graph to run.
+    private var canRunPreview: Bool {
+        store.openScriptGraph != nil || store.selectedScriptGraph != nil
+    }
+
     /// The graph the spatial Play would run in the 3D viewport. v1 drives the
     /// *selected* entity, so this is the selected entity's graph (the box, when
     /// selected). `nil` when the selection has no graph — Play is then disabled.
@@ -264,8 +274,12 @@ public struct DocumentView: View {
             .pickerStyle(.segmented)
         }
         // PLAY / STOP: run the script graph LIVE in the 3D viewport, driving the
-        // real reconstructed entity. Only available in viewport mode when the
-        // selected entity has a runnable graph (v1 drives the selection).
+        // real reconstructed entity. AVAILABILITY is relaxed to "a graph is open"
+        // (`canRunPreview`) so the toggle isn't wrongly greyed out when the graph
+        // lives on a box child rather than the selected entity. Actually DRIVING the
+        // 3D entity still requires viewport mode + a resolvable target — `startPlaying`
+        // is a no-op without `playableGraph`/`playableTargetNodeID`, so the live-Play
+        // behavior is otherwise unchanged.
         ToolbarItem {
             Button(
                 isPlaying ? "Stop" : "Play",
@@ -273,19 +287,20 @@ public struct DocumentView: View {
             ) {
                 if isPlaying { stopPlaying() } else { startPlaying() }
             }
-            .disabled(!canPlay && !isPlaying)
+            .disabled(!canRunPreview && !isPlaying)
             .help(isPlaying
                 ? "Stop the running graph and restore the entity"
                 : "Run this script graph live in the viewport (drag to drive the entity)")
         }
-        // RUN / PREVIEW affordance: shown whenever there's a graph to run (an open
-        // asset, or the selected entity's graph). Opens `ScriptGraphPreviewView` in a
-        // sheet, which compiles + runs the graph on the RCP3 runtime.
+        // RUN / PREVIEW affordance: ENABLED whenever a graph is open in the editor
+        // (or the selected entity has one) — see `canRunPreview`. Opens
+        // `ScriptGraphPreviewView` in a sheet, which compiles + runs the graph on the
+        // RCP3 runtime, so it works from the Graph view too.
         ToolbarItem {
             Button("Run Preview", systemImage: "rectangle.on.rectangle") {
                 showsPreview = true
             }
-            .disabled(previewableGraph == nil)
+            .disabled(!canRunPreview)
             .help("Compile and run this script graph with a 2D drag simulator")
         }
     }
