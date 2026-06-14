@@ -62,6 +62,28 @@ import RCP3Document
         #expect(literal.valueType == "re_scripting_graph_component_type")
     }
 
+    // MARK: Browse script graphs as assets (independent of any entity)
+
+    @Test func enumeratesScriptGraphAssets() throws {
+        guard let url = Self.randomBundleURL else { return } // capture not present
+        let bundle = try RCP3Bundle.open(url)
+
+        let assets = bundle.scriptGraphAssets()
+        #expect(!assets.isEmpty)
+
+        // At least one asset is a "Script Graph" (RCP's default name for a new graph).
+        let scriptGraph = try #require(assets.first { $0.name.contains("Script Graph") })
+
+        // Loading by the asset's id resolves a real graph with nodes.
+        let graph = try #require(bundle.scriptGraph(assetID: scriptGraph.id))
+        #expect(!graph.nodes.isEmpty)
+
+        // The editor passthroughs see the same assets + graph.
+        let editor = try RCP3Editor.open(url)
+        #expect(editor.scriptGraphAssets() == assets)
+        #expect(editor.scriptGraph(assetID: scriptGraph.id)?.nodes.count == graph.nodes.count)
+    }
+
     @Test func resolvesGraphBySelectedEntityID() throws {
         guard let url = Self.randomBundleURL else { return }
         let editor = try RCP3Editor.open(url)

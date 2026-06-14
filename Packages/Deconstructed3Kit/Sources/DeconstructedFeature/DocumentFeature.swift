@@ -18,16 +18,22 @@ public struct DocumentFeature: Sendable {
         public var editor: RCP3Editor?
         /// The selected entity's `RCP3Entity.id` (uuid), bridged to tree + viewport.
         public var selection: RCP3Entity.ID?
+        /// The id (asset root `__uuid`) of the script-graph asset opened directly from
+        /// the sidebar, or `nil` when none is open. When set, the center graph view
+        /// shows this asset instead of the selected entity's graph.
+        public var openScriptGraphID: String?
         /// Last error surfaced to the UI (open/save failure), if any.
         public var errorMessage: String?
 
         public init(
             editor: RCP3Editor? = nil,
             selection: RCP3Entity.ID? = nil,
+            openScriptGraphID: String? = nil,
             errorMessage: String? = nil
         ) {
             self.editor = editor
             self.selection = selection
+            self.openScriptGraphID = openScriptGraphID
             self.errorMessage = errorMessage
         }
 
@@ -59,6 +65,17 @@ public struct DocumentFeature: Sendable {
             return editor.scriptGraph(forEntityID: selection)
         }
 
+        /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by
+        /// name), empty when no project is open. The sidebar lists these so a user can
+        /// open a graph editor directly.
+        public var scriptGraphAssets: [RCP3ScriptGraphAsset] { editor?.scriptGraphAssets() ?? [] }
+
+        /// The script graph opened directly from the sidebar (by `openScriptGraphID`),
+        /// resolved against the live editor's bundle, or `nil` when none is open.
+        public var openScriptGraph: RCP3ScriptGraph? {
+            openScriptGraphID.flatMap { editor?.scriptGraph(assetID: $0) }
+        }
+
         private static func find(_ id: RCP3Entity.ID, in entity: RCP3Entity) -> RCP3Entity? {
             if entity.id == id { return entity }
             for child in entity.children {
@@ -75,6 +92,9 @@ public struct DocumentFeature: Sendable {
         case opened(Result<RCP3Editor, DocumentError>)
         /// Tree/viewport selection changed to this entity id (or cleared).
         case selected(RCP3Entity.ID?)
+        /// A script-graph asset was opened directly from the sidebar (or cleared with
+        /// `nil`). The center switches to the graph editor for this asset.
+        case scriptGraphOpened(String?)
         /// The inspector's name field edited the selected entity to this string.
         case nameEdited(String)
         /// User invoked Save (toolbar / ⌘S).
@@ -100,17 +120,24 @@ public struct DocumentFeature: Sendable {
             case let .opened(.success(editor)):
                 state.editor = editor
                 state.selection = editor.entity.id
+                // A fresh bundle has its own assets — drop any graph open from the last.
+                state.openScriptGraphID = nil
                 state.errorMessage = nil
                 return .none
 
             case let .opened(.failure(error)):
                 state.editor = nil
                 state.selection = nil
+                state.openScriptGraphID = nil
                 state.errorMessage = error.message
                 return .none
 
             case let .selected(id):
                 state.selection = id
+                return .none
+
+            case let .scriptGraphOpened(id):
+                state.openScriptGraphID = id
                 return .none
 
             case let .nameEdited(newName):

@@ -42,10 +42,15 @@ public struct DocumentView: View {
             centerColumn
                 .frame(minWidth: 320)
                 .toolbar { centerToolbar }
-                // Fall back to the viewport whenever the current selection has no
-                // script graph, so the mode can't get stuck on an empty canvas.
-                .onChange(of: store.selectedScriptGraph == nil) { _, noGraph in
-                    if noGraph { centerMode = .viewport }
+                // Fall back to the viewport whenever there's nothing to show in the
+                // graph canvas (no open asset and the selection has no graph), so the
+                // mode can't get stuck on an empty canvas.
+                .onChange(of: store.openScriptGraphID == nil && store.selectedScriptGraph == nil) { _, empty in
+                    if empty { centerMode = .viewport }
+                }
+                // Opening a graph asset from the sidebar switches the center to it.
+                .onChange(of: store.openScriptGraphID) { _, id in
+                    if id != nil { centerMode = .graph }
                 }
         } detail: {
             if let entity = store.selectedEntity {
@@ -65,6 +70,24 @@ public struct DocumentView: View {
                 OutlineGroup(root, children: \.optionalChildren) { entity in
                     Label(entity.displayName, systemImage: entity.symbolName)
                         .tag(entity.id)
+                }
+
+                // Script graphs as first-class, browsable assets: open the editor
+                // directly here instead of hunting for which entity references one.
+                // Buttons (not selectable rows) so they don't fight the entity tree's
+                // selection binding.
+                if !store.scriptGraphAssets.isEmpty {
+                    Section("Script Graphs") {
+                        ForEach(store.scriptGraphAssets) { asset in
+                            Button {
+                                store.send(.scriptGraphOpened(asset.id))
+                            } label: {
+                                Label(asset.name, systemImage: "point.3.connected.trianglepath.dotted")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
+                        }
+                    }
                 }
             }
         } else {
@@ -95,16 +118,19 @@ public struct DocumentView: View {
                 selection: $store.selection.sending(\.selected)
             )
         case .graph:
-            if let graph = store.selectedScriptGraph {
-                // Re-create the canvas when the selected graph changes (the bridge
-                // builds a fresh `FlowStore` per graph). `id` keys it to the graph.
+            // An asset opened from the sidebar takes precedence; otherwise fall back
+            // to the selected entity's graph.
+            if let graph = store.openScriptGraph ?? store.selectedScriptGraph {
+                // Re-create the canvas when the shown graph changes (the bridge builds
+                // a fresh `FlowStore` per graph). `id` keys it to the open asset, else
+                // the selection.
                 ScriptGraphCanvas(graph: graph)
-                    .id(store.selection)
+                    .id(store.openScriptGraphID ?? store.selection)
             } else {
                 ContentUnavailableView(
                     "No script graph",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    description: Text("Select an entity with a script graph to see its nodes.")
+                    description: Text("Open a script graph from the sidebar, or select an entity that has one.")
                 )
             }
         }

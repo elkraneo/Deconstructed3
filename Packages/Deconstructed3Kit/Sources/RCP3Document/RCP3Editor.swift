@@ -42,6 +42,19 @@ public struct RCP3Editor: Sendable, Equatable {
         return bundle.scriptGraph(forEntity: object)
     }
 
+    /// Every `*.tm_script_graph` asset in the backing bundle, as browsable assets
+    /// sorted by name — the script graphs the user can open directly, independent of
+    /// which entity references them.
+    public func scriptGraphAssets() -> [RCP3ScriptGraphAsset] {
+        bundle.scriptGraphAssets()
+    }
+
+    /// Loads and parses the bundle's `*.tm_script_graph` asset with this id (the
+    /// asset's root `__uuid`).
+    public func scriptGraph(assetID: String) -> RCP3ScriptGraph? {
+        bundle.scriptGraph(assetID: assetID)
+    }
+
     private init(bundle: RCP3Bundle) {
         self.bundle = bundle
         self.root = bundle.root

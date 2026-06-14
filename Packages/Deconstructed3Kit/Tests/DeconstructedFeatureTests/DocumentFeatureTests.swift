@@ -61,6 +61,51 @@ import Testing
         return dir
     }
 
+    /// The workspace-local `Random` capture (a box with a `re_scripting_component`
+    /// and a `*.tm_script_graph` asset), if present. No-ops cleanly when absent.
+    static func randomBundleURL() -> URL? {
+        guard let refs = referencesDir() else { return nil }
+        let bundle = refs.appending(path: "Random/Random.realitycomposerpro")
+        return FileManager.default.fileExists(
+            atPath: bundle.appending(path: "world.tm_entity").path
+        ) ? bundle : nil
+    }
+
+    // MARK: open a script graph as an asset (sidebar → center editor)
+
+    @Test func opensScriptGraphAsset() async throws {
+        guard let dir = Self.randomBundleURL() else { return } // capture absent
+
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        } withDependencies: {
+            $0.documentClient = .live
+        }
+
+        let opened = try RCP3Editor.open(dir)
+        await store.send(.openTapped(dir))
+        await store.receive(\.opened.success) {
+            $0.editor = opened
+            $0.selection = opened.entity.id
+        }
+
+        // The bundle exposes its script graphs as browsable assets.
+        let asset = try #require(store.state.scriptGraphAssets.first)
+
+        // Opening one sets `openScriptGraphID` and resolves `openScriptGraph`.
+        await store.send(.scriptGraphOpened(asset.id)) {
+            $0.openScriptGraphID = asset.id
+        }
+        #expect(store.state.openScriptGraph != nil)
+        #expect(store.state.openScriptGraph?.nodes.isEmpty == false)
+
+        // Clearing it resets the open graph.
+        await store.send(.scriptGraphOpened(nil)) {
+            $0.openScriptGraphID = nil
+        }
+        #expect(store.state.openScriptGraph == nil)
+    }
+
     // MARK: open → select → nameEdited → saveTapped → reopen
 
     @Test func openEditSaveRoundTripsToDisk() async throws {
