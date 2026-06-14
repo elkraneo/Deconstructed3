@@ -42,6 +42,33 @@ public enum ScriptGraphNodeLibrary {
         /// The `murmur64a` hash of `connectorName` — the data pin's `connector_hash`.
         /// (Meaningless for exec pins, which use fixed handle ids.)
         public var connectorHash: UInt64 { TMHash.murmur64a(connectorName) }
+
+        /// Convenience for a data pin (`isExec: false`). Used by the per-category
+        /// component definitions in `ScriptGraphComponentLibrary+*.swift`.
+        public static func data(_ connectorName: String, _ displayName: String) -> PinSpec {
+            PinSpec(connectorName: connectorName, displayName: displayName, isExec: false)
+        }
+    }
+
+    /// A RealityKit component type the script graph's Set/Get Component nodes can
+    /// target, with the editable property pins it exposes. Component types are named
+    /// exactly as the public RealityKit / RealityKitScripting schema names them
+    /// (e.g. `"Transform"`, `"ModelComponent"`); the on-disk `component_type` literal
+    /// stores `murmur64a(name)`.
+    public struct ComponentSpec: Sendable, Hashable {
+        /// The component's schema name (e.g. `"ModelComponent"`).
+        public let name: String
+        /// The component's editable properties, exposed as data input pins on a
+        /// Set Component node once this type is selected.
+        public let properties: [PinSpec]
+
+        public init(name: String, properties: [PinSpec]) {
+            self.name = name
+            self.properties = properties
+        }
+
+        /// `murmur64a(name)` — the value stored in the `component_type` literal.
+        public var typeHash: UInt64 { TMHash.murmur64a(name) }
     }
 
     /// A node type's full interface: its declared input and output pins, in display
@@ -110,42 +137,47 @@ public enum ScriptGraphNodeLibrary {
         ),
     ]
 
-    // MARK: - Component types
+    // MARK: - Component types (registry)
 
-    /// The display name for a RealityKit component type, keyed by the `murmur64a`
-    /// hash of its name. `nil` for component types we have not observed.
-    public static func componentTypeName(forHash hash: UInt64) -> String? {
-        componentTypeNamesByHash[hash]
-    }
+    /// All component types the editor knows, aggregated from the per-category
+    /// definitions in `ScriptGraphComponentLibrary+*.swift`. Each category is a
+    /// standalone `[ComponentSpec]` in its own file so they can be authored
+    /// independently; this is the single place they are merged.
+    static let registeredComponents: [ComponentSpec] =
+        spatialComponents
 
-    private static let componentTypeNames: [String] = [
-        "Transform",
-    ]
-
-    private static let componentTypeNamesByHash: [UInt64: String] = {
-        var map: [UInt64: String] = [:]
-        for name in componentTypeNames {
-            map[TMHash.murmur64a(name)] = name
-        }
+    /// `componentSpec` keyed by `murmur64a(name)` for O(1) lookup from a
+    /// `component_type` literal hash.
+    private static let componentSpecsByHash: [UInt64: ComponentSpec] = {
+        var map: [UInt64: ComponentSpec] = [:]
+        for spec in registeredComponents { map[spec.typeHash] = spec }
         return map
     }()
+
+    /// The display name for a RealityKit component type, keyed by the `murmur64a`
+    /// hash of its name. `nil` for component types not in the registry.
+    public static func componentTypeName(forHash hash: UInt64) -> String? {
+        componentSpecsByHash[hash]?.name
+    }
 
     /// The property pins a `tm_set_component` node exposes once its component type is
     /// resolved — i.e. the editable fields of that component. Returned as data
     /// *inputs* (they sit on the leading edge of the set node). `nil` for component
-    /// types whose properties we have not observed.
+    /// types not in the registry.
     public static func componentProperties(forComponentTypeHash hash: UInt64) -> [PinSpec]? {
-        componentPropertiesByTypeHash[hash]
+        componentSpecsByHash[hash]?.properties
     }
 
-    private static let componentPropertiesByTypeHash: [UInt64: [PinSpec]] = [
-        // The Transform component's editable properties, as RCP shows them on a
-        // "Set Transform" node.
-        TMHash.murmur64a("Transform"): [
-            data("translation", "Translation"),
-            data("rotation", "Rotation"),
-            data("scale", "Scale"),
-            data("matrix", "Matrix"),
-        ],
+    /// Spatial components. (Other categories are added as separate
+    /// `ScriptGraphComponentLibrary+<Category>.swift` files and merged into
+    /// `registeredComponents`.)
+    static let spatialComponents: [ComponentSpec] = [
+        // The Transform component, as RCP shows it on a "Set Transform" node.
+        ComponentSpec(name: "Transform", properties: [
+            .data("translation", "Translation"),
+            .data("rotation", "Rotation"),
+            .data("scale", "Scale"),
+            .data("matrix", "Matrix"),
+        ]),
     ]
 }
