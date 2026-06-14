@@ -145,13 +145,36 @@ import simd
         #expect(box.transform.scale == SIMD3<Float>(2, 2, 2))
     }
 
+    /// Approximate SIMD3<Double> equality (quaternion·vector introduces tiny float
+    /// rounding once we leave the identity camera).
+    private func approxEqual(_ a: SIMD3<Double>, _ b: SIMD3<Double>, tol: Double = 1e-5) -> Bool {
+        abs(a.x - b.x) < tol && abs(a.y - b.y) < tol && abs(a.z - b.z) < tol
+    }
+
     @Test func sceneDeltaMapsScreenDragToSceneSpace() {
-        // Screen +x → scene +x; screen +y (down) → scene −y (so a drag up moves up);
-        // z is untouched. Points are scaled down (1/200).
-        let right = RCP3ViewportView.sceneDelta(for: CGSize(width: 200, height: 0))
-        #expect(right == SIMD3(1, 0, 0))
-        let down = RCP3ViewportView.sceneDelta(for: CGSize(width: 0, height: 200))
-        #expect(down == SIMD3(0, -1, 0))
+        // Front-on (identity) camera at the canonical distance (4) reduces to the old
+        // mapping: screen +x → scene +x; screen +y (down) → scene −y (drag up = up).
+        let id = simd_quatf(angle: 0, axis: [0, 1, 0])
+        let right = RCP3ViewportView.sceneDelta(for: CGSize(width: 200, height: 0), cameraRotation: id, distance: 4)
+        #expect(approxEqual(right, SIMD3(1, 0, 0)))
+        let down = RCP3ViewportView.sceneDelta(for: CGSize(width: 0, height: 200), cameraRotation: id, distance: 4)
+        #expect(approxEqual(down, SIMD3(0, -1, 0)))
+
+        // Distance scales magnitude: zoomed out (distance 8) → twice the move.
+        let far = RCP3ViewportView.sceneDelta(for: CGSize(width: 200, height: 0), cameraRotation: id, distance: 8)
+        #expect(approxEqual(far, SIMD3(2, 0, 0)))
+    }
+
+    /// The 3D-correctness fix: the drag is projected onto the *camera's* view plane,
+    /// so the world axes it moves along follow the orbit (they are NOT a fixed front-on
+    /// world x/y). Orbiting 90° about Y turns a horizontal drag into motion along world
+    /// −Z, while a vertical drag stays world-up.
+    @Test func sceneDeltaFollowsCameraOrbit() {
+        let yaw = simd_quatf(angle: .pi / 2, axis: [0, 1, 0]) // camera orbited 90° about Y
+        let right = RCP3ViewportView.sceneDelta(for: CGSize(width: 200, height: 0), cameraRotation: yaw, distance: 4)
+        #expect(approxEqual(right, SIMD3(0, 0, -1)))
+        let up = RCP3ViewportView.sceneDelta(for: CGSize(width: 0, height: 200), cameraRotation: yaw, distance: 4)
+        #expect(approxEqual(up, SIMD3(0, -1, 0)))
     }
 
     @Test func applicableTransformIsAccepted() {

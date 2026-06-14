@@ -148,7 +148,13 @@ public struct RCP3ViewportView: View {
                                 height: value.location.y - last.y
                             )
                             lastPlayDragLocation = value.location
-                            let delta = Self.sceneDelta(for: dScreen)
+                            // Project the screen drag onto the *current* camera view
+                            // plane so the move is correct from any orbit, not front-on.
+                            let delta = Self.sceneDelta(
+                                for: dScreen,
+                                cameraRotation: provider.cameraRotation,
+                                distance: provider.cameraDistance
+                            )
                             if delta != .zero { onPlayDrag(delta) }
                         }
                         .onEnded { _ in lastPlayDragLocation = nil }
@@ -156,18 +162,38 @@ public struct RCP3ViewportView: View {
         }
     }
 
-    /// Maps an incremental **screen** drag (points) to a **scene-space** delta.
+    /// Maps an incremental **screen** drag (points) to a **scene-space** delta,
+    /// projected onto the *camera's* view plane so the entity tracks the cursor from
+    /// any orbit — not a fixed front-on world plane.
     ///
-    /// Convention: screen +x → scene +x; screen +y (downward) → scene **−y** (so a
-    /// drag up moves the entity up). The z axis is left untouched (0). Points are
-    /// scaled down so a typical drag moves the entity a sensible distance.
-    static func sceneDelta(for screen: CGSize) -> SIMD3<Double> {
-        let scale = 1.0 / 200.0 // points → scene units
-        return SIMD3(
-            Double(screen.width) * scale,
-            Double(-screen.height) * scale,
-            0
-        )
+    /// The drag moves the entity in the plane facing the camera: screen +x follows
+    /// the camera's world **right**, and screen +y (downward) follows the camera's
+    /// world **down** (so a drag up moves the entity up on screen). The camera looks
+    /// down its local −Z, so its world basis is `rotation·(+X)` = right and
+    /// `rotation·(+Y)` = up. With the default front-on camera this reduces to the old
+    /// world x / −y mapping; once orbited, the axes follow the view — which is the
+    /// 3D-correct behavior (the previous version ignored the camera, applying a flat
+    /// front-on transform). Magnitude is proportional to the camera distance, mirroring
+    /// StageView's pan feel (`distance * 0.00125`, which at the canonical distance of 4
+    /// equals the old fixed 1/200), so the move tracks the cursor whether zoomed in or
+    /// out.
+    static func sceneDelta(
+        for screen: CGSize,
+        cameraRotation: simd_quatf,
+        distance: Float
+    ) -> SIMD3<Double> {
+        // The camera's world right/up axes (it looks down local −Z).
+        let right = cameraRotation.act(SIMD3<Float>(1, 0, 0))
+        let up = cameraRotation.act(SIMD3<Float>(0, 1, 0))
+        // Points → scene units, proportional to distance (so a fixed-pixel drag moves
+        // farther when zoomed out). Clamped so a degenerate distance can't zero it out.
+        let perPoint = Double(max(distance, 0.001)) * 0.00125
+        let dRight = Double(screen.width) * perPoint
+        let dUp = Double(-screen.height) * perPoint
+        func d(_ v: SIMD3<Float>) -> SIMD3<Double> {
+            SIMD3(Double(v.x), Double(v.y), Double(v.z))
+        }
+        return d(right) * dRight + d(up) * dUp
     }
 
     /// Drives one entity's local transform live, by node uuid, on the reconstructed
