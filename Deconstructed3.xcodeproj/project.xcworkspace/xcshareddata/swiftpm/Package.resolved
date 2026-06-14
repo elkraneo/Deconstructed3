@@ -83,6 +83,15 @@
       }
     },
     {
+      "identity" : "swift-flow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-flow.git",
+      "state" : {
+        "revision" : "a46767e5cabad5f21c7e9987d808a41dff71123b",
+        "version" : "0.21.6"
+      }
+    },
+    {
       "identity" : "swift-identified-collections",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-identified-collections",

@@ -1,6 +1,7 @@
 import AppKit
 import ComposableArchitecture
 import RCP3Document
+import RCP3GraphEditor
 import RCP3Viewport
 import SwiftUI
 
@@ -17,6 +18,16 @@ import SwiftUI
 public struct DocumentView: View {
     @Bindable var store: StoreOf<DocumentFeature>
 
+    /// Which view fills the center column. Pure presentation state, so it lives in
+    /// the view rather than the reducer. `.graph` is only reachable while the
+    /// selected entity carries a script graph.
+    enum CenterMode: String, CaseIterable, Hashable {
+        case viewport, graph
+        var title: String { self == .viewport ? "Viewport" : "Graph" }
+        var symbol: String { self == .viewport ? "cube" : "point.3.connected.trianglepath.dotted" }
+    }
+    @State private var centerMode: CenterMode = .viewport
+
     public init(store: StoreOf<DocumentFeature>) {
         self.store = store
     }
@@ -28,15 +39,14 @@ public struct DocumentView: View {
                 .toolbar { sidebarToolbar }
                 .frame(minWidth: 240)
         } content: {
-            // Center column: the reconstructed 3D viewport (StageView-backed).
-            // It is fed the live (possibly unsaved) scene graph + a selection
-            // binding so renames reflect and picks flow back to the store.
-            RCP3ViewportView(
-                sceneGraph: store.sceneGraph,
-                selection: $store.selection.sending(\.selected)
-            )
-            .navigationTitle("Viewport")
-            .frame(minWidth: 320)
+            centerColumn
+                .frame(minWidth: 320)
+                .toolbar { centerToolbar }
+                // Fall back to the viewport whenever the current selection has no
+                // script graph, so the mode can't get stuck on an empty canvas.
+                .onChange(of: store.selectedScriptGraph == nil) { _, noGraph in
+                    if noGraph { centerMode = .viewport }
+                }
         } detail: {
             if let entity = store.selectedEntity {
                 EntityInspectorView(store: store, entity: entity)
@@ -65,6 +75,53 @@ public struct DocumentView: View {
             } actions: {
                 Button("Open…") { presentOpenPanel() }
             }
+        }
+    }
+
+    // MARK: Center column (viewport ⇄ script-graph canvas)
+
+    /// The 3D viewport, or — when the selected entity has a script graph and the
+    /// user switches to it — the visual node-graph canvas.
+    @ViewBuilder
+    private var centerColumn: some View {
+        switch centerMode {
+        case .viewport:
+            // The reconstructed 3D viewport (StageView-backed), fed the live
+            // (possibly unsaved) scene graph + a selection binding so renames
+            // reflect and picks flow back to the store.
+            RCP3ViewportView(
+                sceneGraph: store.sceneGraph,
+                selection: $store.selection.sending(\.selected)
+            )
+            .navigationTitle("Viewport")
+        case .graph:
+            if let graph = store.selectedScriptGraph {
+                // Re-create the canvas when the selected graph changes (the bridge
+                // builds a fresh `FlowStore` per graph). `id` keys it to the graph.
+                ScriptGraphCanvas(graph: graph)
+                    .id(store.selection)
+                    .navigationTitle("Script Graph")
+            } else {
+                ContentUnavailableView(
+                    "No script graph",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    description: Text("Select an entity with a script graph to see its nodes.")
+                )
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var centerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            Picker("View", selection: $centerMode) {
+                ForEach(CenterMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            // Graph mode is only meaningful when the selection carries a graph.
+            .disabled(store.selectedScriptGraph == nil)
         }
     }
 

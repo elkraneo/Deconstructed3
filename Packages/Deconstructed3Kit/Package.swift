@@ -63,6 +63,7 @@ let package = Package(
             dependencies: [
                 "RCP3Document",
                 "RCP3Viewport",
+                "RCP3GraphEditor",
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ]
         ),
