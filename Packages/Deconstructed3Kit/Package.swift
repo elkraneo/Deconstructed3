@@ -15,12 +15,17 @@ import PackageDescription
 // local path. See `Docs/StageView-Adoption.md` for the trade-off.
 let package = Package(
     name: "Deconstructed3Kit",
-    platforms: [.macOS(.v15)],
+    // `RCP3GraphEditor` (the visual node editor) depends on SwiftFlow, which
+    // requires macOS 26+. Deconstructed 3 is macOS 27-only anyway, so we raise the
+    // package floor to 26 to satisfy it; the pure-Swift parser/document targets
+    // still build fine here.
+    platforms: [.macOS("26.0")],
     products: [
         .library(name: "TMFormat", targets: ["TMFormat"]),
         .library(name: "RCP3Document", targets: ["RCP3Document"]),
         .library(name: "RCP3Runtime", targets: ["RCP3Runtime"]),
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
+        .library(name: "RCP3GraphEditor", targets: ["RCP3GraphEditor"]),
         .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
     ],
@@ -32,6 +37,9 @@ let package = Package(
         // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
         // Pinned to the same revision StageView resolves (1.26.0).
         .package(url: "https://github.com/pointfreeco/swift-composable-architecture", from: "1.26.0"),
+        // SwiftFlow — the visual node-graph editor (MIT). Pinned exactly while it is
+        // pre-1.0 (0.x API churn). Powers `RCP3GraphEditor`.
+        .package(url: "https://github.com/1amageek/swift-flow.git", exact: "0.21.6"),
     ],
     targets: [
         .target(name: "TMFormat"),
@@ -58,6 +66,15 @@ let package = Package(
                 .product(name: "ComposableArchitecture", package: "swift-composable-architecture"),
             ]
         ),
+        // The visual script-graph node editor: bridges `RCP3ScriptGraph` into a
+        // SwiftFlow canvas and renders RCP-styled nodes/wires.
+        .target(
+            name: "RCP3GraphEditor",
+            dependencies: [
+                "RCP3Document",
+                .product(name: "SwiftFlow", package: "swift-flow"),
+            ]
+        ),
         .executableTarget(name: "RCP3Dump", dependencies: ["RCP3Document"]),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),
@@ -66,6 +83,10 @@ let package = Package(
             dependencies: ["RCP3Runtime", "RCP3Document", "TMFormat"]
         ),
         .testTarget(name: "RCP3ViewportTests", dependencies: ["RCP3Viewport"]),
+        .testTarget(
+            name: "RCP3GraphEditorTests",
+            dependencies: ["RCP3GraphEditor", "RCP3Document"]
+        ),
         .testTarget(
             name: "DeconstructedFeatureTests",
             dependencies: [

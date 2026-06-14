@@ -1,5 +1,5 @@
 {
-  "originHash" : "07a34866c2908a8bd576849d765caeba256b1329c3b280661f50a56bbb893e93",
+  "originHash" : "69339d81e5a9faf873c9cb94cc48ec35f8af5181fed16c14960a7a555a7670d0",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -80,6 +80,15 @@
       "state" : {
         "revision" : "16f7dd14ee28d04617090f2a73198b8b316ffa12",
         "version" : "1.13.1"
+      }
+    },
+    {
+      "identity" : "swift-flow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1amageek/swift-flow.git",
+      "state" : {
+        "revision" : "a46767e5cabad5f21c7e9987d808a41dff71123b",
+        "version" : "0.21.6"
       }
     },
     {
