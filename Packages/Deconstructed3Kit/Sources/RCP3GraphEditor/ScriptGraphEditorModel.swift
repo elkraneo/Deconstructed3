@@ -216,6 +216,19 @@ public final class ScriptGraphEditorModel {
         if selectedConnectionID == id { selectedConnectionID = nil }
     }
 
+    /// Inserts a fully-formed connection directly, bypassing the port-pairing rules
+    /// that `connect(_:_:)`/`completeConnection(to:)` enforce on interactive drags.
+    ///
+    /// This is the construction primitive for code that already knows the exact
+    /// endpoints and kind — a programmatic graph builder, an import/paste, or a
+    /// future undo of a delete — where the wire's validity is established elsewhere.
+    /// As with `connect`, the target input keeps a single incoming wire of its kind,
+    /// so an existing connection feeding `connection.to` is replaced.
+    public func insert(connection: GraphConnection) {
+        connections.removeAll { $0.to == connection.to }
+        connections.append(connection)
+    }
+
     // MARK: Selection + deletion
 
     public func selectNode(_ id: String?) {

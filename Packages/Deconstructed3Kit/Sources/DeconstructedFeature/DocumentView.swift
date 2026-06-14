@@ -28,8 +28,22 @@ public struct DocumentView: View {
     }
     @State private var centerMode: CenterMode = .viewport
 
+    /// The live, *editable* model behind the script-graph canvas, owned here (not by
+    /// the canvas) so Save can reach the edits and write them back to the
+    /// `.tm_script_graph`. Re-created whenever the shown graph changes (keyed below
+    /// on the open asset / selection). `nil` until a graph is shown.
+    @State private var graphModel: ScriptGraphEditorModel?
+    /// The identity of the graph `graphModel` was built for, so we only rebuild it
+    /// when the shown graph actually changes (not on every body re-evaluation).
+    @State private var graphModelKey: String?
+
     public init(store: StoreOf<DocumentFeature>) {
         self.store = store
+    }
+
+    /// Whether a script-graph canvas is currently shown (graph mode with a graph).
+    private var isGraphShown: Bool {
+        centerMode == .graph && (store.openScriptGraph ?? store.selectedScriptGraph) != nil
     }
 
     public var body: some View {
@@ -121,11 +135,12 @@ public struct DocumentView: View {
             // An asset opened from the sidebar takes precedence; otherwise fall back
             // to the selected entity's graph.
             if let graph = store.openScriptGraph ?? store.selectedScriptGraph {
-                // Re-create the canvas when the shown graph changes (the bridge builds
-                // a fresh `FlowStore` per graph). `id` keys it to the open asset, else
-                // the selection.
-                ScriptGraphCanvas(graph: graph)
-                    .id(store.openScriptGraphID ?? store.selection)
+                let key = graphKey
+                // The model is owned HERE (not by the canvas) so Save can write its
+                // live edits back to the `.tm_script_graph`. It is (re)built by
+                // `syncGraphModel(for:)` whenever the shown graph changes; `id` keys
+                // the canvas to the graph so SwiftUI rebuilds it too.
+                graphCanvas(for: graph, key: key)
             } else {
                 ContentUnavailableView(
                     "No script graph",
@@ -133,6 +148,31 @@ public struct DocumentView: View {
                     description: Text("Open a script graph from the sidebar, or select an entity that has one.")
                 )
             }
+        }
+    }
+
+    /// The identity of the currently shown graph (open asset id, else the selection).
+    private var graphKey: String {
+        store.openScriptGraphID ?? store.selection ?? "graph"
+    }
+
+    /// The canvas over the host-owned model for `graph`, (re)building the model when
+    /// the shown graph changes. The build happens in `task(id:)` (not in `body`), so
+    /// `@State` is never mutated mid-evaluation.
+    @ViewBuilder
+    private func graphCanvas(for graph: RCP3ScriptGraph, key: String) -> some View {
+        Group {
+            if let model = graphModel, graphModelKey == key {
+                ScriptGraphCanvas(model: model)
+            } else {
+                // First frame for this graph: model is built in `.task(id:)` below.
+                Color.clear
+            }
+        }
+        .id(key)
+        .task(id: key) {
+            graphModel = ScriptGraphEditorModel(graph: graph)
+            graphModelKey = key
         }
     }
 
@@ -158,11 +198,41 @@ public struct DocumentView: View {
         }
         ToolbarItem {
             Button("Save", systemImage: "square.and.arrow.down") {
-                store.send(.saveTapped)
+                save()
             }
-            .disabled(!store.hasUnsavedChanges)
+            // Enabled when the entity session has edits, OR a graph canvas is shown
+            // (its edits live in `graphModel`, outside the entity change-tracking).
+            .disabled(!store.hasUnsavedChanges && !isGraphShown)
             .keyboardShortcut("s", modifiers: .command)
         }
+    }
+
+    /// Save: write back the live script-graph edits (when a graph is shown) directly
+    /// to its `.tm_script_graph`, then run the entity Save through the store.
+    ///
+    /// The graph path is intentionally separate from the TCA entity-save flow: the
+    /// graph model is host-owned UI state (not in the reducer), and its edits don't
+    /// dirty the entity editor, so it is persisted here. The entity save (rename, …)
+    /// still goes through `.saveTapped` and is untouched.
+    private func save() {
+        if isGraphShown,
+           let model = graphModel,
+           let rootUUID = store.openScriptGraphID,
+           let bundleURL = store.editor?.bundle.url {
+            do {
+                try ScriptGraphWriteBack.write(
+                    model: model,
+                    toAssetWithRootUUID: rootUUID,
+                    in: bundleURL
+                )
+            } catch {
+                // Surface nothing fancy yet; a graph write failure shouldn't block
+                // the entity save below. (Error reporting can be lifted into the
+                // reducer in a later pass.)
+                assertionFailure("script-graph write-back failed: \(error)")
+            }
+        }
+        store.send(.saveTapped)
     }
 
     /// Presents the file picker (AppKit) and feeds the chosen URL to the store.

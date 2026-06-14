@@ -13,17 +13,40 @@ import RCP3Document
 /// The public API is unchanged — `ScriptGraphCanvas(graph:)` — so callers don't
 /// move.
 public struct ScriptGraphCanvas: View {
-    @State private var model: ScriptGraphEditorModel
+    /// A model passed in by a host (`init(model:)`), which the host also keeps so it
+    /// can read the live edits — e.g. to write them back on Save. `nil` for the
+    /// self-owning `init(graph:)` path, where the model lives in `ownedModel` below.
+    private let hostModel: ScriptGraphEditorModel?
+    /// The self-owned model for `init(graph:)`. Held in `@State` so SwiftUI keeps the
+    /// *same* instance across re-renders of a given view identity (edits persist);
+    /// unused on the host-owned path.
+    @State private var ownedModel: ScriptGraphEditorModel?
 
-    /// Builds the editor for `graph`. `@MainActor` because `ScriptGraphEditorModel`
-    /// is main-actor isolated; SwiftUI constructs views on the main actor, so
-    /// callers already satisfy this.
+    /// The model this canvas renders: the host's when provided, else the self-owned
+    /// one retained in `@State`.
+    private var model: ScriptGraphEditorModel? { hostModel ?? ownedModel }
+
+    /// Builds the editor for `graph`, owning the model internally. `@MainActor`
+    /// because `ScriptGraphEditorModel` is main-actor isolated; SwiftUI constructs
+    /// views on the main actor, so callers already satisfy this.
     @MainActor
     public init(graph: RCP3ScriptGraph) {
-        _model = State(initialValue: ScriptGraphEditorModel(graph: graph))
+        self.hostModel = nil
+        _ownedModel = State(initialValue: ScriptGraphEditorModel(graph: graph))
+    }
+
+    /// Builds the editor over a model the *host* owns, so the host can read the live
+    /// edits (the write-back path: `ScriptGraphWriteBack.write(model:…)` on Save).
+    /// The host is responsible for the model's lifetime (re-creating it when the open
+    /// graph changes).
+    @MainActor
+    public init(model: ScriptGraphEditorModel) {
+        self.hostModel = model
     }
 
     public var body: some View {
-        ScriptGraphCanvasView(model: model)
+        if let model {
+            ScriptGraphCanvasView(model: model)
+        }
     }
 }
