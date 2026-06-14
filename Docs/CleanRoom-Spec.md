@@ -148,11 +148,18 @@ equals that prototype uuid**. Resolution = scan the bundle dir for
   wire (`fromPin → toPin`).
 - **`data[]`** — `{ __uuid, to_node, to_connector_hash, data }`: a constant input
   bound to a node's pin; `data` is a typed object (`__type`).
-- **Pins** are referenced by `connector_hash = MurmurHash64A(pin_name, seed 0,
-  m = 0xc6a4a7935bd1e995)` — the **same hash** the type index uses for type names.
-  Anchors: `translation → 3e132861ebce0169`, `component_type → 772749b3cbf24a8f`,
-  `tm_transform_component → 8c878bd87b046f80`. Hashes are stored as lowercase
-  16-digit hex; reverse only via a known-name table, else show the hex.
+- **Pins** are referenced by a `connector_hash`. **Input** pins (`to_connector_hash`)
+  are `MurmurHash64A(pin_name, seed 0, m = 0xc6a4a7935bd1e995)` — the **same hash**
+  the type index uses for type names. Verified anchors:
+  `translation → 3e132861ebce0169`, `component_type → 772749b3cbf24a8f`,
+  `tm_transform_component → 8c878bd87b046f80`.
+  **Output** pins (`from_connector_hash`) use a *different* encoding: the captured
+  drag-output hash `4f980d170a59f903` matches `MurmurHash64A` of none of the node's
+  output names (`translation`/`location`/`startLocation`/`sceneLocation`/`entity`),
+  nor of any node-qualified or node-seeded variant — so output connectors are hashed
+  by some other scheme (still open; resolve from the node definitions). Hashes are
+  stored as lowercase 16-digit hex; reverse input pins via a known-name table, else
+  show the hex.
 
 Captured graph decodes as: *on drag, set the box's transform `translation`* — one
 exec wire drag→set, one data wire drag→set.`translation`, and a `component_type`
