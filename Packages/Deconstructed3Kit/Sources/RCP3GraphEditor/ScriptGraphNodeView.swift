@@ -109,6 +109,13 @@ public struct ScriptGraphNodeView: View {
                 .font(.caption2)
                 .foregroundStyle(pin.isExec ? .primary : .secondary)
                 .lineLimit(1)
+            // Exposed literal value (e.g. "(Self)", "Transform"), as RCP shows it.
+            if let value = pin.valueLabel {
+                Text(value)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
             if alignment == .trailing { pinGlyph(pin) }
         }
     }

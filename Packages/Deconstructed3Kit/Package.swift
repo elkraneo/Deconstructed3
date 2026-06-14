@@ -73,6 +73,7 @@ let package = Package(
             name: "RCP3GraphEditor",
             dependencies: [
                 "RCP3Document",
+                "TMFormat",
                 .product(name: "SwiftFlow", package: "swift-flow"),
             ]
         ),
@@ -86,7 +87,7 @@ let package = Package(
         .testTarget(name: "RCP3ViewportTests", dependencies: ["RCP3Viewport"]),
         .testTarget(
             name: "RCP3GraphEditorTests",
-            dependencies: ["RCP3GraphEditor", "RCP3Document"]
+            dependencies: ["RCP3GraphEditor", "RCP3Document", "TMFormat"]
         ),
         .testTarget(
             name: "DeconstructedFeatureTests",

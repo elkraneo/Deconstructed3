@@ -58,12 +58,17 @@ public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
         public let isInput: Bool
         /// `true` for a control-flow (exec) pin, `false` for a data pin.
         public let isExec: Bool
+        /// The exposed literal value bound to this pin, when one is set — e.g.
+        /// `"(Self)"` for a `source` pin, `"Transform"` for a `component_type` pin.
+        /// `nil` when the pin carries no constant value (it is wired, or empty).
+        public let valueLabel: String?
 
-        public init(id: String, label: String, isInput: Bool, isExec: Bool) {
+        public init(id: String, label: String, isInput: Bool, isExec: Bool, valueLabel: String? = nil) {
             self.id = id
             self.label = label
             self.isInput = isInput
             self.isExec = isExec
+            self.valueLabel = valueLabel
         }
     }
 

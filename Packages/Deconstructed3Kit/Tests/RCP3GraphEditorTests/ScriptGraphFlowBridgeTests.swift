@@ -77,8 +77,10 @@ struct ScriptGraphFlowBridgeTests {
         let dataIn = try! #require(n2.handles.first { $0.id == "in." + Self.translationHex })
         #expect(dataIn.type == .target)
         #expect(dataIn.position == .left)
-        // n2 only receives, so it should declare no output handles.
-        #expect(n2.handles.allSatisfy { $0.type == .target })
+        // `tm_set_component` is a passthrough: it declares an exec output too, so its
+        // handles are no longer all targets. Every data input handle is, though.
+        let dataInputs = n2.handles.filter { $0.id.hasPrefix("in.") }
+        #expect(dataInputs.allSatisfy { $0.type == .target && $0.position == .left })
     }
 
     @Test("A node's handles exactly mirror its payload pins")

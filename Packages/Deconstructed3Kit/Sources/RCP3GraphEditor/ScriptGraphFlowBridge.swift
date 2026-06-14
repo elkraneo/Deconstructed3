@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import RCP3Document
 import SwiftFlow
+import TMFormat
 
 /// Maps a parsed ``RCP3ScriptGraph`` onto SwiftFlow's document model.
 ///
@@ -23,8 +24,15 @@ import SwiftFlow
 /// - data output — id `"out.<hex>"`, `HandleType.source`, `HandlePosition.right`
 ///
 /// where `<hex>` is the lowercase, zero-padded 16-digit hex of the pin's
-/// `connector_hash` — identical to `TMFormat.TMHash.hex(_:)`, reproduced locally
-/// (see ``hex(_:)``) because this target does not depend on `TMFormat`.
+/// `connector_hash` — `TMFormat.TMHash.hex(_:)`.
+///
+/// ## Full named interfaces
+/// On its own the source graph only records *wired* pins. To match RCP 3 — which
+/// draws every named pin a node type declares, wired or not — the bridge first
+/// consults ``ScriptGraphNodeLibrary``: when a node type has a `NodeSpec`, the
+/// bridge emits a handle for each declared pin (computing data handle ids from
+/// `TMHash.murmur64a(connectorName)`, so they coincide with the wired-pin ids and
+/// edges keep resolving). Node types with no spec fall back to wire-derived pins.
 public enum ScriptGraphFlowBridge {
 
     // MARK: - Layout constants
@@ -51,20 +59,110 @@ public enum ScriptGraphFlowBridge {
         "out." + hex(hash)
     }
 
-    /// Lowercase, zero-padded 16-digit hex for a 64-bit hash. Byte-for-byte
-    /// identical to `TMFormat.TMHash.hex(_:)`; reproduced here so the bridge does
-    /// not need a `TMFormat` dependency for a one-line formatter.
+    /// Lowercase, zero-padded 16-digit hex for a 64-bit hash (`TMHash.hex`).
     static func hex(_ value: UInt64) -> String {
-        String(format: "%016llx", value)
+        TMHash.hex(value)
     }
 
     // MARK: - Pins
 
-    /// Builds the ordered pins for a single node by scanning the graph's wires and
-    /// data literals. Order is stable: exec pins first (out then in), then data
-    /// outputs and inputs sorted by hash, so a given graph always yields identical
-    /// handle declarations.
+    /// Builds the ordered pins for a single node, preferring its declared interface
+    /// from ``ScriptGraphNodeLibrary`` (full named pin set, parity with RCP) and
+    /// falling back to wire-derived pins for unknown node types.
     static func pins(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> [ScriptGraphNodePayload.Pin] {
+        if let spec = ScriptGraphNodeLibrary.spec(for: node.type) {
+            return libraryPins(for: node, spec: spec, in: graph)
+        }
+        return wireDerivedPins(for: node, in: graph)
+    }
+
+    /// Pins for a node with a known interface: every declared input and output pin
+    /// (wired or not), plus — for a `tm_set_component` whose `component_type` literal
+    /// resolves to a known component — that component's property pins. Exposed
+    /// literal values (`source = (Self)`, `component_type = Transform`, …) are
+    /// carried on the pin's `valueLabel`. Finally, any pin actually referenced by a
+    /// wire/literal that the declared interface does not cover is appended (as a
+    /// hex-labelled data pin) so no edge is left dangling.
+    private static func libraryPins(
+        for node: RCP3ScriptGraph.Node,
+        spec: ScriptGraphNodeLibrary.NodeSpec,
+        in graph: RCP3ScriptGraph
+    ) -> [ScriptGraphNodePayload.Pin] {
+        // Resolve the component type once (Set Component only): used both to add the
+        // component's property pins and to expose the `component_type` value label.
+        let componentTypeHash = node.type == "tm_set_component"
+            ? componentTypeHash(forNode: node, in: graph)
+            : nil
+        let resolvedComponentName = componentTypeHash.flatMap(ScriptGraphNodeLibrary.componentTypeName(forHash:))
+
+        var inputSpecs = spec.inputs
+        if let componentTypeHash,
+           let properties = ScriptGraphNodeLibrary.componentProperties(forComponentTypeHash: componentTypeHash) {
+            inputSpecs.append(contentsOf: properties)
+        }
+
+        var pins: [ScriptGraphNodePayload.Pin] = []
+        pins.append(contentsOf: spec.outputs.map { pin(from: $0, isInput: false, componentTypeName: resolvedComponentName) })
+        pins.append(contentsOf: inputSpecs.map { pin(from: $0, isInput: true, componentTypeName: resolvedComponentName) })
+
+        // Safety net: include any wired/literal pin the declared interface omits, so
+        // an edge never references a handle that does not exist.
+        let declaredIDs = Set(pins.map(\.id))
+        for extra in wireDerivedPins(for: node, in: graph) where !declaredIDs.contains(extra.id) {
+            pins.append(extra)
+        }
+        return pins
+    }
+
+    /// Converts a library ``ScriptGraphNodeLibrary/PinSpec`` into a payload pin,
+    /// assigning the handle id (fixed for exec, hashed for data) and any exposed
+    /// literal value RCP shows for it.
+    private static func pin(
+        from spec: ScriptGraphNodeLibrary.PinSpec,
+        isInput: Bool,
+        componentTypeName: String?
+    ) -> ScriptGraphNodePayload.Pin {
+        let id: String
+        if spec.isExec {
+            id = isInput ? execInHandleID : execOutHandleID
+        } else if isInput {
+            id = inputHandleID(forHash: spec.connectorHash)
+        } else {
+            id = outputHandleID(forHash: spec.connectorHash)
+        }
+        return .init(
+            id: id,
+            label: spec.displayName,
+            isInput: isInput,
+            isExec: spec.isExec,
+            valueLabel: exposedValue(for: spec, componentTypeName: componentTypeName)
+        )
+    }
+
+    /// The exposed literal value RCP shows next to a pin, when one is known:
+    /// `source` reads `(Self)`; `component_type` reads the resolved component name.
+    private static func exposedValue(
+        for spec: ScriptGraphNodeLibrary.PinSpec,
+        componentTypeName: String?
+    ) -> String? {
+        switch spec.connectorName {
+        case "source": return "(Self)"
+        case "component_type": return componentTypeName
+        default: return nil
+        }
+    }
+
+    /// The chosen component type's `murmur64a` hash for a `tm_set_component` node:
+    /// the `valueHash` of the data literal bound to its `component_type` pin.
+    private static func componentTypeHash(forNode node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> UInt64? {
+        let componentTypePin = TMHash.murmur64a("component_type")
+        return graph.data.first { $0.toNode == node.id && $0.toPin == componentTypePin }?.valueHash
+    }
+
+    /// Pins derived purely from wires + data literals — the fallback for node types
+    /// with no library spec. Order is stable: exec pins first (out then in), then
+    /// data outputs and inputs sorted by hash.
+    private static func wireDerivedPins(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> [ScriptGraphNodePayload.Pin] {
         var pins: [ScriptGraphNodePayload.Pin] = []
 
         // Exec participation: a node has an exec output if it is the source of any

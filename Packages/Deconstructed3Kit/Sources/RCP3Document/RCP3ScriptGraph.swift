@@ -68,12 +68,19 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         public let toPin: UInt64
         /// The literal value's `__type`, when the value is an object.
         public let valueType: String?
+        /// The literal value's own `type` member parsed as a 64-bit hash, when the
+        /// value object carries one — e.g. a `re_scripting_graph_component_type`
+        /// literal stores the chosen component type's `murmur64a` hash here (as a
+        /// 16-digit hex string). Lets a consumer resolve *which* value the literal
+        /// names (the component type, the enum case, …), not just its container type.
+        public let valueHash: UInt64?
 
-        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil) {
+        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil) {
             self.id = id
             self.toNode = toNode
             self.toPin = toPin
             self.valueType = valueType
+            self.valueHash = valueHash
         }
     }
 
@@ -125,11 +132,15 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 let pinHex = object["to_connector_hash"]?.stringValue,
                 let toPin = UInt64(pinHex, radix: 16)
             else { return nil }
+            let valueObject = object["data"]?.objectValue
             return DataLiteral(
                 id: object.uuid ?? "\(toNode)#\(pinHex)",
                 toNode: toNode,
                 toPin: toPin,
-                valueType: object["data"]?.objectValue?.type
+                valueType: valueObject?.type,
+                // The value object's plain `type` member (not the reserved `__type`)
+                // carries the named value's hash as a 16-digit hex string.
+                valueHash: valueObject?["type"]?.stringValue.flatMap { UInt64($0, radix: 16) }
             )
         }
     }
