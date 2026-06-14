@@ -213,10 +213,12 @@ public struct DocumentView: View {
             // never torn down (see the type doc above).
             //
             // PLAY: while `isPlaying`, drags are reported to the runtime (camera
-            // orbit suppressed by the viewport's play overlay) and the resulting
-            // transform is pushed back through `liveTransform` to move the real
-            // reconstructed entity. With Play OFF every input is `nil`/false, so the
-            // viewport behaves exactly as before.
+            // orbit suppressed because StageView switches to its `.entityDrag`
+            // interaction mode, routing a drag on the selected entity to the host
+            // instead of the camera) and the resulting transform is pushed back
+            // through `liveTransform` to move the real reconstructed entity. With
+            // Play OFF every input is `nil`/false, so the viewport behaves exactly
+            // as before.
             RCP3ViewportView(
                 sceneGraph: store.sceneGraph,
                 selection: $store.selection.sending(\.selected),
