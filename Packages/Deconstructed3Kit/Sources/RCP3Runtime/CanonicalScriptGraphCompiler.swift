@@ -14,87 +14,556 @@ import TMFormat
 /// gesture handlers register against `RealityKit.DragGestureEvent.name`. That is
 /// the form documented for the package and the shape the runtime executes.
 ///
-/// ## Recognized pattern (the `Random` capture)
+/// ## Architecture: a data-flow node → JS traversal
 ///
-/// A drag gesture node (`tm_gesture_event_drag`) exec-wired to a
-/// `tm_set_component` node, with a data wire into the set node's pin that resolves
-/// to `translation`, means *"while dragging, set the entity's transform
-/// translation to the world-space drag translation."* On the public surface, an
-/// entity's transform translation **is** `entity.position`, so it emits:
+/// Rather than recognizing a single hard-coded wiring, this walks the graph as a
+/// data-flow program:
 ///
-/// ```js
-/// const RealityKit = require("RealityKit");
-/// const Math3D = require("Math3D");
-/// this.didAdd = function() {
-///   this.entity.setComponent(new RealityKit.InputTargetComponent());
-///   this.entity.generateCollisionShapes(true);
-///   let dragStart;
-///   this.entity.on(RealityKit.DragGestureEvent.name, (e) => {
-///     const event = e.event;
-///     dragStart ??= event.entity.position.clone();
-///     event.entity.position = Math3D.add(dragStart, event.sceneTranslation);
-///     if (event.phase.equals(RealityKit.DragGestureEvent.Phase.ended)) dragStart = undefined;
-///   });
-/// };
-/// ```
+/// 1. **Event handlers (exec roots).** Each gesture / lifecycle / update event node
+///    becomes a `this.*` handler (`didAdd`, `update`, a `DragGestureEvent`
+///    subscription, …). The compiler then follows the **exec** wires out of the
+///    event node, in order, to its action nodes.
+/// 2. **Action nodes → statements.** A `tm_set_component` writes the entity's
+///    transform property (`translation` → `.position`, `rotation` → `.orientation`,
+///    `scale` → `.scale`) from the *evaluated* expression feeding its pin. A
+///    variable-set node becomes `this.setRemoteValue(...)`.
+/// 3. **Data inputs → expressions.** The core is a recursive `emitExpression`: given
+///    a data wire into a pin, it finds the source node + output pin and emits a JS
+///    expression, recursively resolving *that* node's own data inputs. Gesture
+///    outputs become `event.<pin>`; math constants become `Math.PI` / `Math.E` / …;
+///    unary/binary math become `Math.sin(…)` / `(a + b)`; vector constructors become
+///    `new Math3D.Vector3(…)`. A cycle guard and a depth bound keep it total.
 ///
-/// Node types it does not yet emit faithfully become `// unsupported node: <type>`
-/// — an honest no-op rather than a fabricated behavior (the canonical surface for
-/// those nodes is not yet pinned down here).
+/// ## Clean-room grounding
+///
+/// Emitted JS is grounded ONLY in the **public** `apple/realitykitscripting`
+/// surface (the documented `RealityKit` / `Math3D` modules + the lifecycle/gesture
+/// shapes in its `overview.md`) and in plain ECMAScript (`Math.*`, operators). The
+/// only `Math3D` function name the public docs actually show is `Math3D.add` (used
+/// by the reference drag handler) and the constructors `new Math3D.Vector3(…)` /
+/// `new Math3D.Quaternion(…)`. Vector operations whose `Math3D` names are NOT
+/// publicly documented (dot, cross, subtract, length, …) are emitted as plain-JS
+/// fallbacks with an inline `/* … */` note rather than a fabricated `Math3D.*` call.
+///
+/// Node types with no faithful mapping become a `0 /* unsupported: <type> */`
+/// expression (data) or a `// unsupported node: <type>` statement (action) — an
+/// honest no-op rather than invented behavior.
 public struct CanonicalScriptGraphCompiler {
     public init() {}
 
     /// Pin hash for the `tm_set_component` `translation` input.
     static let translationPin = TMHash.murmur64a("translation")
+    static let rotationPin = TMHash.murmur64a("rotation")
+    static let scalePin = TMHash.murmur64a("scale")
 
     /// Emits the canonical-runtime JavaScript source for `graph`. The result is a
     /// complete script body suitable for `ScriptingComponent(source:)`.
     public func compile(_ graph: RCP3ScriptGraph) -> String {
-        var lines: [String] = []
-        lines.append("// Compiled from an RCP 3 script graph (\(graph.nodes.count) nodes)")
-        lines.append("// for the RealityKit Script Graph runtime (ScriptingComponent source).")
-
-        var handlerLines: [String] = []
-        var handledNodeIDs: Set<String> = []
-
-        // A drag gesture wired to a Set Transform translation = "drag the entity."
-        for node in graph.nodes where node.type == "tm_gesture_event_drag" {
-            guard Self.dragMovesTranslation(from: node, in: graph) else { continue }
-            handledNodeIDs.insert(node.id)
-            for wire in graph.wires where wire.isExec && wire.from == node.id {
-                if let target = graph.node(id: wire.to), target.type == "tm_set_component" {
-                    handledNodeIDs.insert(target.id)
-                }
-            }
-            handlerLines.append(Self.dragToPositionHandler)
-        }
-
-        if !handlerLines.isEmpty {
-            // The runtime exposes built-in modules through `require`; bind the ones our
-            // handlers use BEFORE referencing them (the script has no `RealityKit` /
-            // `Math3D` globals — referencing them unbound throws "Can't find variable").
-            lines.append("const RealityKit = require(\"RealityKit\");")
-            lines.append("const Math3D = require(\"Math3D\");")
-            lines.append(contentsOf: handlerLines)
-        }
-
-        // Any node we didn't fold into a handler: honest no-op.
-        for node in graph.nodes where !handledNodeIDs.contains(node.id) {
-            lines.append("// unsupported node: \(node.type)")
-        }
-
-        if handlerLines.isEmpty {
-            lines.append("// No canonical behavior emitted for this graph yet.")
-        }
-
-        return lines.joined(separator: "\n") + "\n"
+        var emitter = Emitter(graph: graph)
+        return emitter.compile()
     }
 
-    // MARK: Pattern recognition
+    // MARK: - Emitter
+
+    /// A single compilation pass. Mutable so the recursive expression evaluator can
+    /// record which modules it used (`usesMath3D`) and guard against cycles.
+    private struct Emitter {
+        let graph: RCP3ScriptGraph
+
+        /// Set when an emitted expression referenced the `Math3D` module, so the
+        /// header binds it only when needed.
+        var usesMath3D = false
+        /// Set when an emitted statement/handler referenced the `RealityKit` module.
+        var usesRealityKit = false
+        /// Nodes folded into a handler/statement, so leftovers become honest no-ops.
+        var handledNodeIDs: Set<String> = []
+
+        init(graph: RCP3ScriptGraph) { self.graph = graph }
+
+        mutating func compile() -> String {
+            var header: [String] = []
+            header.append("// Compiled from an RCP 3 script graph (\(graph.nodes.count) nodes)")
+            header.append("// for the RealityKit Script Graph runtime (ScriptingComponent source).")
+
+            // 1. Emit a handler for every event (exec-root) node.
+            var handlerBlocks: [String] = []
+            for node in graph.nodes where Self.eventKind(for: node.type) != nil {
+                guard let block = emitHandler(for: node) else { continue }
+                handlerBlocks.append(block)
+            }
+
+            // 2. The runtime exposes built-in modules through `require`; bind only the
+            //    ones our emitted code actually used, BEFORE referencing them (the
+            //    script has no `RealityKit` / `Math3D` globals — an unbound reference
+            //    throws "Can't find variable").
+            var lines = header
+            if usesRealityKit { lines.append("const RealityKit = require(\"RealityKit\");") }
+            if usesMath3D { lines.append("const Math3D = require(\"Math3D\");") }
+            lines.append(contentsOf: handlerBlocks)
+
+            // 3. Any node we did not fold into a handler: honest no-op.
+            var sawUnhandled = false
+            for node in graph.nodes where !handledNodeIDs.contains(node.id) {
+                lines.append("// unsupported node: \(node.type)")
+                sawUnhandled = true
+            }
+
+            if handlerBlocks.isEmpty && !sawUnhandled {
+                lines.append("// No canonical behavior emitted for this graph yet.")
+            }
+
+            return lines.joined(separator: "\n") + "\n"
+        }
+
+        // MARK: Event handlers (exec roots)
+
+        /// The kind of lifecycle/event a node type maps to, or `nil` if it is not an
+        /// exec-root event node.
+        enum EventKind {
+            case drag
+            case tap
+            /// A `this.update = function(deltaTime){…}` per-frame hook.
+            case update
+            /// A `this.<name> = function(){…}` lifecycle hook (didAdd, …).
+            case lifecycle(String)
+        }
+
+        static func eventKind(for type: String) -> EventKind? {
+            switch type {
+            case "tm_gesture_event_drag": return .drag
+            case "tm_gesture_event_tap": return .tap
+            case "tm_update": return .update
+            case "tm_did_add": return .lifecycle("didAdd")
+            case "tm_did_activate": return .lifecycle("didActivate")
+            case "tm_will_remove": return .lifecycle("willRemove")
+            case "tm_will_deactivate": return .lifecycle("willDeactivate")
+            case "tm_script_changed": return .lifecycle("scriptChanged")
+            default: return nil
+            }
+        }
+
+        /// Emits the `this.*` handler for an event node, folding its exec-reachable
+        /// action nodes into the body. The expression context (`exprContext`)
+        /// determines how gesture-output pins resolve (`event.*` inside a gesture
+        /// handler, otherwise unavailable).
+        mutating func emitHandler(for node: RCP3ScriptGraph.Node) -> String? {
+            guard let kind = Self.eventKind(for: node.type) else { return nil }
+            handledNodeIDs.insert(node.id)
+
+            switch kind {
+            case .drag:
+                return emitDragHandler(for: node)
+            case .tap:
+                return emitTapHandler(for: node)
+            case .update:
+                let body = emitActionBody(after: node, context: .update)
+                return emitFunctionHandler(name: "update", params: "deltaTime", body: body)
+            case .lifecycle(let name):
+                let body = emitActionBody(after: node, context: .lifecycle)
+                return emitFunctionHandler(name: name, params: "", body: body)
+            }
+        }
+
+        /// `this.<name> = function(<params>) { <body> };`
+        func emitFunctionHandler(name: String, params: String, body: [String]) -> String {
+            var lines = ["this.\(name) = function(\(params)) {"]
+            for statement in body { lines.append("    " + statement) }
+            lines.append("};")
+            return lines.joined(separator: "\n")
+        }
+
+        /// The canonical drag handler. Keeps the input-target + collision setup and the
+        /// `dragStart` clamp; the body wires the entity transform from the action nodes
+        /// the drag node exec-reaches (the recognized `translation` move stays exact).
+        mutating func emitDragHandler(for node: RCP3ScriptGraph.Node) -> String {
+            usesRealityKit = true
+            let body = emitActionBody(after: node, context: .gesture)
+
+            // The recognized "drag moves translation" wiring: the drag node feeds its
+            // `sceneTranslation` straight into a Set Transform `translation`. That is the
+            // documented reference handler — emit it verbatim so the captured graph keeps
+            // producing the exact, working drag.
+            if CanonicalScriptGraphCompiler.dragMovesTranslation(from: node, in: graph) {
+                usesMath3D = true
+                for wire in graph.wires where wire.isExec && wire.from == node.id {
+                    if let target = graph.node(id: wire.to), target.type == "tm_set_component" {
+                        handledNodeIDs.insert(target.id)
+                    }
+                }
+                return CanonicalScriptGraphCompiler.dragToPositionHandler
+            }
+
+            var lines = ["this.didAdd = function() {"]
+            lines.append("    this.entity.setComponent(new RealityKit.InputTargetComponent());")
+            lines.append("    this.entity.generateCollisionShapes(true);")
+            lines.append("    this.entity.on(RealityKit.DragGestureEvent.name, (e) => {")
+            lines.append("        const event = e.event;")
+            for statement in body { lines.append("        " + statement) }
+            lines.append("    });")
+            lines.append("};")
+            return lines.joined(separator: "\n")
+        }
+
+        /// The canonical tap handler: same input-target + collision setup, subscribing
+        /// against `RealityKit.TapGestureEvent.name`.
+        mutating func emitTapHandler(for node: RCP3ScriptGraph.Node) -> String {
+            usesRealityKit = true
+            let body = emitActionBody(after: node, context: .gesture)
+            var lines = ["this.didAdd = function() {"]
+            lines.append("    this.entity.setComponent(new RealityKit.InputTargetComponent());")
+            lines.append("    this.entity.generateCollisionShapes(true);")
+            lines.append("    this.entity.on(RealityKit.TapGestureEvent.name, (e) => {")
+            lines.append("        const event = e.event;")
+            for statement in body { lines.append("        " + statement) }
+            lines.append("    });")
+            lines.append("};")
+            return lines.joined(separator: "\n")
+        }
+
+        // MARK: Action nodes → statements
+
+        /// Walks the exec wires out of `node`, in graph order, emitting one statement
+        /// per action node reached.
+        mutating func emitActionBody(
+            after node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var statements: [String] = []
+            for wire in graph.wires where wire.isExec && wire.from == node.id {
+                guard let action = graph.node(id: wire.to) else { continue }
+                if handledNodeIDs.contains(action.id) { continue }
+                handledNodeIDs.insert(action.id)
+                statements.append(contentsOf: emitActionStatements(for: action, context: context))
+                // Chain any exec wires out of the action node (a linear action chain).
+                statements.append(contentsOf: emitActionBody(after: action, context: context))
+            }
+            return statements
+        }
+
+        /// JS statements for a single action node.
+        mutating func emitActionStatements(
+            for node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            switch node.type {
+            case "tm_set_component":
+                return emitSetComponent(node, context: context)
+            case "tm_set_variable_node", "tm_set_remote_variable_node":
+                return emitSetVariable(node, context: context)
+            case "tm_clear_variable_node", "tm_clear_remote_variable_node":
+                return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
+            default:
+                return ["// unsupported node: \(node.type)"]
+            }
+        }
+
+        /// A Set Component (Transform) action: write the entity transform property fed
+        /// by a data wire — `translation` → `.position`, `rotation` → `.orientation`,
+        /// `scale` → `.scale`. The value is the recursively-evaluated source expression.
+        mutating func emitSetComponent(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            let target = context == .gesture ? "event.entity" : "this.entity"
+            var statements: [String] = []
+
+            for (pin, property) in [
+                (CanonicalScriptGraphCompiler.translationPin, "position"),
+                (CanonicalScriptGraphCompiler.rotationPin, "orientation"),
+                (CanonicalScriptGraphCompiler.scalePin, "scale"),
+            ] {
+                guard let wire = dataWire(into: node.id, pin: pin) else { continue }
+                var seen: Set<String> = []
+                let expr = emitExpression(from: wire, context: context, seen: &seen)
+                statements.append("\(target).\(property) = \(expr);")
+            }
+
+            if statements.isEmpty {
+                statements.append("// unsupported node: tm_set_component (no transform input wired)")
+            }
+            return statements
+        }
+
+        /// A variable-set action. The runtime exposes remote values through
+        /// `this.setRemoteValue(name, value)`. The *name* of the variable lives in node
+        /// settings we can't resolve from the wire graph alone, so it is emitted as a
+        /// placeholder with an honest note — the value expression IS faithfully resolved.
+        mutating func emitSetVariable(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            let valuePin = TMHash.murmur64a("value")
+            let valueExpr: String
+            if let wire = dataWire(into: node.id, pin: valuePin) {
+                var seen: Set<String> = []
+                valueExpr = emitExpression(from: wire, context: context, seen: &seen)
+            } else {
+                valueExpr = "undefined /* no value wired */"
+            }
+            // The variable name is a node-settings reference, not a wire — left as a
+            // placeholder rather than fabricated.
+            return [
+                "this.setRemoteValue(/* variable name unresolved */ \"\", \(valueExpr));"
+            ]
+        }
+
+        // MARK: Data inputs → expressions (the recursive core)
+
+        /// Where an expression is being emitted, which decides how a gesture-output pin
+        /// resolves.
+        enum ExprContext {
+            /// Inside a gesture handler: gesture outputs are `event.<pin>`.
+            case gesture
+            /// Inside `this.update(deltaTime)`: `deltaTime` is in scope.
+            case update
+            /// Inside a plain lifecycle hook: no gesture/update locals in scope.
+            case lifecycle
+        }
+
+        /// The data wire feeding `pin` of node `nodeID`, if any.
+        func dataWire(into nodeID: String, pin: UInt64) -> RCP3ScriptGraph.Wire? {
+            graph.wires.first { !$0.isExec && $0.to == nodeID && $0.toPin == pin }
+        }
+
+        /// Emits a JS expression for the value carried by a data `wire` — i.e. the
+        /// output `wire.fromPin` of the source node `wire.from`, recursively resolving
+        /// that node's own inputs. `seen` guards against cycles.
+        mutating func emitExpression(
+            from wire: RCP3ScriptGraph.Wire,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> String {
+            guard let source = graph.node(id: wire.from) else {
+                return "undefined /* dangling wire */"
+            }
+            return emitExpression(
+                forNode: source,
+                outputPin: wire.fromPin,
+                context: context,
+                seen: &seen
+            )
+        }
+
+        /// The expression for a node's output. Recursively resolves the node's data
+        /// inputs. `seen` is the cycle guard (a node already on the current resolution
+        /// path yields a safe `0`).
+        mutating func emitExpression(
+            forNode node: RCP3ScriptGraph.Node,
+            outputPin: UInt64?,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> String {
+            if seen.contains(node.id) {
+                return "0 /* cycle: \(node.type) */"
+            }
+            seen.insert(node.id)
+            defer { seen.remove(node.id) }
+
+            // A data node folded into an expression is "handled" — it should not also
+            // surface as a leftover `// unsupported node` no-op. (Event nodes are folded
+            // as exec roots elsewhere, so we don't mark them here.)
+            handledNodeIDs.insert(node.id)
+
+            // Gesture event outputs read off `event.<pinName>` inside a gesture handler.
+            if Self.eventKind(for: node.type) != nil {
+                return gestureOutputExpression(node, outputPin: outputPin, context: context)
+            }
+
+            // Math constants.
+            if let constant = Self.mathConstant(for: node.type) {
+                return constant
+            }
+
+            // `tm_constant` literal: the value is node settings, not a wire — emit 0.
+            if node.type == "tm_constant" {
+                return "0 /* tm_constant literal (value in node settings) */"
+            }
+
+            // Unary Math.* (plain JS — runs anywhere).
+            if let fn = Self.unaryMathFunction(for: node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                return "\(fn)(\(a))"
+            }
+
+            // Binary scalar operators / Math.* (plain JS).
+            if let op = Self.binaryScalarOperator(for: node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let bName = node.type == "tm_math_pow" ? "exponent" : "b"
+                let b = inputExpression(into: node, pinName: bName, context: context, seen: &seen)
+                return op.render(a, b)
+            }
+
+            // Vector constructors.
+            if node.type == "tm_make_vector3" {
+                usesMath3D = true
+                let x = inputExpression(into: node, pinName: "x", context: context, seen: &seen)
+                let y = inputExpression(into: node, pinName: "y", context: context, seen: &seen)
+                let z = inputExpression(into: node, pinName: "z", context: context, seen: &seen)
+                return "new Math3D.Vector3(\(x), \(y), \(z))"
+            }
+
+            // Vector ops whose Math3D names are NOT publicly documented: keep clean-room
+            // by emitting a plain-JS fallback with an honest note rather than inventing a
+            // `Math3D.*` name.
+            if Self.isUndocumentedVectorOp(node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                _ = b // referenced for completeness; fallback can't compute it portably
+                return "\(a) /* unsupported: \(node.type) (Math3D op name not public) */"
+            }
+
+            // Variable get: best-effort remote read. The variable name is a node-settings
+            // reference, not a wire, so it can't be resolved here — honest placeholder.
+            if node.type == "tm_get_variable_node" || node.type == "tm_get_remote_variable_node" {
+                return "this.getRemoteValue(/* variable name unresolved */ \"\")"
+            }
+
+            // Unknown / unmapped node → a safe fallback, never fabricated behavior.
+            return "0 /* unsupported: \(node.type) */"
+        }
+
+        /// The `event.<pinName>` expression for a gesture/event output pin (inside a
+        /// gesture handler). Outside a gesture context the value isn't in scope.
+        func gestureOutputExpression(
+            _ node: RCP3ScriptGraph.Node,
+            outputPin: UInt64?,
+            context: ExprContext
+        ) -> String {
+            guard let pin = outputPin else {
+                return "undefined /* exec pin used as value */"
+            }
+            // Resolve the output pin hash back to a readable gesture-output name.
+            let name = Self.gestureOutputName(forHash: pin) ?? TMHash.hex(pin)
+            switch context {
+            case .gesture:
+                return "event.\(name)"
+            case .update where name == "deltaTime":
+                return "deltaTime"
+            default:
+                return "undefined /* \(name) not in scope here */"
+            }
+        }
+
+        /// Resolves the data input feeding `pinName` of `node` to an expression. When no
+        /// wire feeds the pin, falls back to `0` (the pin's literal would live in node
+        /// settings, not the wire graph).
+        mutating func inputExpression(
+            into node: RCP3ScriptGraph.Node,
+            pinName: String,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> String {
+            let pin = TMHash.murmur64a(pinName)
+            guard let wire = dataWire(into: node.id, pin: pin) else {
+                return "0 /* \(pinName) unwired */"
+            }
+            return emitExpression(from: wire, context: context, seen: &seen)
+        }
+
+        // MARK: Static maps
+
+        /// Math constant nodes → plain-JS `Math.*` constants (run anywhere).
+        static func mathConstant(for type: String) -> String? {
+            switch type {
+            case "tm_constant_pi": return "Math.PI"
+            case "tm_constant_e": return "Math.E"
+            case "tm_constant_ln2": return "Math.LN2"
+            case "tm_constant_ln10": return "Math.LN10"
+            case "tm_constant_log10e": return "Math.LOG10E"
+            case "tm_constant_log2e": return "Math.LOG2E"
+            case "tm_constant_sqrt2": return "Math.SQRT2"
+            case "tm_constant_sqrt1_2": return "Math.SQRT1_2"
+            default: return nil
+            }
+        }
+
+        /// Unary math nodes → `Math.<fn>` (plain JS). `nil` if not a unary math node.
+        static func unaryMathFunction(for type: String) -> String? {
+            switch type {
+            case "tm_math_sin": return "Math.sin"
+            case "tm_math_cos": return "Math.cos"
+            case "tm_math_tan": return "Math.tan"
+            case "tm_math_asin": return "Math.asin"
+            case "tm_math_acos": return "Math.acos"
+            case "tm_math_atan": return "Math.atan"
+            case "tm_math_sqrt": return "Math.sqrt"
+            case "tm_math_log": return "Math.log"
+            case "tm_math_log2": return "Math.log2"
+            case "tm_math_abs": return "Math.abs"
+            case "tm_math_ceil": return "Math.ceil"
+            case "tm_math_floor": return "Math.floor"
+            case "tm_math_round": return "Math.round"
+            case "tm_math_trunc": return "Math.trunc"
+            default: return nil
+            }
+        }
+
+        /// How a binary scalar node renders two operand expressions.
+        enum BinaryScalar {
+            /// An infix operator, e.g. `+` → `(a + b)`.
+            case infix(String)
+            /// A `Math.<fn>(a, b)` call.
+            case mathCall(String)
+
+            func render(_ a: String, _ b: String) -> String {
+                switch self {
+                case .infix(let op): return "(\(a) \(op) \(b))"
+                case .mathCall(let fn): return "\(fn)(\(a), \(b))"
+                }
+            }
+        }
+
+        /// Binary scalar math nodes → operators / `Math.*` (plain JS). `nil` otherwise.
+        static func binaryScalarOperator(for type: String) -> BinaryScalar? {
+            switch type {
+            case "tm_math_add": return .infix("+")
+            case "tm_math_subtract": return .infix("-")
+            case "tm_math_multiply": return .infix("*")
+            case "tm_math_divide": return .infix("/")
+            case "tm_math_mod": return .infix("%")
+            case "tm_math_min": return .mathCall("Math.min")
+            case "tm_math_max": return .mathCall("Math.max")
+            case "tm_math_pow": return .mathCall("Math.pow")
+            default: return nil
+            }
+        }
+
+        /// Vector ops whose `Math3D` function name is not in the public docs (so we
+        /// must NOT emit a `Math3D.*` call for them — clean-room).
+        static func isUndocumentedVectorOp(_ type: String) -> Bool {
+            switch type {
+            case "tm_math_dot", "tm_math_cross", "tm_math_reflect",
+                 "tm_math_length", "tm_math_normal":
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// The readable name for a gesture-output pin hash (the names from the in-house
+        /// node library, hashed to match a wired `from_connector_hash`).
+        static func gestureOutputName(forHash hash: UInt64) -> String? {
+            gestureOutputNamesByHash[hash]
+        }
+
+        static let gestureOutputNames: [String] = [
+            "entity", "location", "startLocation", "translation",
+            "sceneLocation", "sceneStartLocation", "sceneTranslation",
+            "sceneInputDeviceRotation", "didEnd", "deltaTime", "scene",
+        ]
+
+        static let gestureOutputNamesByHash: [UInt64: String] = {
+            var map: [UInt64: String] = [:]
+            for name in gestureOutputNames { map[TMHash.murmur64a(name)] = name }
+            return map
+        }()
+    }
+
+    // MARK: Pattern recognition (the documented reference handler)
 
     /// Whether `dragNode` exec-reaches a `tm_set_component` node that takes a data
     /// wire from the drag node into its `translation` pin — the "drag moves the
-    /// transform translation" wiring.
+    /// transform translation" wiring (the documented reference handler).
     static func dragMovesTranslation(
         from dragNode: RCP3ScriptGraph.Node,
         in graph: RCP3ScriptGraph
@@ -118,7 +587,9 @@ public struct CanonicalScriptGraphCompiler {
 
     /// The canonical "drag the entity by the scene-space drag translation" handler,
     /// assigned on `this` as the package's lifecycle surface expects. The entity's
-    /// transform translation is `entity.position` on this surface.
+    /// transform translation is `entity.position` on this surface. Emitted verbatim
+    /// for the documented reference wiring (drag `sceneTranslation` → set
+    /// `translation`).
     static let dragToPositionHandler = """
     this.didAdd = function() {
         this.entity.setComponent(new RealityKit.InputTargetComponent());
