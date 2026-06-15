@@ -412,6 +412,16 @@ public struct CanonicalScriptGraphCompiler {
                 return "\(a) /* unsupported: \(node.type) (Math3D op name not public) */"
             }
 
+            // Get Component (Transform): read the entity transform property named by the
+            // OUTPUT pin — the exact inverse of the Set Component mapping above
+            // (`translation` → `.position`, `rotation` → `.orientation`, `scale` →
+            // `.scale`). The entity is `event.entity` inside a gesture handler, else
+            // `this.entity` — same target rule as Set. The property pins are the same
+            // faithful `translation`/`rotation`/`scale` connectors the library declares.
+            if node.type == "tm_get_component" {
+                return getComponentExpression(outputPin: outputPin, context: context)
+            }
+
             // Variable get: best-effort remote read. The variable name is a node-settings
             // reference, not a wire, so it can't be resolved here — honest placeholder.
             if node.type == "tm_get_variable_node" || node.type == "tm_get_remote_variable_node" {
@@ -441,6 +451,22 @@ public struct CanonicalScriptGraphCompiler {
                 return "deltaTime"
             default:
                 return "undefined /* \(name) not in scope here */"
+            }
+        }
+
+        /// The expression for a `tm_get_component` (Transform) OUTPUT pin: the entity's
+        /// transform property the pin names. The mapping is the exact inverse of
+        /// `emitSetComponent` (`translation` → `.position`, `rotation` → `.orientation`,
+        /// `scale` → `.scale`). The entity target follows the same context rule as Set.
+        /// An unrecognized output pin yields a safe `0` with an honest note.
+        func getComponentExpression(outputPin: UInt64?, context: ExprContext) -> String {
+            let target = context == .gesture ? "event.entity" : "this.entity"
+            switch outputPin {
+            case CanonicalScriptGraphCompiler.translationPin: return "\(target).position"
+            case CanonicalScriptGraphCompiler.rotationPin: return "\(target).orientation"
+            case CanonicalScriptGraphCompiler.scalePin: return "\(target).scale"
+            default:
+                return "0 /* unsupported: tm_get_component output (Transform property not recognized) */"
             }
         }
 

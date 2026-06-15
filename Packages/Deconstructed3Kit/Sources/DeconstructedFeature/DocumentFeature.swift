@@ -21,7 +21,15 @@ public struct DocumentFeature: Sendable {
         /// The id (asset root `__uuid`) of the script-graph asset opened directly from
         /// the sidebar, or `nil` when none is open. When set, the center graph view
         /// shows this asset instead of the selected entity's graph.
-        public var openScriptGraphID: String?
+        public var openAssetGraphID: String?
+        /// An in-memory **example** graph loaded from the Examples gallery (no backing
+        /// `.tm_script_graph` asset), or `nil` when none is loaded. When set it takes
+        /// precedence over a sidebar-opened asset and the selection, so the canvas shows
+        /// the example and ▶ Play runs it on the box.
+        public var loadedExample: RCP3ScriptGraph?
+        /// The synthetic open-graph key for the loaded example (its example `id`), used
+        /// to key the canvas/Play identity. `nil` when no example is loaded.
+        public var loadedExampleID: String?
         /// Last error surfaced to the UI (open/save failure), if any.
         public var errorMessage: String?
 
@@ -33,8 +41,15 @@ public struct DocumentFeature: Sendable {
         ) {
             self.editor = editor
             self.selection = selection
-            self.openScriptGraphID = openScriptGraphID
+            self.openAssetGraphID = openScriptGraphID
             self.errorMessage = errorMessage
+        }
+
+        /// The id keying the open graph in the center column: the loaded example's id
+        /// takes precedence over a sidebar-opened asset id. `nil` when neither is open.
+        /// (The view keys the canvas / Play identity on this.)
+        public var openScriptGraphID: String? {
+            loadedExampleID ?? openAssetGraphID
         }
 
         // MARK: Derived projections (single source of truth: `editor`)
@@ -70,10 +85,13 @@ public struct DocumentFeature: Sendable {
         /// open a graph editor directly.
         public var scriptGraphAssets: [RCP3ScriptGraphAsset] { editor?.scriptGraphAssets() ?? [] }
 
-        /// The script graph opened directly from the sidebar (by `openScriptGraphID`),
-        /// resolved against the live editor's bundle, or `nil` when none is open.
+        /// The graph currently open in the center column: the loaded example graph (if
+        /// any) takes precedence; otherwise the asset opened from the sidebar (by
+        /// `openAssetGraphID`), resolved against the live editor's bundle. `nil` when
+        /// none is open. The ▶ Play affordance runs this on the box.
         public var openScriptGraph: RCP3ScriptGraph? {
-            openScriptGraphID.flatMap { editor?.scriptGraph(assetID: $0) }
+            if let loadedExample { return loadedExample }
+            return openAssetGraphID.flatMap { editor?.scriptGraph(assetID: $0) }
         }
 
         private static func find(_ id: RCP3Entity.ID, in entity: RCP3Entity) -> RCP3Entity? {
@@ -95,6 +113,11 @@ public struct DocumentFeature: Sendable {
         /// A script-graph asset was opened directly from the sidebar (or cleared with
         /// `nil`). The center switches to the graph editor for this asset.
         case scriptGraphOpened(String?)
+        /// An in-memory **example** graph was chosen from the Examples gallery. Loads it
+        /// into the center as the open graph (with a synthetic id) so the canvas shows
+        /// it and the existing ▶ Play runs it on the box. `nil` clears the loaded
+        /// example, returning to the asset/selection graph.
+        case exampleSelected(id: String, graph: RCP3ScriptGraph?)
         /// The inspector's name field edited the selected entity to this string.
         case nameEdited(String)
         /// User invoked Save (toolbar / ⌘S).
@@ -120,15 +143,20 @@ public struct DocumentFeature: Sendable {
             case let .opened(.success(editor)):
                 state.editor = editor
                 state.selection = editor.entity.id
-                // A fresh bundle has its own assets — drop any graph open from the last.
-                state.openScriptGraphID = nil
+                // A fresh bundle has its own assets — drop any graph open from the last
+                // (asset or example).
+                state.openAssetGraphID = nil
+                state.loadedExample = nil
+                state.loadedExampleID = nil
                 state.errorMessage = nil
                 return .none
 
             case let .opened(.failure(error)):
                 state.editor = nil
                 state.selection = nil
-                state.openScriptGraphID = nil
+                state.openAssetGraphID = nil
+                state.loadedExample = nil
+                state.loadedExampleID = nil
                 state.errorMessage = error.message
                 return .none
 
@@ -137,7 +165,20 @@ public struct DocumentFeature: Sendable {
                 return .none
 
             case let .scriptGraphOpened(id):
-                state.openScriptGraphID = id
+                state.openAssetGraphID = id
+                // Opening a real asset clears any loaded example so the asset shows.
+                if id != nil {
+                    state.loadedExample = nil
+                    state.loadedExampleID = nil
+                }
+                return .none
+
+            case let .exampleSelected(id, graph):
+                // Load (or clear) an in-memory example graph. When loading, it takes
+                // precedence over a sidebar asset (`openScriptGraph` prefers it), so the
+                // canvas shows it and ▶ Play runs it on the box.
+                state.loadedExample = graph
+                state.loadedExampleID = graph == nil ? nil : id
                 return .none
 
             case let .nameEdited(newName):

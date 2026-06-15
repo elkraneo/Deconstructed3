@@ -197,6 +197,50 @@ import RCP3Runtime
         #expect(js.contains("this.entity.position = 0"))
     }
 
+    @Test func getComponentReadsEntityTransformProperty() {
+        // On Update → Set Transform.scale = Get Transform.scale: a Get Component feeding
+        // the same property it reads. The Get node lowers to the entity's transform
+        // property (the inverse of Set's mapping), so the wired path has no `unsupported`.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let get = RCP3ScriptGraph.Node(id: "g", type: "tm_get_component", label: "Get Transform")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component", label: "Set Transform")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let dataWire = RCP3ScriptGraph.Wire(
+            id: "d1", from: "g", to: "s",
+            fromPin: TMHash.murmur64a("scale"),
+            toPin: TMHash.murmur64a("scale")
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, get, set], wires: [exec, dataWire], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.update = function(deltaTime)"))
+        // Get Transform.scale → the entity's scale; written straight back to scale.
+        #expect(js.contains("this.entity.scale = this.entity.scale;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func getComponentInsideGestureReadsViaEventEntity() {
+        // Inside a gesture handler, a Get Component reads `event.entity.position` (the
+        // dragged entity), matching the Set side's `event.entity.*` target rule.
+        let tap = RCP3ScriptGraph.Node(id: "t", type: "tm_gesture_event_tap")
+        let get = RCP3ScriptGraph.Node(id: "g", type: "tm_get_component")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "t", to: "s")
+        let dataWire = RCP3ScriptGraph.Wire(
+            id: "d1", from: "g", to: "s",
+            fromPin: TMHash.murmur64a("translation"),
+            toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [tap, get, set], wires: [exec, dataWire], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.entity.on(RealityKit.TapGestureEvent.name"))
+        #expect(js.contains("event.entity.position = event.entity.position;"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func undocumentedVectorOpStaysCleanRoom() {
         // A dot-product node has no PUBLICLY-documented Math3D name, so the compiler must
         // NOT emit `Math3D.dot(...)` — it emits a plain-JS fallback with an honest note.

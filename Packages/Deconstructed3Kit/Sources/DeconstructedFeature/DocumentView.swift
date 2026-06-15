@@ -333,6 +333,39 @@ public struct DocumentView<CanonicalPlay: View>: View {
             .disabled(!canRunPreview)
             .help("Compile and run this script graph with a 2D drag simulator")
         }
+        // EXAMPLES gallery: a curated set of canonical script-graph examples. Selecting
+        // one LOADs it into the center as the open graph (`.exampleSelected`), switches
+        // the center to Graph mode so the canvas shows it, and leaves the user to press
+        // ▶ Play to run it on the box. Runs-today examples are listed first; the
+        // needs-variables ports are marked "(needs variables)".
+        ToolbarItem {
+            examplesMenu
+        }
+    }
+
+    /// The Examples gallery menu: lists `ScriptGraphExamples` by name, each loading the
+    /// in-memory example graph into the editor on selection (summary shown as help).
+    @ViewBuilder
+    private var examplesMenu: some View {
+        Menu {
+            ForEach(ScriptGraphExamples.all) { example in
+                Button {
+                    loadExample(example)
+                } label: {
+                    Text(example.runsToday ? example.name : "\(example.name) (needs variables)")
+                }
+                .help(example.summary)
+            }
+        } label: {
+            Label("Examples", systemImage: "sparkles.rectangle.stack")
+        }
+        .help("Load a curated script-graph example, then press Play")
+    }
+
+    /// Loads an example graph into the editor (open graph) and shows it on the canvas.
+    private func loadExample(_ example: ScriptGraphExample) {
+        store.send(.exampleSelected(id: example.id, graph: example.graph))
+        centerMode = .graph
     }
 
     // MARK: Play lifecycle (canonical, inline)
@@ -377,9 +410,12 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// dirty the entity editor, so it is persisted here. The entity save (rename, …)
     /// still goes through `.saveTapped` and is untouched.
     private func save() {
+        // Only write back to a REAL on-disk asset (`openAssetGraphID`). A loaded
+        // Examples-gallery graph has no backing `.tm_script_graph`, so Save skips the
+        // graph write-back for it (the entity save below still runs).
         if isGraphShown,
            let model = graphModel,
-           let rootUUID = store.openScriptGraphID,
+           let rootUUID = store.openAssetGraphID,
            let bundleURL = store.editor?.bundle.url {
             do {
                 try ScriptGraphWriteBack.write(

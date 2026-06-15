@@ -92,16 +92,18 @@ import Testing
         // The bundle exposes its script graphs as browsable assets.
         let asset = try #require(store.state.scriptGraphAssets.first)
 
-        // Opening one sets `openScriptGraphID` and resolves `openScriptGraph`.
+        // Opening one sets the open asset id (and the derived `openScriptGraphID`) and
+        // resolves `openScriptGraph`.
         await store.send(.scriptGraphOpened(asset.id)) {
-            $0.openScriptGraphID = asset.id
+            $0.openAssetGraphID = asset.id
         }
+        #expect(store.state.openScriptGraphID == asset.id)
         #expect(store.state.openScriptGraph != nil)
         #expect(store.state.openScriptGraph?.nodes.isEmpty == false)
 
         // Clearing it resets the open graph.
         await store.send(.scriptGraphOpened(nil)) {
-            $0.openScriptGraphID = nil
+            $0.openAssetGraphID = nil
         }
         #expect(store.state.openScriptGraph == nil)
     }
@@ -266,5 +268,66 @@ import Testing
         let reopened = try RCP3Editor.open(dir)
         #expect(reopened.entity.name == "world-renamed")
         #expect(reopened.entity.children.count == opened.entity.children.count)
+    }
+
+    // MARK: Examples gallery (exampleSelected loads an in-memory graph, no bundle)
+
+    /// Selecting an example loads its in-memory graph as the open graph (with the
+    /// example's synthetic id), even with no project open — so the canvas shows it and
+    /// ▶ Play runs it. Clearing the example returns to no open graph.
+    @Test func exampleSelectedLoadsAndClearsAnInMemoryGraph() async {
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        }
+
+        let example = ScriptGraphExamples.dragToMove
+
+        // No bundle is open, yet selecting an example loads it as the open graph.
+        await store.send(.exampleSelected(id: example.id, graph: example.graph)) {
+            $0.loadedExample = example.graph
+            $0.loadedExampleID = example.id
+        }
+        #expect(store.state.openScriptGraphID == example.id)
+        #expect(store.state.openScriptGraph == example.graph)
+        // The loaded example is what the ▶ Play / canvas resolves to.
+        #expect(store.state.openScriptGraph?.nodes.isEmpty == false)
+
+        // Clearing the example (nil graph) returns to no open graph.
+        await store.send(.exampleSelected(id: example.id, graph: nil)) {
+            $0.loadedExample = nil
+            $0.loadedExampleID = nil
+        }
+        #expect(store.state.openScriptGraphID == nil)
+        #expect(store.state.openScriptGraph == nil)
+    }
+
+    /// A loaded example takes precedence over a sidebar-opened asset, and opening an
+    /// asset clears the loaded example.
+    @Test func exampleTakesPrecedenceOverAssetThenAssetClearsIt() async {
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        }
+
+        let example = ScriptGraphExamples.spin
+
+        await store.send(.scriptGraphOpened("asset-uuid")) {
+            $0.openAssetGraphID = "asset-uuid"
+        }
+        #expect(store.state.openScriptGraphID == "asset-uuid")
+
+        // Loading an example overrides the open asset id for the center column.
+        await store.send(.exampleSelected(id: example.id, graph: example.graph)) {
+            $0.loadedExample = example.graph
+            $0.loadedExampleID = example.id
+        }
+        #expect(store.state.openScriptGraphID == example.id)
+
+        // Opening a real asset again clears the loaded example.
+        await store.send(.scriptGraphOpened("asset-2")) {
+            $0.openAssetGraphID = "asset-2"
+            $0.loadedExample = nil
+            $0.loadedExampleID = nil
+        }
+        #expect(store.state.openScriptGraphID == "asset-2")
     }
 }
