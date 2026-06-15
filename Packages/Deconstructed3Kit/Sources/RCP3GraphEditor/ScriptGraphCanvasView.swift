@@ -101,6 +101,13 @@ public struct ScriptGraphCanvasView: View {
                 // Canvas, so they can't host their own context menu).
                 selectedConnectionDeleteButton
 
+                // The same affordance for a selected NODE: a floating trash at the
+                // node's top-right corner, above the gesture layer. The node cards
+                // can't host their own buttons (the canvas gesture layer would swallow
+                // them), and keyboard delete is unreliable in a split-view column — so
+                // this is the dependable way to remove a node.
+                selectedNodeDeleteButton
+
                 // The node-insert palette: a toolbar-style "+" pinned top-leading. It
                 // is the LAST child, so it sits above the gesture layer; being a
                 // `Button` it also takes hit priority over the canvas `DragGesture`, so
@@ -446,6 +453,32 @@ public struct ScriptGraphCanvasView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.red)
             .accessibilityLabel("Delete connection")
+            .position(screen)
+        }
+    }
+
+    /// A floating "delete" button at the selected node's top-right corner, so a node
+    /// can be removed with a click — no keyboard, no right-click discovery. Positioned
+    /// in screen space via the same transform the ports/edges use, so it tracks the
+    /// node under pan/zoom.
+    @ViewBuilder
+    private var selectedNodeDeleteButton: some View {
+        if let id = model.selectedNodeID, let box = model.node(id) {
+            let size = ScriptGraphLayout.size(box.payload)
+            let cornerGraph = CGPoint(x: box.position.x + size.width, y: box.position.y)
+            let screen = canvasPoint(fromGraph: cornerGraph)
+            Button {
+                model.deleteSelection()
+            } label: {
+                Image(systemName: "trash.fill")
+                    .font(.caption)
+                    .padding(6)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.red.opacity(0.6), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.red)
+            .accessibilityLabel("Delete node")
             .position(screen)
         }
     }
