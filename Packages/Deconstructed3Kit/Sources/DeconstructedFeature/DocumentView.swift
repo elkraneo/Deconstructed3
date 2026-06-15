@@ -2,10 +2,8 @@ import AppKit
 import ComposableArchitecture
 import RCP3Document
 import RCP3GraphEditor
-import RCP3Runtime
 import RCP3Viewport
 import SwiftUI
-import simd
 
 /// The Deconstructed 3 main window: a 3-pane `NavigationSplitView` driven entirely
 /// by `StoreOf<DocumentFeature>`.
@@ -13,11 +11,18 @@ import simd
 /// - **Sidebar:** the entity tree, selection bound to the store.
 /// - **Center:** `RCP3ViewportView`, fed the store's live `sceneGraph` and a
 ///   selection binding — a rename re-derives the graph, so the viewport entity
-///   name updates without a reload.
+///   name updates without a reload. While **Play** is active the center is
+///   swapped INLINE for the app-supplied canonical play view (Apple's real
+///   `RealityKitScripting` runtime).
 /// - **Detail:** the *editable* inspector, whose Name field drives `nameEdited`.
 ///
 /// Save lives on the toolbar (and ⌘S), enabled only while `hasUnsavedChanges`.
-public struct DocumentView: View {
+///
+/// Generic over `CanonicalPlay` — the concrete canonical-play view the **app**
+/// injects via a `@ViewBuilder` closure. The tested library never names that view
+/// (or the binary `RealityKitScripting` framework it needs); previews and tests use
+/// the `EmptyView`-returning default. No `AnyView`.
+public struct DocumentView<CanonicalPlay: View>: View {
     @Bindable var store: StoreOf<DocumentFeature>
 
     /// Which view fills the center column. Pure presentation state, so it lives in
@@ -42,43 +47,30 @@ public struct DocumentView: View {
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
 
-    // MARK: Play mode (spatial run)
+    // MARK: Play mode (canonical, inline)
 
-    /// Whether the script graph is running LIVE in the 3D viewport (Play). When on,
-    /// the viewport reports drags to the runtime instead of orbiting the camera, and
-    /// the resulting transform drives the real reconstructed entity.
+    /// Whether the canonical Play view is filling the center column instead of the
+    /// viewport/graph. Pure presentation state. Pressing ▶ Play sets it; Stop clears
+    /// it and returns to the normal viewport. The graph it runs is captured at the
+    /// moment Play starts, so a selection change while playing doesn't swap targets.
     @State private var isPlaying = false
-    /// The live entity model the running graph mutates (the runtime's authored side
-    /// of the bridge). Held across body passes so drags accumulate. `nil` when not
-    /// playing.
-    @State private var playState: RuntimeEntityState?
-    /// The running JS host (compiled graph + bound `playState`). `nil` when stopped.
-    @State private var playHost: ScriptJSHost?
-    /// The node uuid Play is driving (captured when Play starts, so the target is
-    /// stable even if the selection changes while playing). `nil` when stopped.
-    @State private var playTargetNodeID: String?
-    /// The transform published to the viewport to apply live to `playTargetNodeID`.
-    /// Set after each drag dispatch; the viewport applies it via `applyLiveTransform`.
-    @State private var liveTransform: LiveTransform?
-    /// The target entity's AUTHORED transform, snapshotted when Play begins (keyed by
-    /// node uuid). On Stop it is published back through `liveTransform` so the entity
-    /// returns exactly to its authored pose — `applyLiveTransform` mutates the live
-    /// entity in place and never restored it otherwise. `nil` when not playing.
-    @State private var authoredSnapshot: LiveTransform?
+    /// The graph the in-flight canonical Play is running, captured when Play begins so
+    /// the canonical view's identity is stable across body passes. `nil` when stopped.
+    @State private var playingGraph: RCP3ScriptGraph?
 
-    /// Invoked when the user asks to run the graph on Apple's real
-    /// `RealityKitScripting` runtime. The **app** target owns the presentation (and
-    /// links the binary framework); this layer only reports the intent, so the tested
-    /// library stays free of that dependency. When `nil`, the Simulate affordance is
-    /// hidden.
-    private let onCanonicalSimulate: ((RCP3ScriptGraph) -> Void)?
+    /// Builds the canonical Play view for a graph: the **app** injects its concrete
+    /// `CanonicalPlayView` here (it owns the presentation + links the binary
+    /// `RealityKitScripting` framework). The tested library never names that view, so
+    /// `swift test` stays free of the binary dependency. The default returns
+    /// `EmptyView`, so previews/tests construct `DocumentView` with no canonical view.
+    private let canonicalPlay: (RCP3ScriptGraph) -> CanonicalPlay
 
     public init(
         store: StoreOf<DocumentFeature>,
-        onCanonicalSimulate: ((RCP3ScriptGraph) -> Void)? = nil
+        @ViewBuilder canonicalPlay: @escaping (RCP3ScriptGraph) -> CanonicalPlay
     ) {
         self.store = store
-        self.onCanonicalSimulate = onCanonicalSimulate
+        self.canonicalPlay = canonicalPlay
     }
 
     /// Whether a script-graph canvas is currently shown (graph mode with a graph).
@@ -103,23 +95,12 @@ public struct DocumentView: View {
         store.openScriptGraph != nil || store.selectedScriptGraph != nil
     }
 
-    /// The graph the spatial Play would run in the 3D viewport. v1 drives the
-    /// *selected* entity, so this is the selected entity's graph (the box, when
-    /// selected). `nil` when the selection has no graph — Play is then disabled.
-    private var playableGraph: RCP3ScriptGraph? {
-        store.selectedScriptGraph
-    }
-
-    /// The node uuid Play would drive: the selected entity (v1 limitation — see the
-    /// Play button doc). Valid only when that entity actually carries a graph.
-    private var playableTargetNodeID: String? {
-        store.selectedScriptGraph == nil ? nil : store.selection
-    }
-
-    /// Whether the spatial Play toggle is available: the center shows the viewport
-    /// and the selected entity has a runnable graph + a resolvable target uuid.
+    /// Whether the ▶ Play toggle is available: there's a graph to run. Play runs it
+    /// inline on Apple's real `RealityKitScripting` runtime (the canonical view),
+    /// independent of which entity is selected or the center mode — same availability
+    /// as Run Preview.
     private var canPlay: Bool {
-        centerMode == .viewport && playableGraph != nil && playableTargetNodeID != nil
+        previewableGraph != nil
     }
 
     public var body: some View {
@@ -197,55 +178,54 @@ public struct DocumentView: View {
         }
     }
 
-    // MARK: Center column (viewport ⇄ script-graph canvas)
+    // MARK: Center column (viewport ⇄ script-graph canvas ⇄ canonical Play)
 
-    /// The center column: the 3D viewport, with the visual script-graph canvas
-    /// overlaid ON TOP when the user switches to Graph mode (via the toolbar
-    /// segmented control).
+    /// The center column. In the normal (not-playing) state it is the 3D viewport
+    /// with the visual script-graph canvas overlaid ON TOP in Graph mode. While
+    /// ▶ Play is active it is swapped INLINE for the app-supplied canonical Play view
+    /// (Apple's real `RealityKitScripting` runtime), filling the whole column.
     ///
-    /// CRITICAL (box-vanish fix): the `RCP3ViewportView` is ALWAYS mounted — it is
-    /// the bottom layer of a `ZStack` and is never torn down by a mode switch. Were
-    /// it conditionally swapped out for the graph canvas (as it once was), switching
-    /// to Graph would destroy the viewport's `@State` (provider/store + the injected
+    /// CRITICAL (box-vanish fix, applies to the not-playing state): the
+    /// `RCP3ViewportView` is ALWAYS mounted while not playing — it is the bottom layer
+    /// of a `ZStack` and is never torn down by a Graph↔Viewport mode switch. Were it
+    /// conditionally swapped out for the graph canvas (as it once was), switching to
+    /// Graph would destroy the viewport's `@State` (provider/store + the injected
     /// RealityKit model); switching back would create a fresh viewport whose
     /// re-injection doesn't reliably re-render (StageView recreation fragility), so
-    /// the reconstructed box disappeared. Keeping the viewport mounted means it
-    /// builds ONCE (on `onAppear`) and only updates on `sceneGraph` changes —
-    /// `setModel` is not re-run on each Graph↔Viewport toggle, so the box persists.
+    /// the reconstructed box disappeared. Keeping the viewport mounted means it builds
+    /// ONCE (on `onAppear`) and only updates on `sceneGraph` changes — `setModel` is
+    /// not re-run on each Graph↔Viewport toggle, so the box persists.
     ///
-    /// When `centerMode == .graph`, the graph canvas is drawn on top with an OPAQUE
-    /// background so the (still-live) viewport is fully hidden behind it.
+    /// (Entering Play does tear the viewport down — that's intended: Play is a
+    /// distinct mode, and StageView rebuilds cleanly when Play stops.)
     @ViewBuilder
     private var centerColumn: some View {
+        if isPlaying, let graph = playingGraph {
+            // CANONICAL PLAY (inline): the app injects its concrete play view here.
+            // Fills the column; `.id(graphKey)` keeps its identity stable for the run.
+            canonicalPlay(graph)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(graphKey)
+        } else {
+            viewportColumn
+        }
+    }
+
+    /// The not-playing center: the always-mounted 3D viewport with the Graph-mode
+    /// canvas overlaid on top.
+    @ViewBuilder
+    private var viewportColumn: some View {
         ZStack {
             // The reconstructed 3D viewport (StageView-backed), fed the live
             // (possibly unsaved) scene graph + a selection binding so renames
-            // reflect and picks flow back to the store. ALWAYS present so it is
-            // never torn down (see the type doc above).
-            //
-            // PLAY: while `isPlaying`, drags are reported to the runtime (camera
-            // orbit suppressed because StageView switches to its `.entityDrag`
-            // interaction mode, routing a drag on the selected entity to the host
-            // instead of the camera) and the resulting transform is pushed back
-            // through `liveTransform` to move the real reconstructed entity. With
-            // Play OFF every input is `nil`/false, so the viewport behaves exactly
-            // as before.
+            // reflect and picks flow back to the store. ALWAYS present (while not
+            // playing) so it is never torn down (see the type doc above). The old
+            // hand-rolled spatial-Play plumbing (playMode/liveTransform/onPlayDrag)
+            // is retired — Play now runs canonically, inline, above.
             RCP3ViewportView(
                 sceneGraph: store.sceneGraph,
-                selection: $store.selection.sending(\.selected),
-                playMode: isPlaying,
-                liveTransform: $liveTransform,
-                onPlayDrag: handlePlayDrag
+                selection: $store.selection.sending(\.selected)
             )
-            // If the run target disappears (selection/graph change) while playing,
-            // stop cleanly rather than driving a stale uuid.
-            .onChange(of: canPlay) { _, possible in
-                if isPlaying && !possible { stopPlaying() }
-            }
-            // Leaving the viewport (to the graph canvas) stops a running graph.
-            .onChange(of: centerMode) { _, mode in
-                if mode != .viewport && isPlaying { stopPlaying() }
-            }
 
             // GRAPH overlay: only present in Graph mode, drawn on top of the live
             // viewport with an opaque background so the viewport doesn't show
@@ -324,13 +304,12 @@ public struct DocumentView: View {
             }
             .pickerStyle(.segmented)
         }
-        // PLAY / STOP: run the script graph LIVE in the 3D viewport, driving the
-        // real reconstructed entity. AVAILABILITY is relaxed to "a graph is open"
-        // (`canRunPreview`) so the toggle isn't wrongly greyed out when the graph
-        // lives on a box child rather than the selected entity. Actually DRIVING the
-        // 3D entity still requires viewport mode + a resolvable target — `startPlaying`
-        // is a no-op without `playableGraph`/`playableTargetNodeID`, so the live-Play
-        // behavior is otherwise unchanged.
+        // PLAY / STOP: run the script graph INLINE on Apple's real
+        // `RealityKitScripting` runtime — the center column swaps to the
+        // app-injected canonical Play view. ENABLED whenever there's a graph to run
+        // (`canPlay`), independent of the selected entity or center mode. With no
+        // canonical view injected (tests/previews use the `EmptyView` default), the
+        // swap shows nothing — harmless, and the app always injects the real view.
         ToolbarItem {
             Button(
                 isPlaying ? "Stop" : "Play",
@@ -338,10 +317,10 @@ public struct DocumentView: View {
             ) {
                 if isPlaying { stopPlaying() } else { startPlaying() }
             }
-            .disabled(!canRunPreview && !isPlaying)
+            .disabled(!canPlay && !isPlaying)
             .help(isPlaying
-                ? "Stop the running graph and restore the entity"
-                : "Run this script graph live in the viewport (drag to drive the entity)")
+                ? "Stop the running graph and return to the viewport"
+                : "Run this script graph on Apple's RealityKitScripting runtime")
         }
         // RUN / PREVIEW affordance: ENABLED whenever a graph is open in the editor
         // (or the selected entity has one) — see `canRunPreview`. Opens
@@ -354,128 +333,24 @@ public struct DocumentView: View {
             .disabled(!canRunPreview)
             .help("Compile and run this script graph with a 2D drag simulator")
         }
-        // SIMULATE (canonical): shown only when the app wired the runtime (it owns
-        // the presentation + the binary framework).
-        if let onCanonicalSimulate {
-            ToolbarItem {
-                Button("Simulate", systemImage: "cube.transparent") {
-                    if let graph = previewableGraph { onCanonicalSimulate(graph) }
-                }
-                .disabled(!canRunPreview)
-                .help("Run this script graph on Apple's RealityKitScripting runtime")
-            }
-        }
     }
 
-    // MARK: Play lifecycle (spatial run)
+    // MARK: Play lifecycle (canonical, inline)
 
-    /// Starts a live spatial run: compiles + runs the selected entity's graph on the
-    /// RCP3 runtime, captures the target uuid, snapshots the target's AUTHORED pose
-    /// (for restore on Stop), seeds the runtime from that pose, and flips the
-    /// viewport into play mode. Idempotent and a no-op if there's nothing runnable.
+    /// Starts the inline canonical Play: captures the graph to run and swaps the
+    /// center column to the app-injected canonical view. A no-op if already playing
+    /// or there's nothing runnable.
     private func startPlaying() {
-        guard !isPlaying, let graph = playableGraph, let target = playableTargetNodeID else { return }
-
-        // Make the result visible: Play from the Graph view would otherwise be blind.
-        centerMode = .viewport
-
-        // Snapshot the authored pose so Stop can restore the entity exactly.
-        let authored = authoredTransform(forNodeID: target)
-        authoredSnapshot = authored
-
-        // Seed the runtime from the AUTHORED transform so the run starts at the box's
-        // real pose; drags then accumulate from there (publishing identity here would
-        // teleport the box to the origin on Play). Falls back to identity if the node
-        // has no resolvable authored transform.
-        let state = RuntimeEntityState()
-        if let authored {
-            state.translation = SIMD3(
-                Double(authored.translation.x),
-                Double(authored.translation.y),
-                Double(authored.translation.z)
-            )
-            let q = authored.rotation
-            state.rotation = simd_quatd(ix: Double(q.imag.x), iy: Double(q.imag.y), iz: Double(q.imag.z), r: Double(q.real))
-            state.scale = SIMD3(Double(authored.scale.x), Double(authored.scale.y), Double(authored.scale.z))
-        }
-
-        playHost = ScriptGraphRunner.run(graph, into: state)
-        playState = state
-        playTargetNodeID = target
+        guard !isPlaying, let graph = previewableGraph else { return }
+        playingGraph = graph
         isPlaying = true
-        // Don't publish a transform on start — the entity is already at the authored
-        // pose (and the runtime is seeded from it). The first drag publishes the first
-        // delta from there, so Play start is visually a no-op.
     }
 
-    /// Stops the run, restores the entity to its authored pose, and tears down the
-    /// runtime. Restore publishes the snapshot through `liveTransform` so the viewport
-    /// (kept mounted — Bug 1) sets the live entity back exactly; clearing the snapshot
-    /// + runtime then leaves the box at its authored transform.
+    /// Stops the inline canonical Play: tears down the canonical view (which releases
+    /// its `RealityView`/runtime) and returns the center column to the viewport.
     private func stopPlaying() {
         isPlaying = false
-        playHost = nil
-        playState = nil
-        // Restore the authored pose: re-publish the snapshot as the final live
-        // transform so the viewport sets the entity back. (The viewport mutated it in
-        // place during the run; nothing else restores it.)
-        if let snapshot = authoredSnapshot {
-            liveTransform = snapshot
-        } else {
-            liveTransform = nil
-        }
-        playTargetNodeID = nil
-        authoredSnapshot = nil
-    }
-
-    /// The authored local transform of `nodeID` from the live scene graph, as a
-    /// `LiveTransform` (so it round-trips through the same viewport apply path). `nil`
-    /// if the node isn't in the scene graph.
-    private func authoredTransform(forNodeID nodeID: String) -> LiveTransform? {
-        guard let node = sceneNode(id: nodeID, in: store.sceneGraph) else { return nil }
-        let t = node.translation, r = node.rotation, s = node.scale
-        return LiveTransform(
-            nodeID: nodeID,
-            translation: SIMD3(Float(t.x), Float(t.y), Float(t.z)),
-            rotation: simd_quatf(ix: Float(r.x), iy: Float(r.y), iz: Float(r.z), r: Float(r.w)),
-            scale: SIMD3(Float(s.x), Float(s.y), Float(s.z))
-        )
-    }
-
-    /// Depth-first search for the scene node with `id` in the reconstructed tree.
-    private func sceneNode(id: String, in node: RCP3SceneNode?) -> RCP3SceneNode? {
-        guard let node else { return nil }
-        if node.id == id { return node }
-        for child in node.children {
-            if let found = sceneNode(id: id, in: child) { return found }
-        }
-        return nil
-    }
-
-    /// A play-mode drag from the viewport: dispatch a `"drag"` to the runtime, then
-    /// publish the updated transform so the viewport moves the real entity.
-    private func handlePlayDrag(_ delta: SIMD3<Double>) {
-        guard isPlaying, let host = playHost else { return }
-        host.dispatch(event: "drag", payload: ["delta": [delta.x, delta.y, delta.z]])
-        publishLiveTransform()
-    }
-
-    /// Reads the runtime's live `RuntimeEntityState` and publishes it as a
-    /// `LiveTransform` (converted to `Float`) for the viewport's target entity.
-    private func publishLiveTransform() {
-        guard let state = playState, let target = playTargetNodeID else { return }
-        let t = state.translation, s = state.scale, q = state.rotation
-        liveTransform = LiveTransform(
-            nodeID: target,
-            translation: SIMD3(Float(t.x), Float(t.y), Float(t.z)),
-            rotation: simd_quatf(
-                ix: Float(q.imag.x),
-                iy: Float(q.imag.y),
-                iz: Float(q.imag.z),
-                r: Float(q.real)
-            ),
-            scale: SIMD3(Float(s.x), Float(s.y), Float(s.z))
-        )
+        playingGraph = nil
     }
 
     @ToolbarContentBuilder
@@ -532,6 +407,18 @@ public struct DocumentView: View {
         panel.message = "Choose a .realitycomposerpro bundle"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         store.send(.openTapped(url))
+    }
+}
+
+// MARK: - Canonical-play default (EmptyView)
+
+public extension DocumentView where CanonicalPlay == EmptyView {
+    /// Constructs a `DocumentView` with NO canonical Play view: pressing ▶ Play swaps
+    /// the center to an `EmptyView`. Used by previews and `swift test` (which can't
+    /// load the binary `RealityKitScripting` framework); the real app always provides
+    /// a concrete canonical view via the designated `@ViewBuilder` init.
+    init(store: StoreOf<DocumentFeature>) {
+        self.init(store: store) { _ in EmptyView() }
     }
 }
 

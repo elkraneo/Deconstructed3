@@ -4,10 +4,10 @@ import RealityKitScripting
 import RCP3Document
 import RCP3Runtime
 
-/// A standalone **"Simulate (canonical)"** view: it runs an RCP 3 script graph on
-/// Apple's *real* `RealityKitScripting` runtime, in a `RealityView` we own, with
-/// Apple's own debugging surfaced — a live **console** (the structured runtime log)
-/// and the **JS debugger** (Safari Web Inspector).
+/// The canonical **Play** view: it runs an RCP 3 script graph on Apple's *real*
+/// `RealityKitScripting` runtime, in a `RealityView` we own, with Apple's own
+/// debugging surfaced — a live **console** (the structured runtime log) and the
+/// **JS debugger** (Safari Web Inspector).
 ///
 /// The graph is compiled to the public-runtime JavaScript by
 /// ``RCP3Runtime/CanonicalScriptGraphCompiler``, attached to the box via
@@ -17,45 +17,68 @@ import RCP3Runtime
 ///
 /// Self-contained (its own `RealityView` + orbit camera, not StageView's) so the
 /// canonical runtime can be exercised without entangling StageView with a macOS-27
-/// binary dependency.
+/// binary dependency. Designed to fill a view region INLINE (the document's center
+/// column), so its console is a small collapsible OVERLAY rather than a fixed panel
+/// that would dominate the viewport.
 @MainActor
-public struct CanonicalSimulateView: View {
+public struct CanonicalPlayView: View {
     /// The compiled JavaScript (computed once from the graph).
     private let source: String
     @State private var validationError: String?
+    /// Whether the runtime-log console overlay is shown. Collapsed by default so the
+    /// inline 3D viewport isn't dominated; a small toolbar button toggles it.
+    @State private var showsConsole = false
 
     public init(graph: RCP3ScriptGraph) {
         self.source = CanonicalScriptGraphCompiler().compile(graph)
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            RealityView { content in
-                // Boot the runtime + install the log listener before mounting scripted
-                // entities (idempotent).
-                try? CanonicalRuntime.initializeOnce()
+        RealityView { content in
+            // Boot the runtime + install the log listener before mounting scripted
+            // entities (idempotent).
+            try? CanonicalRuntime.initializeOnce()
 
-                let box = ModelEntity(
-                    mesh: .generateBox(size: 0.2),
-                    materials: [SimpleMaterial(color: .gray, isMetallic: false)]
-                )
-                box.name = "box"
-                box.components.set(ScriptingComponent(source: source))
-                content.add(box)
+            let box = ModelEntity(
+                mesh: .generateBox(size: 0.2),
+                materials: [SimpleMaterial(color: .gray, isMetallic: false)]
+            )
+            box.name = "box"
+            box.components.set(ScriptingComponent(source: source))
+            content.add(box)
 
-                // Apple's JS debugger: name + enable so this script's JavaScriptCore
-                // context appears in Safari ▸ Develop ▸ this Mac ▸ the named context
-                // (breakpoints, stepping, live console, evaluate).
-                box.scene?.renameJSContext("Deconstructed 3 — Script Graph")
-                box.scene?.enableDebugger(true)
-            }
-            .realityScripting()
-            #if os(macOS) || os(iOS)
-            .realityViewCameraControls(.orbit)
-            #endif
-
-            ConsolePanel(log: CanonicalRuntime.log, validationError: validationError)
+            // Apple's JS debugger: name + enable so this script's JavaScriptCore
+            // context appears in Safari ▸ Develop ▸ this Mac ▸ the named context
+            // (breakpoints, stepping, live console, evaluate).
+            box.scene?.renameJSContext("Deconstructed 3 — Script Graph")
+            box.scene?.enableDebugger(true)
         }
+        .realityScripting()
+        #if os(macOS) || os(iOS)
+        .realityViewCameraControls(.orbit)
+        #endif
+        // Console as a small, collapsible OVERLAY pinned to the bottom — it doesn't
+        // dominate the inline viewport, and a toggle in the top-right reveals it.
+        .overlay(alignment: .topTrailing) {
+            Button {
+                showsConsole.toggle()
+            } label: {
+                Label("Console", systemImage: "terminal")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.bordered)
+            .padding(8)
+            .help(showsConsole ? "Hide the runtime log" : "Show the runtime log")
+        }
+        .overlay(alignment: .bottom) {
+            if showsConsole {
+                ConsolePanel(log: CanonicalRuntime.log, validationError: validationError)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 150)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.default, value: showsConsole)
         .task {
             validationError = CanonicalRuntime.validationError(in: source)
         }
@@ -104,7 +127,6 @@ private struct ConsolePanel: View {
                 .padding(8)
             }
         }
-        .frame(height: 150)
         .background(.black.opacity(0.85))
     }
 }
