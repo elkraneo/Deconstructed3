@@ -75,19 +75,23 @@ public enum ScriptGraphNodeLibrary {
     /// readable, ordered sections; the `order` drives section ordering in the UI.
     public enum Category: String, Sendable, Hashable, CaseIterable {
         case events = "Events"
+        case logic = "Logic"
         case components = "Components"
         case math = "Math"
         case make = "Make"
         case string = "String"
+        case variables = "Variables"
 
         /// Display order of the sections in the palette (lower comes first).
         public var order: Int {
             switch self {
             case .events:     return 0
-            case .components: return 1
+            case .logic:      return 1
             case .math:       return 2
             case .make:       return 3
             case .string:     return 4
+            case .components: return 5
+            case .variables:  return 6
             }
         }
 
@@ -246,6 +250,54 @@ public enum ScriptGraphNodeLibrary {
         "tm_string_prefix": "Prefix",
         "tm_string_suffix": "Suffix",
         "tm_string_substring": "Substring",
+        // Logic
+        "tm_and": "And",
+        "tm_or": "Or",
+        // Math — Arithmetic & trig
+        "tm_math_add": "Add",
+        "tm_math_subtract": "Subtract",
+        "tm_math_multiply": "Multiply",
+        "tm_math_divide": "Divide",
+        "tm_math_mod": "Modulo",
+        "tm_math_min": "Min",
+        "tm_math_max": "Max",
+        "tm_math_dot": "Dot Product",
+        "tm_math_cross": "Cross Product",
+        "tm_math_reflect": "Reflect",
+        "tm_math_bitwise_and": "Bitwise And",
+        "tm_math_bitwise_or": "Bitwise Or",
+        "tm_math_bitwise_xor": "Bitwise Xor",
+        "tm_math_sin": "Sin",
+        "tm_math_cos": "Cos",
+        "tm_math_tan": "Tan",
+        "tm_math_asin": "Asin",
+        "tm_math_acos": "Acos",
+        "tm_math_atan": "Atan",
+        "tm_math_sqrt": "Square Root",
+        "tm_math_log": "Log",
+        "tm_math_log2": "Log2",
+        "tm_math_abs": "Abs",
+        "tm_math_ceil": "Ceil",
+        "tm_math_floor": "Floor",
+        "tm_math_round": "Round",
+        "tm_math_trunc": "Truncate",
+        "tm_math_length": "Length",
+        "tm_math_normal": "Normalize",
+        "tm_math_bitwise_not": "Bitwise Not",
+        "tm_math_pow": "Power",
+        "tm_math_clamp": "Clamp",
+        "tm_math_multiply_by_scalar": "Multiply by Scalar",
+        "tm_math_multiply_by_quaternion": "Multiply by Quaternion",
+        "tm_math_multiply_by_matrix": "Multiply by Matrix",
+        // Math — Constant (literal)
+        "tm_constant": "Constant",
+        // Variables
+        "tm_get_variable_node": "Get Variable",
+        "tm_set_variable_node": "Set Variable",
+        "tm_clear_variable_node": "Clear Variable",
+        "tm_get_remote_variable_node": "Get Remote Variable",
+        "tm_set_remote_variable_node": "Set Remote Variable",
+        "tm_clear_remote_variable_node": "Clear Remote Variable",
     ]
 
     // MARK: - Node specs
@@ -385,6 +437,76 @@ public enum ScriptGraphNodeLibrary {
         "tm_string_prefix":     NodeSpec(inputs: [data("string", "String"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
         "tm_string_suffix":     NodeSpec(inputs: [data("string", "String"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
         "tm_string_substring":  NodeSpec(inputs: [data("string", "String"), data("index", "Index"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
+
+        // MARK: Logic
+        //
+        // Data-only boolean reducers → a single `result`. The inputs are variadic
+        // (`a`, `b`, `c`, …); we seed the first two faithful pins. The editor's
+        // "add more inputs (+)" affordance is a deferred follow-up.
+        "tm_and": NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
+        "tm_or":  NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
+
+        // MARK: Math — Arithmetic & trig
+        //
+        // Data-only value nodes → a single `result`. Binary operators take a variadic
+        // input list (`a`, `b`, …; we seed `a`, `b`, "+" deferred); unary operators take
+        // a single `a`; a few take a named auxiliary input. Pin connector names are
+        // faithful to the observed node definitions.
+        "tm_math_add":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_subtract":     NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply":     NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_divide":       NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_mod":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_min":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_max":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_dot":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_cross":        NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_reflect":      NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_bitwise_and":  NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_bitwise_or":   NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_bitwise_xor":  NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_sin":          NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_cos":          NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_tan":          NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_asin":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_acos":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_atan":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_sqrt":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_log":          NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_log2":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_abs":          NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_ceil":         NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_floor":        NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_round":        NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_trunc":        NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_length":       NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_normal":       NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_bitwise_not":  NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_pow":          NodeSpec(inputs: [data("a", "A"), data("exponent", "Exponent")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_clamp":        NodeSpec(inputs: [data("a", "A"), data("min", "Min"), data("max", "Max")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_scalar":     NodeSpec(inputs: [data("a", "A"), data("number", "Number")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_quaternion": NodeSpec(inputs: [data("a", "A"), data("quaternion", "Quaternion")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_matrix":     NodeSpec(inputs: [data("a", "A"), data("matrix", "Matrix")], outputs: [data("result", "Result")], category: .math),
+
+        // MARK: Math — Constant (literal)
+        //
+        // No inputs; a single `value` output. The literal value is a node *settings*
+        // field, not a pin (a future literal-editing UI).
+        "tm_constant": NodeSpec(inputs: [], outputs: [data("value", "Value")], category: .math),
+
+        // MARK: Variables
+        //
+        // Get/Set/Clear a named graph variable. For the LOCAL variants the referenced
+        // variable is a node *settings* field (a future variable-reference UI), not a
+        // pin — only the `value` data pin and exec pins are declared. The REMOTE variants
+        // take the referenced variable as an Entity input pin (`Variable`). Set/Clear are
+        // control-flow actions (exec in + exec out); Get is data-only.
+        "tm_get_variable_node":          NodeSpec(inputs: [], outputs: [data("value", "Value")], category: .variables),
+        "tm_set_variable_node":          NodeSpec(inputs: [exec, data("value", "Value")], outputs: [exec], category: .variables),
+        "tm_clear_variable_node":        NodeSpec(inputs: [exec], outputs: [exec], category: .variables),
+        "tm_get_remote_variable_node":   NodeSpec(inputs: [data("Variable", "Variable")], outputs: [data("value", "Value")], category: .variables),
+        "tm_set_remote_variable_node":   NodeSpec(inputs: [exec, data("Variable", "Variable"), data("value", "Value")], outputs: [exec], category: .variables),
+        "tm_clear_remote_variable_node": NodeSpec(inputs: [exec, data("Variable", "Variable")], outputs: [exec], category: .variables),
     ]
 
     // MARK: - Component types (registry)

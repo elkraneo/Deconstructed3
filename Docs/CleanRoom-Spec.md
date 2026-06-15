@@ -245,14 +245,86 @@ outputs.
 | `tm_string_suffix` | `string`, `length` | `result` |
 | `tm_string_substring` | `string`, `index`, `length` | `result` |
 
-**Deferred — dynamic pins, pending a follow-up harvest.** A second family of nodes
-presents a **variadic / dynamic** pin set (the pin count grows with the node's
-configuration) and so cannot yet be transcribed faithfully: `tm_and`, `tm_or`,
-`tm_constant`, `tm_to_string`, `tm_string_merge`, the variadic arithmetic operators
-(`tm_math_add`, `tm_math_subtract`, `tm_math_multiply`, `tm_math_divide`,
-`tm_math_dot`, `tm_math_cross`, …), and the variable nodes (`tm_get_variable_node`,
-`tm_set_variable_node`, `tm_clear_variable_node`, and their remote variants). These are
-omitted from the library until their dynamic interfaces are pinned down.
+**Logic.** Each yields a single `result`. The inputs are **variadic**: the node
+presents a sequential list `a`, `b`, `c`, … and the editor's "add more inputs (+)"
+affordance grows it; the library seeds the first two (`a`, `b`) — the "+" affordance is
+deferred.
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_and` | `a`, `b`, … | `result` |
+| `tm_or` | `a`, `b`, … | `result` |
+
+**Math — Arithmetic & trig.** Each yields a single `result`. The binary operators take
+a **variadic** input list (`a`, `b`, `c`, …; the library seeds `a`, `b`, with "+"
+deferred); the unary operators take a single `a`; a few take a named auxiliary input.
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_math_add` | `a`, `b`, … | `result` |
+| `tm_math_subtract` | `a`, `b`, … | `result` |
+| `tm_math_multiply` | `a`, `b`, … | `result` |
+| `tm_math_divide` | `a`, `b`, … | `result` |
+| `tm_math_mod` | `a`, `b`, … | `result` |
+| `tm_math_min` | `a`, `b`, … | `result` |
+| `tm_math_max` | `a`, `b`, … | `result` |
+| `tm_math_dot` | `a`, `b`, … | `result` |
+| `tm_math_cross` | `a`, `b`, … | `result` |
+| `tm_math_reflect` | `a`, `b`, … | `result` |
+| `tm_math_bitwise_and` | `a`, `b`, … | `result` |
+| `tm_math_bitwise_or` | `a`, `b`, … | `result` |
+| `tm_math_bitwise_xor` | `a`, `b`, … | `result` |
+| `tm_math_sin` | `a` | `result` |
+| `tm_math_cos` | `a` | `result` |
+| `tm_math_tan` | `a` | `result` |
+| `tm_math_asin` | `a` | `result` |
+| `tm_math_acos` | `a` | `result` |
+| `tm_math_atan` | `a` | `result` |
+| `tm_math_sqrt` | `a` | `result` |
+| `tm_math_log` | `a` | `result` |
+| `tm_math_log2` | `a` | `result` |
+| `tm_math_abs` | `a` | `result` |
+| `tm_math_ceil` | `a` | `result` |
+| `tm_math_floor` | `a` | `result` |
+| `tm_math_round` | `a` | `result` |
+| `tm_math_trunc` | `a` | `result` |
+| `tm_math_length` | `a` | `result` |
+| `tm_math_normal` | `a` | `result` |
+| `tm_math_bitwise_not` | `a` | `result` |
+| `tm_math_pow` | `a`, `exponent` | `result` |
+| `tm_math_clamp` | `a`, `min`, `max` | `result` |
+| `tm_math_multiply_by_scalar` | `a`, `number` | `result` |
+| `tm_math_multiply_by_quaternion` | `a`, `quaternion` | `result` |
+| `tm_math_multiply_by_matrix` | `a`, `matrix` | `result` |
+
+**Math — Constant** (literal). One additional constant node carries its literal value
+in node **settings** rather than on a pin: it has no inputs and a single `value` output.
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_constant` | — (value in settings) | `value` |
+
+**Variables.** Get/Set/Clear a named graph variable. For the **local** variants the
+referenced variable is a **settings** field (a future variable-reference UI), not a pin,
+so only the `value` data pin and exec pins are declared here; the **remote** variants
+take the referenced variable as an Entity input pin (`Variable`). Set/Clear are
+control-flow actions (exec in + exec out); Get is data-only.
+
+| type | inputs | outputs | exec |
+| --- | --- | --- | --- |
+| `tm_get_variable_node` | — | `value` | — |
+| `tm_set_variable_node` | `value` | — | in + out |
+| `tm_clear_variable_node` | — | — | in + out |
+| `tm_get_remote_variable_node` | `Variable` | `value` | — |
+| `tm_set_remote_variable_node` | `Variable`, `value` | — | in + out |
+| `tm_clear_remote_variable_node` | `Variable` | — | in + out |
+
+**Deferred — dynamic pins, pending a follow-up harvest.** A residual family still
+presents a fully **dynamic** pin set the editor grows from configuration, beyond the
+fixed seed transcribed above: `tm_to_string` and `tm_string_merge`. These are omitted
+from the library until their dynamic interfaces are pinned down. The variadic logic /
+arithmetic nodes above are seeded with their first inputs; their "+" grow affordance is
+likewise a deferred follow-up.
 
 ## Script-graph runtime — execution model (observed)
 

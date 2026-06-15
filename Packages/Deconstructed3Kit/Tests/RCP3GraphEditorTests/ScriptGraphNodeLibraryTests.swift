@@ -71,6 +71,15 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byType["tm_string_has_prefix"] == "Has Prefix")
         #expect(byType["tm_string_length"] == "String Length")
 
+        // The logic/arithmetic/constant/variable batch, with curated names.
+        #expect(byType["tm_and"] == "And")
+        #expect(byType["tm_math_add"] == "Add")
+        #expect(byType["tm_math_multiply_by_scalar"] == "Multiply by Scalar")
+        #expect(byType["tm_math_sqrt"] == "Square Root")
+        #expect(byType["tm_constant"] == "Constant")
+        #expect(byType["tm_get_variable_node"] == "Get Variable")
+        #expect(byType["tm_set_remote_variable_node"] == "Set Remote Variable")
+
         // Data-driven: one palette item per type that has a spec.
         let expectedTypes = [
             // Events
@@ -99,6 +108,25 @@ struct ScriptGraphNodeLibraryTests {
             "tm_string_has_prefix", "tm_string_has_suffix", "tm_string_contains",
             "tm_string_length", "tm_string_prefix", "tm_string_suffix",
             "tm_string_substring",
+            // Logic
+            "tm_and", "tm_or",
+            // Math — Arithmetic & trig
+            "tm_math_add", "tm_math_subtract", "tm_math_multiply", "tm_math_divide",
+            "tm_math_mod", "tm_math_min", "tm_math_max", "tm_math_dot", "tm_math_cross",
+            "tm_math_reflect", "tm_math_bitwise_and", "tm_math_bitwise_or",
+            "tm_math_bitwise_xor", "tm_math_sin", "tm_math_cos", "tm_math_tan",
+            "tm_math_asin", "tm_math_acos", "tm_math_atan", "tm_math_sqrt",
+            "tm_math_log", "tm_math_log2", "tm_math_abs", "tm_math_ceil",
+            "tm_math_floor", "tm_math_round", "tm_math_trunc", "tm_math_length",
+            "tm_math_normal", "tm_math_bitwise_not", "tm_math_pow", "tm_math_clamp",
+            "tm_math_multiply_by_scalar", "tm_math_multiply_by_quaternion",
+            "tm_math_multiply_by_matrix",
+            // Math — Constant (literal)
+            "tm_constant",
+            // Variables
+            "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node",
+            "tm_get_remote_variable_node", "tm_set_remote_variable_node",
+            "tm_clear_remote_variable_node",
         ]
         #expect(items.count == expectedTypes.count)
         #expect(Set(items.map(\.type)) == Set(expectedTypes))
@@ -144,12 +172,75 @@ struct ScriptGraphNodeLibraryTests {
         #expect(length.outputs.map(\.connectorName) == ["length"])
     }
 
+    @Test("Logic/arithmetic/constant/variable specs declare faithful pins")
+    func logicMathVariableSpecs() throws {
+        // Logic: variadic, seeded a, b → result (data-only).
+        let and = try #require(ScriptGraphNodeLibrary.spec(for: "tm_and"))
+        #expect(and.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(and.outputs.map(\.connectorName) == ["result"])
+        #expect(and.inputs.allSatisfy { !$0.isExec })
+        #expect(and.outputs.allSatisfy { !$0.isExec })
+
+        // Arithmetic binary: a, b → result.
+        let add = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_add"))
+        #expect(add.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(add.outputs.map(\.connectorName) == ["result"])
+        #expect(add.inputs.allSatisfy { !$0.isExec })
+
+        // Trig unary: a → result.
+        let sin = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_sin"))
+        #expect(sin.inputs.map(\.connectorName) == ["a"])
+        #expect(sin.outputs.map(\.connectorName) == ["result"])
+
+        // Auxiliary-input operators keep their named aux pins.
+        let pow = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_pow"))
+        #expect(pow.inputs.map(\.connectorName) == ["a", "exponent"])
+        let clamp = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_clamp"))
+        #expect(clamp.inputs.map(\.connectorName) == ["a", "min", "max"])
+        let byScalar = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_multiply_by_scalar"))
+        #expect(byScalar.inputs.map(\.connectorName) == ["a", "number"])
+
+        // Constant (literal): no inputs; single `value` output (value in settings).
+        let constant = try #require(ScriptGraphNodeLibrary.spec(for: "tm_constant"))
+        #expect(constant.inputs.isEmpty)
+        #expect(constant.outputs.map(\.connectorName) == ["value"])
+
+        // Get Variable: data-only, output `value`.
+        let getVar = try #require(ScriptGraphNodeLibrary.spec(for: "tm_get_variable_node"))
+        #expect(getVar.inputs.isEmpty)
+        #expect(getVar.outputs.map(\.connectorName) == ["value"])
+        #expect(getVar.outputs.allSatisfy { !$0.isExec })
+
+        // Set Variable: exec in + exec out, plus a `value` data input.
+        let setVar = try #require(ScriptGraphNodeLibrary.spec(for: "tm_set_variable_node"))
+        #expect(setVar.inputs.contains { $0.isExec })
+        #expect(setVar.outputs.contains { $0.isExec })
+        #expect(setVar.inputs.contains { !$0.isExec && $0.connectorName == "value" })
+        #expect(setVar.outputs.allSatisfy { $0.isExec })
+
+        // Clear Variable: exec in + exec out only (no data pins).
+        let clearVar = try #require(ScriptGraphNodeLibrary.spec(for: "tm_clear_variable_node"))
+        #expect(clearVar.inputs.map(\.isExec) == [true])
+        #expect(clearVar.outputs.map(\.isExec) == [true])
+
+        // Remote variants take the referenced variable as a `Variable` Entity input.
+        let getRemote = try #require(ScriptGraphNodeLibrary.spec(for: "tm_get_remote_variable_node"))
+        #expect(getRemote.inputs.map(\.connectorName) == ["Variable"])
+        #expect(getRemote.outputs.map(\.connectorName) == ["value"])
+        let setRemote = try #require(ScriptGraphNodeLibrary.spec(for: "tm_set_remote_variable_node"))
+        #expect(setRemote.inputs.contains { $0.isExec })
+        #expect(setRemote.inputs.contains { !$0.isExec && $0.connectorName == "Variable" })
+        #expect(setRemote.inputs.contains { !$0.isExec && $0.connectorName == "value" })
+        #expect(setRemote.outputs.contains { $0.isExec })
+    }
+
     @Test("Palette sections group the library by category in display order")
     func paletteSections() throws {
         let sections = ScriptGraphNodeLibrary.paletteSections
 
-        // Sections appear in Category.order: Events, Components, Math, Make, String.
-        #expect(sections.map(\.category) == [.events, .components, .math, .make, .string])
+        // Sections appear in Category.order: Events, Logic, Math, Make, String,
+        // Components, Variables.
+        #expect(sections.map(\.category) == [.events, .logic, .math, .make, .string, .components, .variables])
 
         let byCategory = Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0) })
 
@@ -167,6 +258,10 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byCategory[.math]?.items.contains { $0.type == "tm_constant_pi" } == true)
         #expect(byCategory[.make]?.items.contains { $0.type == "tm_make_vector3" } == true)
         #expect(byCategory[.string]?.items.contains { $0.type == "tm_string_contains" } == true)
+        #expect(byCategory[.logic]?.items.contains { $0.type == "tm_and" } == true)
+        #expect(byCategory[.math]?.items.contains { $0.type == "tm_math_add" } == true)
+        #expect(byCategory[.math]?.items.contains { $0.type == "tm_constant" } == true)
+        #expect(byCategory[.variables]?.items.contains { $0.type == "tm_set_variable_node" } == true)
 
         // Every spec'd type is reachable through exactly one section (no drops/dupes).
         let sectionedTypes = sections.flatMap { $0.items.map(\.type) }
