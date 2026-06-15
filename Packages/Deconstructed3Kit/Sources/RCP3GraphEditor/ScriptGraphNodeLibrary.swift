@@ -71,15 +71,43 @@ public enum ScriptGraphNodeLibrary {
         public var typeHash: UInt64 { TMHash.murmur64a(name) }
     }
 
+    /// The palette section a node type belongs to. Groups the insert palette into
+    /// readable, ordered sections; the `order` drives section ordering in the UI.
+    public enum Category: String, Sendable, Hashable, CaseIterable {
+        case events = "Events"
+        case components = "Components"
+        case math = "Math"
+        case make = "Make"
+        case string = "String"
+
+        /// Display order of the sections in the palette (lower comes first).
+        public var order: Int {
+            switch self {
+            case .events:     return 0
+            case .components: return 1
+            case .math:       return 2
+            case .make:       return 3
+            case .string:     return 4
+            }
+        }
+
+        /// The section header shown in the palette.
+        public var displayName: String { rawValue }
+    }
+
     /// A node type's full interface: its declared input and output pins, in display
-    /// order. The bridge emits a handle/pin for every entry, wired or not.
+    /// order (plus the palette section it belongs to). The bridge emits a handle/pin
+    /// for every entry, wired or not.
     public struct NodeSpec: Sendable, Hashable {
         public let inputs: [PinSpec]
         public let outputs: [PinSpec]
+        /// The palette section this node type is grouped under.
+        public let category: Category
 
-        public init(inputs: [PinSpec], outputs: [PinSpec]) {
+        public init(inputs: [PinSpec], outputs: [PinSpec], category: Category) {
             self.inputs = inputs
             self.outputs = outputs
+            self.category = category
         }
     }
 
@@ -94,11 +122,27 @@ public enum ScriptGraphNodeLibrary {
         public let type: String
         /// The human-readable name shown in the palette (e.g. `"Set Component"`).
         public let displayName: String
+        /// The palette section this item is grouped under.
+        public let category: Category
 
-        public init(id: String, type: String, displayName: String) {
+        public init(id: String, type: String, displayName: String, category: Category) {
             self.id = id
             self.type = type
             self.displayName = displayName
+            self.category = category
+        }
+    }
+
+    /// One palette section: a category and the items grouped under it, sorted by
+    /// display name. Sections are returned in `Category.order`.
+    public struct PaletteSection: Identifiable, Sendable {
+        public var id: String { category.rawValue }
+        public let category: Category
+        public let items: [PaletteItem]
+
+        public init(category: Category, items: [PaletteItem]) {
+            self.category = category
+            self.items = items
         }
     }
 
@@ -107,9 +151,28 @@ public enum ScriptGraphNodeLibrary {
     /// display name for a stable, readable palette. Data-driven: it grows automatically
     /// as node specs are added to ``specsByType``.
     public static var paletteItems: [PaletteItem] {
-        specsByType.keys
-            .map { type in PaletteItem(id: type, type: type, displayName: paletteDisplayName(for: type)) }
+        specsByType
+            .map { type, spec in
+                PaletteItem(
+                    id: type, type: type,
+                    displayName: paletteDisplayName(for: type),
+                    category: spec.category
+                )
+            }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    /// The insertable node types grouped into palette sections, one per ``Category``,
+    /// ordered by `Category.order`. Items within a section are sorted by display name.
+    /// Empty sections are omitted. Data-driven: sections grow as specs are added.
+    public static var paletteSections: [PaletteSection] {
+        let grouped = Dictionary(grouping: paletteItems, by: \.category)
+        return Category.allCases
+            .sorted { $0.order < $1.order }
+            .compactMap { category in
+                guard let items = grouped[category], !items.isEmpty else { return nil }
+                return PaletteSection(category: category, items: items)
+            }
     }
 
     /// A readable palette name for a node `type`: the curated label where we have one,
@@ -128,16 +191,61 @@ public enum ScriptGraphNodeLibrary {
     /// Curated, RCP-matching display names for the insertable node types. (Node specs
     /// describe a node's pins, not the node's own title, so the title lives here.)
     private static let paletteDisplayNames: [String: String] = [
+        // Events
         "tm_gesture_event_drag": "On Drag",
         "tm_gesture_event_tap": "On Tap",
-        "tm_set_component": "Set Component",
         "tm_update": "On Update",
         "tm_did_add": "On Added",
         "tm_did_activate": "On Activated",
         "tm_will_remove": "Will Remove",
         "tm_will_deactivate": "Will Deactivate",
         "tm_script_changed": "Script Changed",
+        // Components
+        "tm_set_component": "Set Component",
         "tm_get_component": "Get Component",
+        // Math — Comparison
+        "tm_math_greater": "Greater",
+        "tm_math_greater_equal": "Greater or Equal",
+        "tm_math_less": "Less",
+        "tm_math_less_equal": "Less or Equal",
+        "tm_math_within_range": "Within Range",
+        "tm_math_random": "Random",
+        // Math — Rotation
+        "tm_math_quaternion_to_euler": "Quaternion to Euler",
+        "tm_math_euler_to_quaternion": "Euler to Quaternion",
+        "tm_make_rotation": "Rotation",
+        "tm_make_look_at_rotation": "Look-at Rotation",
+        "tm_math_deg_to_rad": "Degrees to Radians",
+        "tm_math_rad_to_deg": "Radians to Degrees",
+        // Math — Constant
+        "tm_constant_pi": "π",
+        "tm_constant_e": "e",
+        "tm_constant_ln2": "Ln(2)",
+        "tm_constant_ln10": "Ln(10)",
+        "tm_constant_log10e": "Log10(e)",
+        "tm_constant_log2e": "Log2(e)",
+        "tm_constant_sqrt2": "Sqrt(2)",
+        "tm_constant_sqrt1_2": "Sqrt(0.5)",
+        // Make
+        "tm_make_vector2": "Vector2",
+        "tm_make_vector3": "Vector3",
+        "tm_make_vector4": "Vector4",
+        "tm_make_vector4_with_vector3": "Vector4 from Vector3",
+        "tm_make_matrix2x2": "Matrix 2x2",
+        "tm_make_matrix3x3": "Matrix 3x3",
+        "tm_make_matrix4x4": "Matrix 4x4",
+        "tm_make_cgcolor": "CGColor",
+        "tm_make_color": "Color",
+        "tm_make_cgsize": "CGSize",
+        "tm_make_edge_insets": "Edge Insets",
+        // String
+        "tm_string_has_prefix": "Has Prefix",
+        "tm_string_has_suffix": "Has Suffix",
+        "tm_string_contains": "Contains",
+        "tm_string_length": "String Length",
+        "tm_string_prefix": "Prefix",
+        "tm_string_suffix": "Suffix",
+        "tm_string_substring": "Substring",
     ]
 
     // MARK: - Node specs
@@ -169,7 +277,8 @@ public enum ScriptGraphNodeLibrary {
                 data("sceneTranslation", "Scene Translation"),
                 data("sceneInputDeviceRotation", "Scene Input Device Rotation"),
                 data("didEnd", "Did End"),
-            ]
+            ],
+            category: .events
         ),
         // Tap gesture — best-effort observed subset.
         "tm_gesture_event_tap": NodeSpec(
@@ -179,7 +288,8 @@ public enum ScriptGraphNodeLibrary {
                 data("entity", "Entity"),
                 data("location", "Location"),
                 data("sceneLocation", "Scene Location"),
-            ]
+            ],
+            category: .events
         ),
         // Set Component — a passthrough action: exec in/out, a `source` target and a
         // `component_type` selector. The chosen component type's property pins are
@@ -190,7 +300,8 @@ public enum ScriptGraphNodeLibrary {
                 data("source", "Source"),
                 data("component_type", "Component Type"),
             ],
-            outputs: [exec]
+            outputs: [exec],
+            category: .components
         ),
         // On Update — per-frame event source. exec out + readouts. (entity is the
         // script's self.) NOTE: the `deltaTime`/`scene` connector names here are
@@ -198,21 +309,82 @@ public enum ScriptGraphNodeLibrary {
         // wired `deltaTime`/`scene` from a true RCP graph may not coincide with these
         // hashed handle ids until confirmed. (`entity` mirrors the verified drag/tap
         // `entity` connector.)
-        "tm_update": NodeSpec(inputs: [], outputs: [exec, data("deltaTime", "Delta Time"), data("scene", "Scene"), data("entity", "Entity")]),
+        "tm_update": NodeSpec(inputs: [], outputs: [exec, data("deltaTime", "Delta Time"), data("scene", "Scene"), data("entity", "Entity")], category: .events),
         // Lifecycle events — simple exec-output event sources (each carries only a
         // hidden self entity). Exec-only, so these are faithful: no data connector
         // names to verify.
-        "tm_did_add":         NodeSpec(inputs: [], outputs: [exec]),
-        "tm_did_activate":    NodeSpec(inputs: [], outputs: [exec]),
-        "tm_will_remove":     NodeSpec(inputs: [], outputs: [exec]),
-        "tm_will_deactivate": NodeSpec(inputs: [], outputs: [exec]),
-        "tm_script_changed":  NodeSpec(inputs: [], outputs: [exec]),
+        "tm_did_add":         NodeSpec(inputs: [], outputs: [exec], category: .events),
+        "tm_did_activate":    NodeSpec(inputs: [], outputs: [exec], category: .events),
+        "tm_will_remove":     NodeSpec(inputs: [], outputs: [exec], category: .events),
+        "tm_will_deactivate": NodeSpec(inputs: [], outputs: [exec], category: .events),
+        "tm_script_changed":  NodeSpec(inputs: [], outputs: [exec], category: .events),
         // Get Component — mirror of Set Component, but the component's properties are
         // OUTPUTS (you read them). Its `source`/`component_type` connector names mirror
         // the verified `tm_set_component` names, so this node is faithful. The chosen
         // component type's property pins are added *dynamically* by the resolver as
         // data OUTPUTS (see `ScriptGraphPinResolver`).
-        "tm_get_component": NodeSpec(inputs: [exec, data("source", "Source"), data("component_type", "Component Type")], outputs: [exec]),
+        "tm_get_component": NodeSpec(inputs: [exec, data("source", "Source"), data("component_type", "Component Type")], outputs: [exec], category: .components),
+
+        // MARK: Math — Comparison
+        //
+        // Data-only value nodes: no exec/self pins. Each compares (or samples) its
+        // inputs and yields a single `result`. Pin connector names are faithful to the
+        // observed node definitions.
+        "tm_math_greater":       NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_greater_equal": NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_less":          NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_less_equal":    NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_within_range":  NodeSpec(inputs: [data("val", "Value"), data("min", "Min"), data("max", "Max")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_random":        NodeSpec(inputs: [data("min", "Min"), data("max", "Max")], outputs: [data("result", "Result")], category: .math),
+
+        // MARK: Math — Rotation
+        "tm_math_quaternion_to_euler": NodeSpec(inputs: [data("quaternion", "Quaternion")], outputs: [data("angles", "Angles")], category: .math),
+        "tm_math_euler_to_quaternion": NodeSpec(inputs: [data("angles", "Angles")], outputs: [data("quaternion", "Quaternion")], category: .math),
+        "tm_make_rotation":            NodeSpec(inputs: [data("angle", "Angle"), data("axis", "Axis")], outputs: [data("new", "New")], category: .math),
+        "tm_make_look_at_rotation":    NodeSpec(inputs: [data("at", "At"), data("from", "From"), data("upVector", "Up Vector")], outputs: [data("new", "New")], category: .math),
+        "tm_math_deg_to_rad":          NodeSpec(inputs: [data("degrees", "Degrees")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_rad_to_deg":          NodeSpec(inputs: [data("rad", "Radians")], outputs: [data("result", "Result")], category: .math),
+
+        // MARK: Math — Constant
+        //
+        // No inputs; a single output whose connector name is the UPPERCASE constant
+        // name (faithful — e.g. `PI`, `SQRT1_2`).
+        "tm_constant_pi":      NodeSpec(inputs: [], outputs: [data("PI", "π")], category: .math),
+        "tm_constant_e":       NodeSpec(inputs: [], outputs: [data("E", "e")], category: .math),
+        "tm_constant_ln2":     NodeSpec(inputs: [], outputs: [data("LN2", "Ln(2)")], category: .math),
+        "tm_constant_ln10":    NodeSpec(inputs: [], outputs: [data("LN10", "Ln(10)")], category: .math),
+        "tm_constant_log10e":  NodeSpec(inputs: [], outputs: [data("LOG10E", "Log10(e)")], category: .math),
+        "tm_constant_log2e":   NodeSpec(inputs: [], outputs: [data("LOG2E", "Log2(e)")], category: .math),
+        "tm_constant_sqrt2":   NodeSpec(inputs: [], outputs: [data("SQRT2", "Sqrt(2)")], category: .math),
+        "tm_constant_sqrt1_2": NodeSpec(inputs: [], outputs: [data("SQRT1_2", "Sqrt(0.5)")], category: .math),
+
+        // MARK: Make
+        //
+        // Data-only constructors: assemble a value from its component inputs. Output
+        // connector names are faithful to the observed node definitions.
+        "tm_make_vector2": NodeSpec(inputs: [data("x", "X"), data("y", "Y")], outputs: [data("vec2", "Vector2")], category: .make),
+        "tm_make_vector3": NodeSpec(inputs: [data("x", "X"), data("y", "Y"), data("z", "Z")], outputs: [data("vec3", "Vector3")], category: .make),
+        "tm_make_vector4": NodeSpec(inputs: [data("x", "X"), data("y", "Y"), data("z", "Z"), data("w", "W")], outputs: [data("vector", "Vector")], category: .make),
+        "tm_make_vector4_with_vector3": NodeSpec(inputs: [data("xyz", "XYZ"), data("w", "W")], outputs: [data("vector", "Vector")], category: .make),
+        "tm_make_matrix2x2": NodeSpec(inputs: [data("col0", "Column 0"), data("col1", "Column 1")], outputs: [data("source", "Source")], category: .make),
+        "tm_make_matrix3x3": NodeSpec(inputs: [data("col0", "Column 0"), data("col1", "Column 1"), data("col2", "Column 2")], outputs: [data("source", "Source")], category: .make),
+        "tm_make_matrix4x4": NodeSpec(inputs: [data("col0", "Column 0"), data("col1", "Column 1"), data("col2", "Column 2"), data("col3", "Column 3")], outputs: [data("source", "Source")], category: .make),
+        "tm_make_cgcolor": NodeSpec(inputs: [data("red", "Red"), data("green", "Green"), data("blue", "Blue"), data("alpha", "Alpha")], outputs: [data("source", "Source")], category: .make),
+        "tm_make_color": NodeSpec(inputs: [data("red", "Red"), data("green", "Green"), data("blue", "Blue"), data("alpha", "Alpha")], outputs: [data("color", "Color")], category: .make),
+        "tm_make_cgsize": NodeSpec(inputs: [data("width", "Width"), data("height", "Height")], outputs: [data("size", "Size")], category: .make),
+        "tm_make_edge_insets": NodeSpec(inputs: [data("top", "Top"), data("left", "Left"), data("bottom", "Bottom"), data("right", "Right")], outputs: [data("insets", "Insets")], category: .make),
+
+        // MARK: String
+        //
+        // Data-only string predicates and slicing. `result`/`length` outputs are
+        // faithful to the observed node definitions.
+        "tm_string_has_prefix": NodeSpec(inputs: [data("string", "String"), data("prefix", "Prefix")], outputs: [data("result", "Result")], category: .string),
+        "tm_string_has_suffix": NodeSpec(inputs: [data("string", "String"), data("suffix", "Suffix")], outputs: [data("result", "Result")], category: .string),
+        "tm_string_contains":   NodeSpec(inputs: [data("string", "String"), data("substring", "Substring")], outputs: [data("result", "Result")], category: .string),
+        "tm_string_length":     NodeSpec(inputs: [data("string", "String")], outputs: [data("length", "Length")], category: .string),
+        "tm_string_prefix":     NodeSpec(inputs: [data("string", "String"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
+        "tm_string_suffix":     NodeSpec(inputs: [data("string", "String"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
+        "tm_string_substring":  NodeSpec(inputs: [data("string", "String"), data("index", "Index"), data("length", "Length")], outputs: [data("result", "Result")], category: .string),
     ]
 
     // MARK: - Component types (registry)

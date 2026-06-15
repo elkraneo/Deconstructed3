@@ -61,14 +61,117 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byType["tm_will_deactivate"] == "Will Deactivate")
         #expect(byType["tm_script_changed"] == "Script Changed")
 
+        // The math/make/string batch, with curated names.
+        #expect(byType["tm_math_greater"] == "Greater")
+        #expect(byType["tm_math_within_range"] == "Within Range")
+        #expect(byType["tm_constant_pi"] == "π")
+        #expect(byType["tm_constant_sqrt1_2"] == "Sqrt(0.5)")
+        #expect(byType["tm_make_vector3"] == "Vector3")
+        #expect(byType["tm_make_color"] == "Color")
+        #expect(byType["tm_string_has_prefix"] == "Has Prefix")
+        #expect(byType["tm_string_length"] == "String Length")
+
         // Data-driven: one palette item per type that has a spec.
         let expectedTypes = [
-            "tm_set_component", "tm_gesture_event_drag", "tm_gesture_event_tap",
-            "tm_update", "tm_did_add", "tm_did_activate", "tm_will_remove",
-            "tm_will_deactivate", "tm_script_changed", "tm_get_component",
+            // Events
+            "tm_gesture_event_drag", "tm_gesture_event_tap", "tm_update",
+            "tm_did_add", "tm_did_activate", "tm_will_remove",
+            "tm_will_deactivate", "tm_script_changed",
+            // Components
+            "tm_set_component", "tm_get_component",
+            // Math — Comparison
+            "tm_math_greater", "tm_math_greater_equal", "tm_math_less",
+            "tm_math_less_equal", "tm_math_within_range", "tm_math_random",
+            // Math — Rotation
+            "tm_math_quaternion_to_euler", "tm_math_euler_to_quaternion",
+            "tm_make_rotation", "tm_make_look_at_rotation",
+            "tm_math_deg_to_rad", "tm_math_rad_to_deg",
+            // Math — Constant
+            "tm_constant_pi", "tm_constant_e", "tm_constant_ln2", "tm_constant_ln10",
+            "tm_constant_log10e", "tm_constant_log2e", "tm_constant_sqrt2",
+            "tm_constant_sqrt1_2",
+            // Make
+            "tm_make_vector2", "tm_make_vector3", "tm_make_vector4",
+            "tm_make_vector4_with_vector3", "tm_make_matrix2x2", "tm_make_matrix3x3",
+            "tm_make_matrix4x4", "tm_make_cgcolor", "tm_make_color", "tm_make_cgsize",
+            "tm_make_edge_insets",
+            // String
+            "tm_string_has_prefix", "tm_string_has_suffix", "tm_string_contains",
+            "tm_string_length", "tm_string_prefix", "tm_string_suffix",
+            "tm_string_substring",
         ]
         #expect(items.count == expectedTypes.count)
         #expect(Set(items.map(\.type)) == Set(expectedTypes))
+    }
+
+    @Test("New data-only node specs declare faithful pin connector names, no exec")
+    func dataOnlyNodeSpecs() throws {
+        // Comparison: a, b → result.
+        let greater = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_greater"))
+        #expect(greater.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(greater.outputs.map(\.connectorName) == ["result"])
+        // Data-only: no exec pins anywhere.
+        #expect(greater.inputs.allSatisfy { !$0.isExec })
+        #expect(greater.outputs.allSatisfy { !$0.isExec })
+
+        // Within Range: val, min, max → result.
+        let within = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_within_range"))
+        #expect(within.inputs.map(\.connectorName) == ["val", "min", "max"])
+        #expect(within.outputs.map(\.connectorName) == ["result"])
+
+        // Make Vector3: x, y, z → vec3 (output connector name is faithful too).
+        let vec3 = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_vector3"))
+        #expect(vec3.inputs.map(\.connectorName) == ["x", "y", "z"])
+        #expect(vec3.outputs.map(\.connectorName) == ["vec3"])
+
+        // Look-at Rotation uses the camelCase `upVector` connector.
+        let lookAt = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_look_at_rotation"))
+        #expect(lookAt.inputs.map(\.connectorName) == ["at", "from", "upVector"])
+        #expect(lookAt.outputs.map(\.connectorName) == ["new"])
+
+        // Constants: no inputs; one output whose connector name is the UPPERCASE name.
+        let pi = try #require(ScriptGraphNodeLibrary.spec(for: "tm_constant_pi"))
+        #expect(pi.inputs.isEmpty)
+        #expect(pi.outputs.map(\.connectorName) == ["PI"])
+        let sqrtHalf = try #require(ScriptGraphNodeLibrary.spec(for: "tm_constant_sqrt1_2"))
+        #expect(sqrtHalf.outputs.map(\.connectorName) == ["SQRT1_2"])
+
+        // String: has-prefix predicate, plus length.
+        let hasPrefix = try #require(ScriptGraphNodeLibrary.spec(for: "tm_string_has_prefix"))
+        #expect(hasPrefix.inputs.map(\.connectorName) == ["string", "prefix"])
+        #expect(hasPrefix.outputs.map(\.connectorName) == ["result"])
+        let length = try #require(ScriptGraphNodeLibrary.spec(for: "tm_string_length"))
+        #expect(length.outputs.map(\.connectorName) == ["length"])
+    }
+
+    @Test("Palette sections group the library by category in display order")
+    func paletteSections() throws {
+        let sections = ScriptGraphNodeLibrary.paletteSections
+
+        // Sections appear in Category.order: Events, Components, Math, Make, String.
+        #expect(sections.map(\.category) == [.events, .components, .math, .make, .string])
+
+        let byCategory = Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0) })
+
+        // Each section's items belong to that category, and are sorted by name.
+        for section in sections {
+            #expect(section.items.allSatisfy { $0.category == section.category })
+            let names = section.items.map(\.displayName)
+            #expect(names == names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+        }
+
+        // Representative members land in the right section.
+        #expect(byCategory[.events]?.items.contains { $0.type == "tm_gesture_event_drag" } == true)
+        #expect(byCategory[.components]?.items.contains { $0.type == "tm_set_component" } == true)
+        #expect(byCategory[.math]?.items.contains { $0.type == "tm_math_greater" } == true)
+        #expect(byCategory[.math]?.items.contains { $0.type == "tm_constant_pi" } == true)
+        #expect(byCategory[.make]?.items.contains { $0.type == "tm_make_vector3" } == true)
+        #expect(byCategory[.string]?.items.contains { $0.type == "tm_string_contains" } == true)
+
+        // Every spec'd type is reachable through exactly one section (no drops/dupes).
+        let sectionedTypes = sections.flatMap { $0.items.map(\.type) }
+        #expect(Set(sectionedTypes) == Set(ScriptGraphNodeLibrary.paletteItems.map(\.type)))
+        #expect(sectionedTypes.count == ScriptGraphNodeLibrary.paletteItems.count)
     }
 
     @Test("Humanized fallback name drops the tm_ prefix and Title Cases the type")

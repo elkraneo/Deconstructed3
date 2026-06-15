@@ -508,32 +508,51 @@ public struct ScriptGraphCanvasView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The palette contents: one labeled, keyboard-navigable button per insertable
-    /// node type. Selecting one inserts that node at the viewport center.
+    /// The palette contents: insertable node types grouped into labeled sections
+    /// (Events, Components, Math, Make, String). Each section header is followed by one
+    /// labeled, keyboard-navigable button per node type; selecting one inserts that
+    /// node at the viewport center. A flat list doesn't scale once the library grows,
+    /// so the popover scrolls and groups by `ScriptGraphNodeLibrary.paletteSections`.
     private var palettePopover: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             Text("Add Node")
                 .font(.headline)
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
                 .padding(.bottom, 6)
                 .accessibilityAddTraits(.isHeader)
-            ForEach(ScriptGraphNodeLibrary.paletteItems) { item in
-                Button {
-                    insertNode(type: item.type)
-                } label: {
-                    Text(item.displayName)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(ScriptGraphNodeLibrary.paletteSections) { section in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(section.category.displayName)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 4)
+                                .accessibilityAddTraits(.isHeader)
+                            ForEach(section.items) { item in
+                                Button {
+                                    insertNode(type: item.type)
+                                } label: {
+                                    Text(item.displayName)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(item.displayName)
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(item.displayName)
+                .padding(.bottom, 8)
             }
         }
-        .padding(.bottom, 8)
-        .frame(minWidth: 200, alignment: .leading)
+        .frame(minWidth: 220, alignment: .leading)
+        .frame(maxHeight: 420)
     }
 
     /// Inserts a node of `type` at the GRAPH point under the viewport center, then

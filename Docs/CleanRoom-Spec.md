@@ -168,6 +168,92 @@ components (not the `.tm_*` `tm_transform_component` truth object). Gesture even
 expose local + scene-space pin variants (`translation`/`sceneTranslation`,
 `location`/`sceneLocation`).
 
+## Script-graph node library — node definitions (observed)
+
+Beyond the gesture/component/lifecycle nodes already captured, the editor presents a
+library of pure **data-only** value nodes: each has a fixed, named set of input and
+output pins and **no exec/self pins** (they compute a result from their inputs rather
+than firing in the control-flow sequence). As above, every pin is referenced by
+`connector_hash = MurmurHash64A(pinName)` (seed 0, `m = 0xc6a4a7935bd1e995`), uniform
+for input (`to_connector_hash`) and output (`from_connector_hash`) pins. The pin names
+below are the observed connector identifiers (the hashed values); a node's display
+title is separate from its pin names.
+
+The constant nodes have **no inputs** and a single named output; the rest list inputs →
+outputs.
+
+**Math — Comparison.**
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_math_greater` | `a`, `b` | `result` |
+| `tm_math_greater_equal` | `a`, `b` | `result` |
+| `tm_math_less` | `a`, `b` | `result` |
+| `tm_math_less_equal` | `a`, `b` | `result` |
+| `tm_math_within_range` | `val`, `min`, `max` | `result` |
+| `tm_math_random` | `min`, `max` | `result` |
+
+**Math — Rotation.**
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_math_quaternion_to_euler` | `quaternion` | `angles` |
+| `tm_math_euler_to_quaternion` | `angles` | `quaternion` |
+| `tm_make_rotation` | `angle`, `axis` | `new` |
+| `tm_make_look_at_rotation` | `at`, `from`, `upVector` | `new` |
+| `tm_math_deg_to_rad` | `degrees` | `result` |
+| `tm_math_rad_to_deg` | `rad` | `result` |
+
+**Math — Constant** (no inputs; single output, named uppercase).
+
+| type | output |
+| --- | --- |
+| `tm_constant_pi` | `PI` |
+| `tm_constant_e` | `E` |
+| `tm_constant_ln2` | `LN2` |
+| `tm_constant_ln10` | `LN10` |
+| `tm_constant_log10e` | `LOG10E` |
+| `tm_constant_log2e` | `LOG2E` |
+| `tm_constant_sqrt2` | `SQRT2` |
+| `tm_constant_sqrt1_2` | `SQRT1_2` |
+
+**Make.**
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_make_vector2` | `x`, `y` | `vec2` |
+| `tm_make_vector3` | `x`, `y`, `z` | `vec3` |
+| `tm_make_vector4` | `x`, `y`, `z`, `w` | `vector` |
+| `tm_make_vector4_with_vector3` | `xyz`, `w` | `vector` |
+| `tm_make_matrix2x2` | `col0`, `col1` | `source` |
+| `tm_make_matrix3x3` | `col0`, `col1`, `col2` | `source` |
+| `tm_make_matrix4x4` | `col0`, `col1`, `col2`, `col3` | `source` |
+| `tm_make_cgcolor` | `red`, `green`, `blue`, `alpha` | `source` |
+| `tm_make_color` | `red`, `green`, `blue`, `alpha` | `color` |
+| `tm_make_cgsize` | `width`, `height` | `size` |
+| `tm_make_edge_insets` | `top`, `left`, `bottom`, `right` | `insets` |
+
+**String.**
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_string_has_prefix` | `string`, `prefix` | `result` |
+| `tm_string_has_suffix` | `string`, `suffix` | `result` |
+| `tm_string_contains` | `string`, `substring` | `result` |
+| `tm_string_length` | `string` | `length` |
+| `tm_string_prefix` | `string`, `length` | `result` |
+| `tm_string_suffix` | `string`, `length` | `result` |
+| `tm_string_substring` | `string`, `index`, `length` | `result` |
+
+**Deferred — dynamic pins, pending a follow-up harvest.** A second family of nodes
+presents a **variadic / dynamic** pin set (the pin count grows with the node's
+configuration) and so cannot yet be transcribed faithfully: `tm_and`, `tm_or`,
+`tm_constant`, `tm_to_string`, `tm_string_merge`, the variadic arithmetic operators
+(`tm_math_add`, `tm_math_subtract`, `tm_math_multiply`, `tm_math_divide`,
+`tm_math_dot`, `tm_math_cross`, …), and the variable nodes (`tm_get_variable_node`,
+`tm_set_variable_node`, `tm_clear_variable_node`, and their remote variants). These are
+omitted from the library until their dynamic interfaces are pinned down.
+
 ## Script-graph runtime — execution model (observed)
 
 Observed by inspecting the shipped app bundle and the running editor (black-box):
