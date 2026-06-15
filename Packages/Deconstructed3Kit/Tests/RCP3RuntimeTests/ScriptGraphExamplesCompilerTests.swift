@@ -89,27 +89,34 @@ import RCP3Runtime
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.dragWithOffset.graph)
         expectNoUnsupported(js, "Drag with Offset")
         #expect(js.contains("this.entity.on(RealityKit.DragGestureEvent.name"))
-        // add(sceneTranslation, Vector3(...)) → position. The infix add + the Math3D
-        // Vector3 constructor are both on the wired path.
-        #expect(js.contains("event.entity.position = (event.sceneTranslation + new Math3D.Vector3("))
+        // add(sceneTranslation, Vector3(...)) → position. Both operands are VECTORS, so
+        // the add lowers to the documented `Math3D.add` (JS `+` is not vector addition),
+        // with the Math3D.Vector3 constructor on the wired path. Math3D must be bound.
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("event.entity.position = Math3D.add(event.sceneTranslation, new Math3D.Vector3("))
     }
 
     @Test func driftReadsItsOwnPositionViaGetAndAddsDeltaTime() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.drift.graph)
         expectNoUnsupported(js, "Drift")
         #expect(js.contains("this.update = function(deltaTime)"))
-        // Get Transform.translation lowers to the entity's current position, added to a
-        // Vector3 whose X is the per-frame deltaTime.
-        #expect(js.contains("this.entity.position = (this.entity.position + new Math3D.Vector3(deltaTime,"))
+        // Get Transform.translation lowers to the entity's current position (a VECTOR),
+        // added to a Vector3 whose X is the per-frame deltaTime. A vector add must lower
+        // to `Math3D.add`, not the scalar `+` (which would yield a string / NaN and the
+        // box would never move). Math3D must be bound.
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("this.entity.position = Math3D.add(this.entity.position, new Math3D.Vector3(deltaTime,"))
     }
 
     @Test func tapToGrowReadsScaleViaGetInsideATapHandler() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.tapToGrow.graph)
         expectNoUnsupported(js, "Tap to Grow")
         #expect(js.contains("this.entity.on(RealityKit.TapGestureEvent.name"))
-        // Get Transform.scale lowers to the entity's current scale (read via the
-        // gesture's event.entity), added to a Vector3 and written back to scale.
-        #expect(js.contains("event.entity.scale = (event.entity.scale + new Math3D.Vector3("))
+        // Get Transform.scale lowers to the entity's current scale (a VECTOR, read via the
+        // gesture's event.entity), added to a Vector3 and written back to scale. The
+        // vector add lowers to `Math3D.add`, not the scalar `+`. Math3D must be bound.
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("event.entity.scale = Math3D.add(event.entity.scale, new Math3D.Vector3("))
     }
 
     @Test func snapOnAddSetsPositionFromAVectorInADidAddHook() {

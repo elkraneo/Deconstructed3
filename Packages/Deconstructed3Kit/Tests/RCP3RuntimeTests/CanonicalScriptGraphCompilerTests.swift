@@ -133,8 +133,49 @@ import RCP3Runtime
         // The lifecycle root becomes a `this.didAdd` hook.
         #expect(js.contains("this.didAdd = function()"))
         // The add node recursively resolves both constant inputs into a plain-JS infix
-        // expression assigned to the transform.
+        // expression assigned to the transform. Two SCALAR constants → the `+` operator
+        // is CORRECT and must NOT change to Math3D.add (the regression guard that scalar
+        // add was untouched by the vector-typing fix).
         #expect(js.contains("this.entity.position = (Math.PI + Math.E);"))
+        #expect(!js.contains("Math3D.add"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func mathAddOfTwoVectorsCompilesToMath3DAdd() {
+        // On Added → Set Transform.translation = (v1 + v2), where both inputs to the add
+        // are `tm_make_vector3` constructors. JS `+` is NOT vector addition (it coerces to
+        // a string / NaN, so the entity never moves), so the add must lower to the
+        // PUBLICLY-documented `Math3D.add(a, b)` — the type inference's whole point.
+        let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let mathAdd = RCP3ScriptGraph.Node(id: "m", type: "tm_math_add")
+        let v1 = RCP3ScriptGraph.Node(id: "v1", type: "tm_make_vector3")
+        let v2 = RCP3ScriptGraph.Node(id: "v2", type: "tm_make_vector3")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "a", to: "s")
+        let wV1 = RCP3ScriptGraph.Wire(
+            id: "w1", from: "v1", to: "m",
+            fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")
+        )
+        let wV2 = RCP3ScriptGraph.Wire(
+            id: "w2", from: "v2", to: "m",
+            fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")
+        )
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "s",
+            fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [added, set, mathAdd, v1, v2],
+            wires: [exec, wV1, wV2, wOut], data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // Vector add → Math3D.add, with Math3D bound (a vector add emits Math3D).
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("this.entity.position = Math3D.add(new Math3D.Vector3("))
+        // It must NOT keep the broken scalar `+` between the two vectors.
+        #expect(!js.contains(") + new Math3D.Vector3("))
         #expect(!js.contains("unsupported"))
     }
 

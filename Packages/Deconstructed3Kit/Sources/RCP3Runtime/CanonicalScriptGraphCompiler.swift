@@ -275,7 +275,7 @@ public struct CanonicalScriptGraphCompiler {
                 guard let wire = dataWire(into: node.id, pin: pin) else { continue }
                 var seen: Set<String> = []
                 let expr = emitExpression(from: wire, context: context, seen: &seen)
-                statements.append("\(target).\(property) = \(expr);")
+                statements.append("\(target).\(property) = \(expr.code);")
             }
 
             if statements.isEmpty {
@@ -296,7 +296,7 @@ public struct CanonicalScriptGraphCompiler {
             let valueExpr: String
             if let wire = dataWire(into: node.id, pin: valuePin) {
                 var seen: Set<String> = []
-                valueExpr = emitExpression(from: wire, context: context, seen: &seen)
+                valueExpr = emitExpression(from: wire, context: context, seen: &seen).code
             } else {
                 valueExpr = "undefined /* no value wired */"
             }
@@ -308,6 +308,23 @@ public struct CanonicalScriptGraphCompiler {
         }
 
         // MARK: Data inputs → expressions (the recursive core)
+
+        /// An emitted JS expression plus a lightweight "is this a VECTOR?" bit. The bit
+        /// is the minimal type inference needed to keep vector math honest: JS `+` is NOT
+        /// `Math3D.Vector3` addition (it coerces to a string / `NaN`), so a `tm_math_add`
+        /// over vectors must lower to the documented `Math3D.add(a, b)`, while a scalar add
+        /// stays the plain `(a + b)` operator. We infer the bit at the leaves (vector
+        /// constructors, gesture translation/location outputs, transform reads) and
+        /// propagate it through binary math (vector iff any operand is a vector).
+        struct Expr {
+            var code: String
+            var isVector: Bool
+
+            init(_ code: String, isVector: Bool = false) {
+                self.code = code
+                self.isVector = isVector
+            }
+        }
 
         /// Where an expression is being emitted, which decides how a gesture-output pin
         /// resolves.
@@ -332,9 +349,9 @@ public struct CanonicalScriptGraphCompiler {
             from wire: RCP3ScriptGraph.Wire,
             context: ExprContext,
             seen: inout Set<String>
-        ) -> String {
+        ) -> Expr {
             guard let source = graph.node(id: wire.from) else {
-                return "undefined /* dangling wire */"
+                return Expr("undefined /* dangling wire */")
             }
             return emitExpression(
                 forNode: source,
@@ -352,9 +369,9 @@ public struct CanonicalScriptGraphCompiler {
             outputPin: UInt64?,
             context: ExprContext,
             seen: inout Set<String>
-        ) -> String {
+        ) -> Expr {
             if seen.contains(node.id) {
-                return "0 /* cycle: \(node.type) */"
+                return Expr("0 /* cycle: \(node.type) */")
             }
             seen.insert(node.id)
             defer { seen.remove(node.id) }
@@ -369,47 +386,53 @@ public struct CanonicalScriptGraphCompiler {
                 return gestureOutputExpression(node, outputPin: outputPin, context: context)
             }
 
-            // Math constants.
+            // Math constants are scalars.
             if let constant = Self.mathConstant(for: node.type) {
-                return constant
+                return Expr(constant)
             }
 
             // `tm_constant` literal: the value is node settings, not a wire — emit 0.
             if node.type == "tm_constant" {
-                return "0 /* tm_constant literal (value in node settings) */"
+                return Expr("0 /* tm_constant literal (value in node settings) */")
             }
 
-            // Unary Math.* (plain JS — runs anywhere).
+            // Unary Math.* (plain JS — runs anywhere). Always scalar.
             if let fn = Self.unaryMathFunction(for: node.type) {
                 let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
-                return "\(fn)(\(a))"
+                return Expr("\(fn)(\(a.code))")
             }
 
-            // Binary scalar operators / Math.* (plain JS).
+            // Binary math. Scalar operands keep the plain-JS operator / `Math.*` call. But
+            // JS `+`/`-`/`*` are NOT vector operations, so when an operand is a VECTOR we
+            // must lower an add to the documented `Math3D.add(a, b)`, and keep the result
+            // typed as a vector so it propagates up the expression tree.
             if let op = Self.binaryScalarOperator(for: node.type) {
                 let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
                 let bName = node.type == "tm_math_pow" ? "exponent" : "b"
                 let b = inputExpression(into: node, pinName: bName, context: context, seen: &seen)
-                return op.render(a, b)
+                return emitBinaryMath(node.type, op: op, a: a, b: b)
             }
 
-            // Vector constructors.
+            // Vector constructors are the canonical VECTOR leaf.
             if node.type == "tm_make_vector3" {
                 usesMath3D = true
                 let x = inputExpression(into: node, pinName: "x", context: context, seen: &seen)
                 let y = inputExpression(into: node, pinName: "y", context: context, seen: &seen)
                 let z = inputExpression(into: node, pinName: "z", context: context, seen: &seen)
-                return "new Math3D.Vector3(\(x), \(y), \(z))"
+                return Expr("new Math3D.Vector3(\(x.code), \(y.code), \(z.code))", isVector: true)
             }
 
             // Vector ops whose Math3D names are NOT publicly documented: keep clean-room
             // by emitting a plain-JS fallback with an honest note rather than inventing a
-            // `Math3D.*` name.
+            // `Math3D.*` name. The op is over vectors, so the result is typed as a vector.
             if Self.isUndocumentedVectorOp(node.type) {
                 let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
                 let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
                 _ = b // referenced for completeness; fallback can't compute it portably
-                return "\(a) /* unsupported: \(node.type) (Math3D op name not public) */"
+                return Expr(
+                    "\(a.code) /* unsupported: \(node.type) (Math3D op name not public) */",
+                    isVector: true
+                )
             }
 
             // Get Component (Transform): read the entity transform property named by the
@@ -424,33 +447,72 @@ public struct CanonicalScriptGraphCompiler {
 
             // Variable get: best-effort remote read. The variable name is a node-settings
             // reference, not a wire, so it can't be resolved here — honest placeholder.
+            // The stored type is unknown from the wire graph alone → treat as scalar.
             if node.type == "tm_get_variable_node" || node.type == "tm_get_remote_variable_node" {
-                return "this.getRemoteValue(/* variable name unresolved */ \"\")"
+                return Expr("this.getRemoteValue(/* variable name unresolved */ \"\")")
             }
 
             // Unknown / unmapped node → a safe fallback, never fabricated behavior.
-            return "0 /* unsupported: \(node.type) */"
+            return Expr("0 /* unsupported: \(node.type) */")
+        }
+
+        /// Lowers a binary math node from its already-evaluated operands. The result type
+        /// is VECTOR iff either operand is a vector (else scalar). For an `add` over
+        /// vectors we emit the publicly-documented `Math3D.add(a, b)` (JS `+` is not vector
+        /// addition); for `subtract`/`multiply` over a vector, the `Math3D.*` name is NOT
+        /// publicly documented, so we keep clean-room by leaving the operator and appending
+        /// an honest TODO rather than fabricating a name. Scalar ops are unchanged.
+        mutating func emitBinaryMath(
+            _ type: String,
+            op: BinaryScalar,
+            a: Expr,
+            b: Expr
+        ) -> Expr {
+            let isVector = a.isVector || b.isVector
+
+            if isVector, type == "tm_math_add" {
+                usesMath3D = true
+                return Expr("Math3D.add(\(a.code), \(b.code))", isVector: true)
+            }
+
+            if isVector, type == "tm_math_subtract" || type == "tm_math_multiply" {
+                // Math3D.subtract / Math3D.multiply are not in the public docs; don't
+                // fabricate them. Keep the operator but flag it honestly. (These appear
+                // only in non-running examples today.)
+                let code = op.render(a.code, b.code)
+                return Expr(
+                    "\(code) /* TODO: vector op — Math3D name unverified */",
+                    isVector: true
+                )
+            }
+
+            // Scalar (or a vector op with no vector-specific lowering, e.g. divide/mod/
+            // min/max/pow): keep the plain-JS operator / `Math.*` call.
+            return Expr(op.render(a.code, b.code), isVector: isVector)
         }
 
         /// The `event.<pinName>` expression for a gesture/event output pin (inside a
-        /// gesture handler). Outside a gesture context the value isn't in scope.
+        /// gesture handler). Outside a gesture context the value isn't in scope. The
+        /// translation/location gesture outputs are `Math3D.Vector3`s, so they are typed
+        /// as vectors (`deltaTime`, `didEnd`, … are scalars).
         func gestureOutputExpression(
             _ node: RCP3ScriptGraph.Node,
             outputPin: UInt64?,
             context: ExprContext
-        ) -> String {
+        ) -> Expr {
             guard let pin = outputPin else {
-                return "undefined /* exec pin used as value */"
+                return Expr("undefined /* exec pin used as value */")
             }
             // Resolve the output pin hash back to a readable gesture-output name.
             let name = Self.gestureOutputName(forHash: pin) ?? TMHash.hex(pin)
+            let isVector = Self.vectorGestureOutputNames.contains(name)
             switch context {
             case .gesture:
-                return "event.\(name)"
+                return Expr("event.\(name)", isVector: isVector)
             case .update where name == "deltaTime":
-                return "deltaTime"
+                return Expr("deltaTime")
             default:
-                return "undefined /* \(name) not in scope here */"
+                return Expr("undefined /* \(name) not in scope here */")
             }
         }
 
@@ -459,14 +521,19 @@ public struct CanonicalScriptGraphCompiler {
         /// `emitSetComponent` (`translation` → `.position`, `rotation` → `.orientation`,
         /// `scale` → `.scale`). The entity target follows the same context rule as Set.
         /// An unrecognized output pin yields a safe `0` with an honest note.
-        func getComponentExpression(outputPin: UInt64?, context: ExprContext) -> String {
+        func getComponentExpression(outputPin: UInt64?, context: ExprContext) -> Expr {
             let target = context == .gesture ? "event.entity" : "this.entity"
             switch outputPin {
-            case CanonicalScriptGraphCompiler.translationPin: return "\(target).position"
-            case CanonicalScriptGraphCompiler.rotationPin: return "\(target).orientation"
-            case CanonicalScriptGraphCompiler.scalePin: return "\(target).scale"
+            // position/scale are `Math3D.Vector3`, orientation is a `Math3D.Quaternion` —
+            // both vector-typed for the purpose of "use Math3D.add, not JS +".
+            case CanonicalScriptGraphCompiler.translationPin:
+                return Expr("\(target).position", isVector: true)
+            case CanonicalScriptGraphCompiler.rotationPin:
+                return Expr("\(target).orientation", isVector: true)
+            case CanonicalScriptGraphCompiler.scalePin:
+                return Expr("\(target).scale", isVector: true)
             default:
-                return "0 /* unsupported: tm_get_component output (Transform property not recognized) */"
+                return Expr("0 /* unsupported: tm_get_component output (Transform property not recognized) */")
             }
         }
 
@@ -478,10 +545,10 @@ public struct CanonicalScriptGraphCompiler {
             pinName: String,
             context: ExprContext,
             seen: inout Set<String>
-        ) -> String {
+        ) -> Expr {
             let pin = TMHash.murmur64a(pinName)
             guard let wire = dataWire(into: node.id, pin: pin) else {
-                return "0 /* \(pinName) unwired */"
+                return Expr("0 /* \(pinName) unwired */")
             }
             return emitExpression(from: wire, context: context, seen: &seen)
         }
@@ -576,6 +643,15 @@ public struct CanonicalScriptGraphCompiler {
             "entity", "location", "startLocation", "translation",
             "sceneLocation", "sceneStartLocation", "sceneTranslation",
             "sceneInputDeviceRotation", "didEnd", "deltaTime", "scene",
+        ]
+
+        /// Gesture output pins whose value is a `Math3D.Vector3` (a 2D/3D point or
+        /// translation). These feed vector math, so a downstream `tm_math_add` must lower
+        /// to `Math3D.add` rather than the scalar `+`. (`deltaTime`/`didEnd`/`entity`/
+        /// `scene` are NOT vectors.)
+        static let vectorGestureOutputNames: Set<String> = [
+            "location", "startLocation", "translation",
+            "sceneLocation", "sceneStartLocation", "sceneTranslation",
         ]
 
         static let gestureOutputNamesByHash: [UInt64: String] = {
