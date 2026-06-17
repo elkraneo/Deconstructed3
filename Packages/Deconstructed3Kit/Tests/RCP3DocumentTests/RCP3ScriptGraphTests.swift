@@ -7,10 +7,17 @@ import RCP3Document
     /// The workspace-local `Random` capture (a box with a `re_scripting_component`),
     /// if present. Captures live outside the OSS package (`../../references/`), so
     /// these tests no-op cleanly when the capture is absent.
-    static var randomBundleURL: URL? {
+    static var randomBundleURL: URL? { bundleURL(named: "Random.realitycomposerpro") }
+
+    /// The workspace-local `Random2` capture (a standalone `My Script Graph` asset
+    /// — the non-instance reference path), if present.
+    static var random2BundleURL: URL? { bundleURL(named: "Random2.realitycomposerpro") }
+
+    /// Walk-up resolver for a workspace-local `references/<name>` capture.
+    static func bundleURL(named name: String) -> URL? {
         var dir = URL(filePath: #filePath).deletingLastPathComponent()
         for _ in 0..<12 {
-            let bundle = dir.appending(path: "references/Random.realitycomposerpro")
+            let bundle = dir.appending(path: "references/\(name)")
             if FileManager.default.fileExists(atPath: bundle.appending(path: "world.tm_entity").path) {
                 return bundle
             }
@@ -32,34 +39,89 @@ import RCP3Document
                 .first { $0.name == "box" }
         )
 
+        // The `box` entity carries an EDITED instance-override graph inline in its
+        // `re_scripting_component.source.graph` — NOT the 2-node prototype. The
+        // loader must merge the instance's own `nodes` with the prototype nodes its
+        // `nodes__instantiated` entries reference, and use the instance's
+        // connections + data.
         let graph = try #require(bundle.scriptGraph(forEntity: box))
 
-        // 2 nodes: the drag event and the "Set Transform" set_component.
-        #expect(graph.nodes.count == 2)
+        // 6 nodes total = 4 instance additions + 2 resolved instantiated prototype
+        // nodes (NOT the stale 2-node prototype).
+        #expect(graph.nodes.count == 6)
+
+        // The 4 instance additions, each with its own `type` + label.
+        let setAccessibility = try #require(graph.nodes.first { $0.label == "Set Accessibility" })
+        #expect(setAccessibility.type == "tm_set_component")
+        #expect(graph.nodes.contains { $0.type == "tm_get_component" })
+        #expect(graph.nodes.contains { $0.type == "tm_entity_look_at" })
+        #expect(graph.nodes.contains { $0.type == "tm_did_add" })
+
+        // The 2 instantiated prototype nodes: their `type` is recovered from the
+        // prototype graph by `__prototype_uuid` (they carry none themselves).
+        #expect(graph.nodes.contains { $0.type == "tm_gesture_event_drag" })
+        // Two `tm_set_component` exist now: "Set Accessibility" (instance) + the
+        // resolved instantiated one (was the prototype's "Set Transform").
+        #expect(graph.nodes.filter { $0.type == "tm_set_component" }.count == 2)
+        // The instantiated drag node carries its instance `__uuid`, not the
+        // prototype's — the type is resolved, the identity is the instance's.
         let drag = try #require(graph.nodes.first { $0.type == "tm_gesture_event_drag" })
-        #expect(drag.label == nil)
-        let setNode = try #require(graph.nodes.first { $0.type == "tm_set_component" })
-        #expect(setNode.label == "Set Transform")
+        #expect(drag.id == "ba3614d0-9e16-c46a-d324-a8284e2026d7")
 
-        // 2 wires: one exec (no hashes) + one data wire into `translation`.
+        // The instance's 2 connections are present (both exec edges).
         #expect(graph.wires.count == 2)
-        let exec = try #require(graph.wires.first { $0.isExec })
-        #expect(exec.from == drag.id)
-        #expect(exec.to == setNode.id)
+        let didAdd = try #require(graph.nodes.first { $0.type == "tm_did_add" })
+        let lookAt = try #require(graph.nodes.first { $0.type == "tm_entity_look_at" })
+        #expect(graph.wires.contains { $0.from == didAdd.id && $0.to == setAccessibility.id })
+        #expect(graph.wires.contains { $0.to == lookAt.id })
 
-        let dataWire = try #require(graph.wires.first { !$0.isExec })
-        #expect(dataWire.from == drag.id)
-        #expect(dataWire.to == setNode.id)
-        #expect(dataWire.toPin == TMHash.murmur64a("translation"))
-        #expect(RCP3ScriptGraph.label(forHash: dataWire.toPin) == "translation")
-
-        // 1 data literal bound to `component_type`.
+        // The instance's data literal bound to `component_type` on "Set Accessibility".
         #expect(graph.data.count == 1)
         let literal = try #require(graph.data.first)
-        #expect(literal.toNode == setNode.id)
+        #expect(literal.toNode == setAccessibility.id)
         #expect(literal.toPin == TMHash.murmur64a("component_type"))
-        #expect(RCP3ScriptGraph.label(forHash: literal.toPin) == "component_type")
         #expect(literal.valueType == "re_scripting_graph_component_type")
+    }
+
+    /// Regression guard for the pure-reference path: a `re_scripting_component`
+    /// with NO inline `source.graph` still loads the standalone prototype asset.
+    @Test func standaloneAssetReadsAsPrototype() throws {
+        guard let url = Self.randomBundleURL else { return } // capture not present
+        let bundle = try RCP3Bundle.open(url)
+
+        // Loading the prototype asset directly (the pre-edit `Script Graph`) still
+        // yields the 2-node drag graph — the instance-override path does not affect
+        // direct asset reads.
+        let asset = try #require(
+            bundle.scriptGraphAssets().first { $0.name.contains("Script Graph") }
+        )
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+        #expect(graph.nodes.count == 2)
+        #expect(graph.nodes.contains { $0.type == "tm_gesture_event_drag" })
+        let setNode = try #require(graph.nodes.first { $0.type == "tm_set_component" })
+        #expect(setNode.label == "Set Transform")
+    }
+
+    /// Regression guard for the non-instance standalone path against the `Random2`
+    /// capture: its `My Script Graph` is a plain `re_scripting_source_graph` (no
+    /// instance override), so it parses straight from the asset's `nodes` — its
+    /// node count is unaffected by the `nodes__instantiated` merge logic.
+    @Test func random2StandaloneScriptGraphUnaffected() throws {
+        guard let url = Self.random2BundleURL else { return } // capture not present
+        let bundle = try RCP3Bundle.open(url)
+
+        let asset = try #require(
+            bundle.scriptGraphAssets().first { $0.name.contains("My Script Graph") }
+        )
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+
+        // The standalone graph reads its full node set straight from `nodes`.
+        #expect(graph.nodes.count == 8)
+        #expect(graph.nodes.contains { $0.type == "tm_gesture_event_drag" })
+        #expect(graph.nodes.contains { $0.type == "tm_did_add" })
+        // No "?" placeholders — every node has a real type (nothing was dropped to
+        // or mis-resolved via the instantiated path).
+        #expect(!graph.nodes.contains { $0.type == "?" })
     }
 
     // MARK: Browse script graphs as assets (independent of any entity)
@@ -89,8 +151,14 @@ import RCP3Document
         let editor = try RCP3Editor.open(url)
 
         let box = try #require(editor.entity.children.first { $0.name == "box" })
+        // Resolving by the box's display id yields its EDITED instance-override
+        // graph (the merged 6-node graph), not the stale 2-node prototype.
         let graph = try #require(editor.scriptGraph(forEntityID: box.id))
-        #expect(graph.nodes.count == 2)
+        #expect(graph.nodes.count == 6)
+
+        // The lookup also succeeds by the entity's display name.
+        let byName = try #require(editor.scriptGraph(forEntityID: "box"))
+        #expect(byName.nodes.count == 6)
 
         // The world entity itself has no scripting component.
         #expect(editor.scriptGraph(forEntityID: editor.entity.id) == nil)

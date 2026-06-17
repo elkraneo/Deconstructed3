@@ -117,7 +117,30 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     /// Parses a `tm_graph` object (the `graph` member of a
     /// `re_scripting_source_graph`) into a display graph.
     public init(tmGraph: TMObject) {
-        nodes = (tmGraph["nodes"]?.arrayValue ?? []).compactMap { value in
+        self.init(tmGraph: tmGraph, prototypeNodeTypes: [:])
+    }
+
+    /// Parses a `tm_graph` object into a display graph, resolving any
+    /// `nodes__instantiated` entries (prototype-node instances) against
+    /// `prototypeNodeTypes` — a `[prototypeNodeUUID: type]` lookup recovered from
+    /// the prototype graph.
+    ///
+    /// A prototype-INSTANCE graph (the `source.graph` embedded on an entity's
+    /// `re_scripting_component`) splits its node list into two arrays:
+    /// - `nodes` — nodes ADDED on the instance. Each carries its own `type`.
+    /// - `nodes__instantiated` — instances of PROTOTYPE nodes. Each carries a
+    ///   `__prototype_uuid` (pointing at a node in the prototype graph) and an
+    ///   optional `position` override, but NO `type`; the type is recovered from
+    ///   `prototypeNodeTypes` keyed by that prototype uuid.
+    ///
+    /// The full edited node list is (instance `nodes`) ∪ (resolved
+    /// `nodes__instantiated`). An instantiated node whose prototype uuid can't be
+    /// resolved is retained with type `"?"` rather than dropped.
+    ///
+    /// `connections` and `data` are read from the instance graph as-is (they fully
+    /// re-state the edited graph's wires/literals — they are not deltas here).
+    public init(tmGraph: TMObject, prototypeNodeTypes: [String: String]) {
+        var parsedNodes: [Node] = (tmGraph["nodes"]?.arrayValue ?? []).compactMap { value in
             guard let object = value.objectValue, let id = object.uuid else { return nil }
             let position = object["position"]?.objectValue
             // Node kind is the plain `type` member (not the reserved `__type`).
@@ -129,6 +152,27 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 y: position?["y"]?.doubleValue
             )
         }
+
+        // `nodes__instantiated`: prototype-node instances. The node's own identity
+        // is its `__uuid`; its `type` comes from the prototype node it instances
+        // (via `__prototype_uuid` → `prototypeNodeTypes`). A `position` override on
+        // the instance, when present, supersedes the prototype's.
+        for value in tmGraph["nodes__instantiated"]?.arrayValue ?? [] {
+            guard let object = value.objectValue, let id = object.uuid else { continue }
+            let position = object["position"]?.objectValue
+            let type = object.prototypeUUID.flatMap { prototypeNodeTypes[$0] }
+                ?? object["type"]?.stringValue
+                ?? "?"
+            parsedNodes.append(Node(
+                id: id,
+                type: type,
+                label: object["label"]?.stringValue,
+                x: position?["x"]?.doubleValue,
+                y: position?["y"]?.doubleValue
+            ))
+        }
+
+        nodes = parsedNodes
 
         wires = (tmGraph["connections"]?.arrayValue ?? []).compactMap { value in
             guard

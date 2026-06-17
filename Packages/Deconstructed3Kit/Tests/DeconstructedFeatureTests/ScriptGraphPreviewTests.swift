@@ -81,12 +81,14 @@ import Testing
     @Test func previewPipelineRunsRandomCapture() throws {
         guard let url = Self.randomBundleURL else { return } // capture not present
         let bundle = try RCP3Bundle.open(url)
-        let box = try #require(
-            bundle.root["children"]?.arrayValue?
-                .compactMap(\.objectValue)
-                .first { $0.name == "box" }
+        // The "on drag → move box" logic lives in the standalone prototype
+        // `Script Graph` asset; the `box` entity now carries an EDITED instance
+        // override (a different graph), so load the prototype asset directly to
+        // exercise the drag-moves-box preview pipeline this test is about.
+        let asset = try #require(
+            bundle.scriptGraphAssets().first { $0.name.contains("Script Graph") }
         )
-        let graph = try #require(bundle.scriptGraph(forEntity: box))
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
 
         let state = RuntimeEntityState()
         let host = ScriptGraphRunner.run(graph, into: state)

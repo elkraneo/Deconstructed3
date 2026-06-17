@@ -55,11 +55,38 @@ extension RCP3Bundle {
     /// `re_scripting_component`, or `nil` when the entity has none (or the asset
     /// can't be resolved).
     ///
-    /// Resolution path: find the entity's `re_scripting_component`, read its
-    /// `source.__prototype_uuid` (the graph asset's identity), then scan the
-    /// bundle directory for the `*.tm_script_graph` whose root `__uuid` matches and
-    /// parse its `graph` member.
+    /// Two cases:
+    /// - **Instance override** — the component carries an INLINE `source.graph`
+    ///   (the user edited the graph on this entity in RCP). That embedded graph is
+    ///   a prototype-instance: its `nodes` are instance additions and its
+    ///   `nodes__instantiated` are instances of the prototype's nodes (carrying a
+    ///   `__prototype_uuid` but no `type`). We load the prototype graph (via
+    ///   `source.__prototype_uuid`) only to recover a `[nodeUUID: type]` lookup,
+    ///   then parse the INLINE graph — merging instance `nodes` with the resolved
+    ///   instantiated nodes, and using the inline `connections` + `data`. This is
+    ///   the edited graph the user actually sees, not the stale prototype.
+    /// - **Pure reference** — the component has NO inline `source.graph`. We fall
+    ///   back to loading the standalone `*.tm_script_graph` prototype asset as-is
+    ///   (via `source.__prototype_uuid`), scanning the bundle directory for the
+    ///   file whose root `__uuid` matches and parsing its `graph` member.
     public func scriptGraph(forEntity entity: TMObject) -> RCP3ScriptGraph? {
+        // Prefer an inline instance graph (the entity's own edited override).
+        if let component = Self.scriptingComponent(in: entity),
+           let source = component["source"]?.objectValue,
+           let instanceGraph = source["graph"]?.objectValue {
+            // Recover the prototype graph's node types so `nodes__instantiated`
+            // entries (which carry no `type`) can resolve theirs.
+            let prototypeNodeTypes: [String: String]
+            if let prototypeUUID = source.prototypeUUID,
+               let prototype = scriptGraphPrototypeGraph(prototypeUUID: prototypeUUID) {
+                prototypeNodeTypes = Self.nodeTypes(in: prototype)
+            } else {
+                prototypeNodeTypes = [:]
+            }
+            return RCP3ScriptGraph(tmGraph: instanceGraph, prototypeNodeTypes: prototypeNodeTypes)
+        }
+
+        // Pure reference: load the standalone prototype asset as-is.
         guard let prototypeUUID = Self.scriptGraphPrototypeUUID(in: entity) else { return nil }
         return scriptGraph(prototypeUUID: prototypeUUID)
     }
@@ -74,32 +101,63 @@ extension RCP3Bundle {
     /// Loads and parses the `*.tm_script_graph` asset whose root `__uuid` is
     /// `prototypeUUID`.
     public func scriptGraph(prototypeUUID: String) -> RCP3ScriptGraph? {
-        guard
-            let asset = Self.scriptGraphAsset(uuid: prototypeUUID, in: url),
-            let tmGraph = asset["graph"]?.objectValue
-        else { return nil }
+        guard let tmGraph = scriptGraphPrototypeGraph(prototypeUUID: prototypeUUID) else { return nil }
         return RCP3ScriptGraph(tmGraph: tmGraph)
+    }
+
+    /// The raw `graph` member of the standalone `*.tm_script_graph` asset whose root
+    /// `__uuid` is `prototypeUUID`, or `nil` when no such asset exists. Used both to
+    /// parse the prototype directly and to recover a prototype node-type lookup for
+    /// resolving an entity's instance-override graph.
+    func scriptGraphPrototypeGraph(prototypeUUID: String) -> TMObject? {
+        Self.scriptGraphAsset(uuid: prototypeUUID, in: url)?["graph"]?.objectValue
     }
 
     // MARK: Resolution helpers
 
-    /// The `source.__prototype_uuid` of the entity's first `re_scripting_component`.
-    static func scriptGraphPrototypeUUID(in entity: TMObject) -> String? {
+    /// The entity's first `re_scripting_component` object, across both its `components`
+    /// and `components__instantiated` arrays.
+    static func scriptingComponent(in entity: TMObject) -> TMObject? {
         for key in ["components", "components__instantiated"] {
             guard let array = entity[key]?.arrayValue else { continue }
             for value in array {
                 guard
                     let component = value.objectValue,
-                    (component.type ?? component.prototypeType) == "re_scripting_component",
-                    let source = component["source"]?.objectValue
+                    (component.type ?? component.prototypeType) == "re_scripting_component"
                 else { continue }
-                // The graph asset is referenced by the source's prototype identity.
-                if let prototype = source.prototypeUUID { return prototype }
-                // Fall back to the source's own uuid for an inlined source.
-                if let uuid = source.uuid { return uuid }
+                return component
             }
         }
         return nil
+    }
+
+    /// The `source.__prototype_uuid` of the entity's first `re_scripting_component`.
+    static func scriptGraphPrototypeUUID(in entity: TMObject) -> String? {
+        guard
+            let component = scriptingComponent(in: entity),
+            let source = component["source"]?.objectValue
+        else { return nil }
+        // The graph asset is referenced by the source's prototype identity.
+        if let prototype = source.prototypeUUID { return prototype }
+        // Fall back to the source's own uuid for an inlined source.
+        if let uuid = source.uuid { return uuid }
+        return nil
+    }
+
+    /// A `[nodeUUID: type]` lookup over a prototype `tm_graph` object's `nodes`,
+    /// used to recover the `type` of an instance graph's `nodes__instantiated`
+    /// entries (which point at these prototype nodes by `__prototype_uuid`).
+    static func nodeTypes(in tmGraph: TMObject) -> [String: String] {
+        var types: [String: String] = [:]
+        for value in tmGraph["nodes"]?.arrayValue ?? [] {
+            guard
+                let object = value.objectValue,
+                let id = object.uuid,
+                let type = object["type"]?.stringValue ?? object.prototypeType
+            else { continue }
+            types[id] = type
+        }
+        return types
     }
 
     /// Scans `bundleURL` (non-recursively) for the `*.tm_script_graph` whose root
@@ -122,8 +180,13 @@ extension RCP3Bundle {
     }
 
     /// Finds the `tm_entity` object whose `RCP3Entity.id` is `id` in `object`'s tree.
+    ///
+    /// Matches on the display `RCP3Entity.id` (the entity's `__uuid`, e.g. the
+    /// `box` entity's `73fc9fd1-…`) and, as a fallback, on the entity's display
+    /// `name` — so a lookup keyed by name (`"box"`) also resolves.
     static func findEntity(id: RCP3Entity.ID, in object: TMObject) -> TMObject? {
         if RCP3Entity(object).id == id { return object }
+        if let name = object.name, !name.isEmpty, name == id { return object }
         for value in object["children"]?.arrayValue ?? [] {
             guard let child = value.objectValue else { continue }
             if let found = findEntity(id: id, in: child) { return found }
