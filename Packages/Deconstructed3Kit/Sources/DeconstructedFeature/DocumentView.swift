@@ -218,7 +218,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
             // Fills the column; `.id(graphKey)` keeps its identity stable for the run.
             canonicalPlay(graph)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .id(graphKey)
+                .id(playKey)
         } else {
             viewportColumn
         }
@@ -264,7 +264,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
         // An asset opened from the sidebar takes precedence; otherwise fall back
         // to the selected entity's graph.
         if let graph = store.openScriptGraph ?? store.selectedScriptGraph {
-            let key = graphKey
+            let key = graphKey(for: graph)
             // The model is owned HERE (not by the canvas) so Save can write its
             // live edits back to the `.tm_script_graph`. It is (re)built by
             // `graphCanvas(for:key:)`'s `.task(id:)` whenever the shown graph
@@ -279,14 +279,42 @@ public struct DocumentView<CanonicalPlay: View>: View {
         }
     }
 
-    /// The identity of the currently shown graph (open asset id, else the selection).
-    private var graphKey: String {
-        store.openScriptGraphID ?? store.selection ?? "graph"
+    /// The STABLE identity of a shown graph — the key the canvas/Play view is keyed on.
+    ///
+    /// Derived from the GRAPH being shown, never from `store.selection`: the open
+    /// asset/example id (`openScriptGraphID`), else the graph's own root identity
+    /// (`graph.id`, the `tm_graph`'s `__uuid` carried through parsing), else a stable
+    /// fallback. This is the root fix for the data-loss bug: when a graph comes from the
+    /// selected entity, a selection change (or the selection/focus churn around opening
+    /// the "+" palette) must NOT change the key — otherwise the keyed `.task` re-fires
+    /// and rebuilds the live model from the pristine source, discarding live edits.
+    ///
+    /// A different graph (different open id, or a different selected entity carrying a
+    /// different graph identity) still yields a different key, so the model rebuilds for a
+    /// genuinely different graph as before.
+    private func graphKey(for graph: RCP3ScriptGraph) -> String {
+        store.state.canvasKey(forShownGraph: graph)
     }
 
-    /// The canvas over the host-owned model for `graph`, (re)building the model when
-    /// the shown graph changes. The build happens in `task(id:)` (not in `body`), so
-    /// `@State` is never mutated mid-evaluation.
+    /// The key for the graph the Run/Play affordance would run, for `.id(_:)` stability
+    /// of the inline canonical Play view across body passes. Same derivation as
+    /// `graphKey(for:)`, off the previewable graph; falls back to a constant when nothing
+    /// is runnable (the Play view isn't shown then).
+    private var playKey: String {
+        previewableGraph.map { graphKey(for: $0) } ?? "graph"
+    }
+
+    /// The canvas over the host-owned model for `graph`, (re)building the model when the
+    /// shown graph changes. The build happens in `task(id:)` (not in `body`), so `@State`
+    /// is never mutated mid-evaluation.
+    ///
+    /// DIRTY-GUARD (belt-and-suspenders, paired with the selection-decoupled `key`): the
+    /// `.task` only re-fires when `key` — the SHOWN GRAPH's stable identity — changes, so
+    /// a selection change for the same graph no longer re-keys and no longer rebuilds.
+    /// On top of that, the rebuild itself refuses to REPLACE an existing model that still
+    /// has unsaved live edits with one for the SAME graph identity: a re-fire is only
+    /// honoured when it carries a genuinely DIFFERENT key (a different graph). This makes
+    /// it structurally impossible to silently discard a user's in-flight edits.
     @ViewBuilder
     private func graphCanvas(for graph: RCP3ScriptGraph, key: String) -> some View {
         Group {
@@ -299,6 +327,11 @@ public struct DocumentView<CanonicalPlay: View>: View {
         }
         .id(key)
         .task(id: key) {
+            // Same graph identity as the live model? Never rebuild — that would discard
+            // the user's unsaved edits. (Belt-and-suspenders: with the key now derived
+            // from the shown graph, a same-graph re-fire shouldn't happen, but a dirty
+            // model is never silently replaced regardless.)
+            if let model = graphModel, graphModelKey == key, model.isDirty { return }
             graphModel = ScriptGraphEditorModel(graph: graph)
             graphModelKey = key
         }
@@ -437,6 +470,8 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     toAssetWithRootUUID: rootUUID,
                     in: bundleURL
                 )
+                // Edits are now on disk; allow a future re-key to rebuild from source.
+                model.markSaved()
             } catch {
                 // Surface nothing fancy yet; a graph write failure shouldn't block
                 // the entity save below. (Error reporting can be lifted into the
@@ -719,6 +754,18 @@ extension DocumentFeature.State {
     /// `.nameEdited`; this is the read side of that binding.
     var selectedEntityName: String {
         selectedEntity?.name ?? ""
+    }
+
+    /// The STABLE canvas key for a SHOWN graph: the open asset/example id
+    /// (`openScriptGraphID`), else the graph's own root identity (`graph.id`), else a
+    /// constant fallback. Deliberately INDEPENDENT of `selection` — when a graph comes
+    /// from the selected entity, a selection change (or the selection/focus churn around
+    /// opening the "+" palette) must NOT change this key, or the keyed canvas `.task`
+    /// re-fires and rebuilds the live model from the pristine source, discarding live
+    /// edits. A genuinely different graph (different open id, or a different selected
+    /// entity's graph identity) still yields a different key.
+    func canvasKey(forShownGraph graph: RCP3ScriptGraph) -> String {
+        openScriptGraphID ?? graph.id ?? "graph"
     }
 }
 

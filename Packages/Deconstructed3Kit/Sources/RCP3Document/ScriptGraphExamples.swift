@@ -70,7 +70,17 @@ public struct ScriptGraphExample: Identifiable, Sendable {
         self.id = id
         self.name = name
         self.summary = summary
-        self.graph = graph
+        // Stamp the example's stable id onto its graph identity, so the editor can key
+        // the canvas on the SHOWN graph's identity (not a coupled selection) and a loaded
+        // example reads back its own id from `graph.id`. The example graphs are built with
+        // the memberwise init (no `__uuid`), so this is the graph's identity.
+        self.graph = RCP3ScriptGraph(
+            id: id,
+            nodes: graph.nodes,
+            wires: graph.wires,
+            data: graph.data,
+            variables: graph.variables
+        )
         self.runsToday = runsToday
     }
 }

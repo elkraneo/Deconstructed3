@@ -131,6 +131,17 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         }
     }
 
+    /// The graph's own STABLE identity — the `tm_graph`'s root `__uuid` (the `graph`
+    /// member's `__uuid`), carried through parsing so a consumer can key UI state on the
+    /// graph itself rather than on a coupled selection. `nil` for a synthetic graph built
+    /// in memory with no assigned identity (e.g. a `make_node` scratch graph); the
+    /// Examples gallery assigns a stable id via the memberwise init.
+    ///
+    /// Why this matters: the editor's live model is keyed on the SHOWN graph's identity,
+    /// so a selection change that doesn't change the shown graph must NOT re-key (and
+    /// thus must not discard unsaved live edits). This is that identity.
+    public let id: String?
+
     public let nodes: [Node]
     public let wires: [Wire]
     public let data: [DataLiteral]
@@ -142,7 +153,8 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     /// `tm_graph_variable_ref` literal binds to (observed as `d4c943cba60c270b`).
     public static let variableNameConnectorHash: UInt64 = TMHash.murmur64a("name")
 
-    public init(nodes: [Node], wires: [Wire], data: [DataLiteral], variables: [Variable] = []) {
+    public init(id: String? = nil, nodes: [Node], wires: [Wire], data: [DataLiteral], variables: [Variable] = []) {
+        self.id = id
         self.nodes = nodes
         self.wires = wires
         self.data = data
@@ -175,6 +187,10 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     /// `connections` and `data` are read from the instance graph as-is (they fully
     /// re-state the edited graph's wires/literals — they are not deltas here).
     public init(tmGraph: TMObject, prototypeNodeTypes: [String: String]) {
+        // The graph's own stable identity (the `graph` member's `__uuid`), carried so UI
+        // state can key on the graph itself rather than a coupled selection.
+        id = tmGraph.uuid
+
         var parsedNodes: [Node] = (tmGraph["nodes"]?.arrayValue ?? []).compactMap { value in
             guard let object = value.objectValue, let id = object.uuid else { return nil }
             let position = object["position"]?.objectValue

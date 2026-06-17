@@ -162,6 +162,13 @@ public struct DocumentFeature: Sendable {
 
             case let .selected(id):
                 state.selection = id
+                // Selecting an entity leaves a loaded Examples-gallery graph behind, so a
+                // hardcoded sample can no longer SHADOW the selected entity's real graph
+                // (mirrors what `.scriptGraphOpened(non-nil)` / open already do). Without
+                // this, `openScriptGraph` keeps PREFERRING `loadedExample`, reverting the
+                // canvas to the demo fixture after any selection change.
+                state.loadedExample = nil
+                state.loadedExampleID = nil
                 return .none
 
             case let .scriptGraphOpened(id):

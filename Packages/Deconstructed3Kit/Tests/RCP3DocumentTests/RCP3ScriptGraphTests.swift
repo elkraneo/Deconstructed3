@@ -269,6 +269,35 @@ import RCP3Document
         #expect(graph.data.first?.toPin == 0x772749b3cbf24a8f)
     }
 
+    // MARK: Stable graph identity (the canvas key the editor uses)
+
+    /// The parsed graph carries its own STABLE identity — the `tm_graph`'s root
+    /// `__uuid` — so the editor can key the canvas on the SHOWN graph (not a coupled
+    /// selection). A synthetic graph built in memory with no assigned id keeps `nil`.
+    @Test func carriesGraphRootUUIDAsStableID() throws {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "root-uuid"
+        graph: {
+        \t__uuid: "graph-uuid"
+        \tnodes: [
+        \t\t{
+        \t\t\t__uuid: "n1"
+        \t\t\ttype: "tm_update"
+        \t\t}
+        \t]
+        }
+        """
+        let root = try #require(try TM.parse(text).objectValue)
+        let tmGraph = try #require(root["graph"]?.objectValue)
+        // The id is the GRAPH member's `__uuid` (not the asset root's).
+        #expect(RCP3ScriptGraph(tmGraph: tmGraph).id == "graph-uuid")
+
+        // A memberwise (synthetic) graph defaults to no identity; an explicit id sticks.
+        #expect(RCP3ScriptGraph(nodes: [], wires: [], data: []).id == nil)
+        #expect(RCP3ScriptGraph(id: "synthetic", nodes: [], wires: [], data: []).id == "synthetic")
+    }
+
     @Test func unknownPinHashFallsBackToHex() {
         let unknown: UInt64 = 0x4f980d170a59f903
         #expect(RCP3ScriptGraph.pinName(forHash: unknown) == nil)

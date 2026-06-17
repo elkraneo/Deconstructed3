@@ -147,6 +147,17 @@ public final class ScriptGraphEditorModel {
     /// hand) itself and calls `completeConnection(to:)` on drop.
     public private(set) var draftSource: GraphPortRef?
 
+    /// Whether this model carries UNSAVED live edits — set `true` by every mutating verb
+    /// (add/move/connect/disconnect/delete/setLiteral/setVariableName) and cleared by
+    /// ``markSaved()`` once write-back has persisted them.
+    ///
+    /// The host (`DocumentView`) reads this to AVOID silently rebuilding a dirty model
+    /// from the pristine source graph when the canvas re-keys for the SAME graph — which
+    /// is exactly how live edits used to get discarded (the "+ mutated my graph" bug).
+    /// A genuinely different graph identity still rebuilds; only a same-graph re-key is
+    /// guarded.
+    public private(set) var isDirty = false
+
     /// Builds the editor state from a parsed script graph. Node interfaces (the full
     /// named pin set + exposed values) come from the shared pin derivation; node
     /// positions come from the file (`x`/`y`), falling back to a left-to-right lane.
@@ -207,6 +218,15 @@ public final class ScriptGraphEditorModel {
 
     static let fallbackLaneSpacing: Double = 320
 
+    // MARK: Dirty tracking
+
+    /// Marks the model as carrying unsaved live edits. Called by every mutating verb.
+    private func markDirty() { isDirty = true }
+
+    /// Clears the dirty flag — call after write-back has persisted the live edits, so the
+    /// host may once again rebuild the model from the (now up-to-date) source on a re-key.
+    public func markSaved() { isDirty = false }
+
     // MARK: Lookups
 
     public func node(_ id: String) -> GraphNodeBox? { nodes.first { $0.id == id } }
@@ -239,6 +259,7 @@ public final class ScriptGraphEditorModel {
         )
         nodes.append(GraphNodeBox(id: newID, position: position, payload: payload))
         selectNode(newID)
+        markDirty()
         return newID
     }
 
@@ -291,6 +312,7 @@ public final class ScriptGraphEditorModel {
         } else {
             scalarLiterals.removeValue(forKey: key)
         }
+        markDirty()
     }
 
     /// The `connector_hash` carried by a data INPUT pin id (`in.<hex>`), or `nil` for
@@ -358,9 +380,11 @@ public final class ScriptGraphEditorModel {
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let trimmed, !trimmed.isEmpty else {
             variableNames.removeValue(forKey: nodeID)
+            markDirty()
             return
         }
         variableNames[nodeID] = trimmed
+        markDirty()
         // Declare the variable in the table if it isn't there yet (case-insensitive,
         // since the compile slot lowercases the name).
         let exists = variables.contains { $0.name.lowercased() == trimmed.lowercased() }
@@ -374,6 +398,7 @@ public final class ScriptGraphEditorModel {
     public func moveNode(_ id: String, to position: CGPoint) {
         guard let index = nodes.firstIndex(where: { $0.id == id }) else { return }
         nodes[index].position = position
+        markDirty()
     }
 
     // MARK: Connection verbs
@@ -413,12 +438,15 @@ public final class ScriptGraphEditorModel {
         let id = UUID().uuidString
         let label = pin(input)?.label ?? "connection"
         connections.append(GraphConnection(id: id, from: output, to: input, isExec: isExec, label: label))
+        markDirty()
         return id
     }
 
     public func removeConnection(_ id: String) {
+        let before = connections.count
         connections.removeAll { $0.id == id }
         if selectedConnectionID == id { selectedConnectionID = nil }
+        if connections.count != before { markDirty() }
     }
 
     /// Inserts a fully-formed connection directly, bypassing the port-pairing rules
@@ -432,6 +460,7 @@ public final class ScriptGraphEditorModel {
     public func insert(connection: GraphConnection) {
         connections.removeAll { $0.to == connection.to }
         connections.append(connection)
+        markDirty()
     }
 
     // MARK: Selection + deletion
@@ -450,7 +479,7 @@ public final class ScriptGraphEditorModel {
     /// node is removed along with every connection touching it.
     public func deleteSelection() {
         if let id = selectedConnectionID {
-            removeConnection(id)
+            removeConnection(id) // marks dirty when a wire is actually removed
         } else if let id = selectedNodeID {
             connections.removeAll { $0.from.nodeID == id || $0.to.nodeID == id }
             nodes.removeAll { $0.id == id }
@@ -461,6 +490,7 @@ public final class ScriptGraphEditorModel {
             // a declared variable can outlive its nodes).
             variableNames.removeValue(forKey: id)
             selectedNodeID = nil
+            markDirty()
         }
     }
 

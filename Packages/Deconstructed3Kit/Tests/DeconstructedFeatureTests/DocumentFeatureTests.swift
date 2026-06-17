@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Foundation
 import RCP3Document
+import RCP3GraphEditor
 import Testing
 
 @testable import DeconstructedFeature
@@ -299,6 +300,103 @@ import Testing
         }
         #expect(store.state.openScriptGraphID == nil)
         #expect(store.state.openScriptGraph == nil)
+    }
+
+    /// Selecting an entity CLEARS a loaded Examples-gallery graph, so the hardcoded
+    /// sample stops shadowing the real selection. This is fix (B) of the data-loss bug:
+    /// before, `.selected` left `loadedExample` in place, so `openScriptGraph` kept
+    /// preferring the demo fixture after every selection change ("the graph mutated").
+    @Test func selectedClearsLoadedExampleAndFallsBackToSelection() async {
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        }
+
+        let example = ScriptGraphExamples.dragToMove
+
+        // Load an example, then select an entity.
+        await store.send(.exampleSelected(id: example.id, graph: example.graph)) {
+            $0.loadedExample = example.graph
+            $0.loadedExampleID = example.id
+        }
+        #expect(store.state.openScriptGraphID == example.id)
+
+        // Selecting an entity drops the loaded example (no longer shadows the selection).
+        await store.send(.selected("some-entity")) {
+            $0.selection = "some-entity"
+            $0.loadedExample = nil
+            $0.loadedExampleID = nil
+        }
+        // The example no longer shadows anything: the open graph falls back to the real
+        // selection (here `nil`, since no bundle/editor is loaded in this reducer test).
+        #expect(store.state.openScriptGraphID == nil)
+        #expect(store.state.openScriptGraph == nil)
+    }
+
+    // MARK: Canvas key identity (root fix for the data-loss bug)
+
+    /// KEY STABILITY: with a graph shown from the selected entity (no open asset/example),
+    /// changing `selection` must NOT change the canvas key — the key is the SHOWN GRAPH's
+    /// identity, not the selection. Before the fix the key was `openScriptGraphID ??
+    /// selection`, so any selection change re-keyed the canvas and rebuilt the live model
+    /// from the pristine source, discarding edits.
+    @Test func canvasKeyIsStableAcrossSelectionChangesForSameGraph() {
+        // A graph carrying its own stable identity (as a parsed `tm_graph` would).
+        let graph = RCP3ScriptGraph(id: "graph-uuid", nodes: [], wires: [], data: [])
+
+        // No open asset/example → the key is the graph's own identity, regardless of
+        // which entity is selected.
+        var state = DocumentFeature.State()
+        state.selection = "entity-A"
+        let keyA = state.canvasKey(forShownGraph: graph)
+
+        state.selection = "entity-B" // selection churn (e.g. around the "+" palette)
+        let keyB = state.canvasKey(forShownGraph: graph)
+
+        #expect(keyA == keyB)
+        #expect(keyA == "graph-uuid")
+
+        // A genuinely DIFFERENT graph (different identity) still yields a different key.
+        let other = RCP3ScriptGraph(id: "other-uuid", nodes: [], wires: [], data: [])
+        #expect(state.canvasKey(forShownGraph: other) != keyA)
+
+        // An open asset/example id takes precedence over the shown graph's identity.
+        state.openAssetGraphID = "asset-uuid"
+        #expect(state.canvasKey(forShownGraph: graph) == "asset-uuid")
+    }
+
+    /// EDIT SURVIVES A SELECTION CHANGE: with the canvas key stable across a selection
+    /// change for the same shown graph, the keyed rebuild does not re-fire; and the
+    /// belt-and-suspenders dirty-guard means even a forced re-evaluation keeps a dirty
+    /// model's edits. This asserts the combined invariant the view relies on: same key +
+    /// `isDirty` ⇒ the live model (and its addNode edit) is NOT rebuilt from source.
+    @Test func dirtyEditSurvivesSelectionChangeForSameGraph() {
+        let graph = RCP3ScriptGraph(id: "graph-uuid", nodes: [], wires: [], data: [])
+
+        // The host-owned live model, with an in-flight edit.
+        let model = ScriptGraphEditorModel(graph: graph)
+        model.addNode(type: "tm_update", at: .zero)
+        #expect(model.isDirty)
+        #expect(model.nodes.count == 1)
+
+        // Key for the model, then a selection change for the SAME shown graph.
+        var state = DocumentFeature.State()
+        state.selection = "entity-A"
+        let keyBefore = state.canvasKey(forShownGraph: graph)
+        state.selection = "entity-B"
+        let keyAfter = state.canvasKey(forShownGraph: graph)
+        #expect(keyBefore == keyAfter) // no re-key → the keyed `.task` won't re-fire
+
+        // Belt-and-suspenders: even a forced rebuild attempt for the SAME (dirty) key is
+        // refused, exactly as the view's `.task(id:)` guard does — the edit survives.
+        let modelKey = keyBefore
+        var liveModel = model
+        let newKey = keyAfter
+        if !(liveModel.isDirty && modelKey == newKey) {
+            liveModel = ScriptGraphEditorModel(graph: graph) // would discard the edit
+        }
+        #expect(liveModel === model)      // same instance preserved
+        #expect(liveModel.nodes.count == 1) // the addNode edit survived
+        #expect(liveModel.isDirty)
     }
 
     /// A loaded example takes precedence over a sidebar-opened asset, and opening an

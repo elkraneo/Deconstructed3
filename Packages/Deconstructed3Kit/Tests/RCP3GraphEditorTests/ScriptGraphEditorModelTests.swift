@@ -239,6 +239,83 @@ import RCP3Document
         #expect(model.scalarLiterals.isEmpty)
     }
 
+    // MARK: - Dirty tracking (guards against discarding live edits on a re-key)
+
+    /// A freshly built model is clean; every mutating verb marks it dirty; `markSaved()`
+    /// clears it. The host reads `isDirty` to refuse rebuilding a model with unsaved live
+    /// edits — the belt-and-suspenders half of the "+ mutated my graph" data-loss fix.
+    @Test func mutatingVerbsMarkDirtyAndSaveClearsIt() {
+        // addNode
+        do {
+            let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+            #expect(!model.isDirty)
+            model.addNode(type: "tm_update", at: .zero)
+            #expect(model.isDirty)
+            model.markSaved()
+            #expect(!model.isDirty)
+        }
+        // moveNode
+        do {
+            let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+            model.moveNode("n1", to: CGPoint(x: 10, y: 10))
+            #expect(model.isDirty)
+        }
+        // connect
+        do {
+            let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+            let new = model.addNode(type: "tm_gesture_event_drag", at: .zero)
+            model.markSaved()
+            model.connect(
+                GraphPortRef(nodeID: new, pinID: "exec.out"),
+                GraphPortRef(nodeID: "n2", pinID: "exec.in")
+            )
+            #expect(model.isDirty)
+        }
+        // disconnect (removeConnection of an existing wire)
+        do {
+            let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+            let exec = model.connections.first { $0.isExec }!
+            model.removeConnection(exec.id)
+            #expect(model.isDirty)
+        }
+        // deleteSelection (node)
+        do {
+            let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+            model.selectNode("n2")
+            model.deleteSelection()
+            #expect(model.isDirty)
+        }
+        // setLiteral
+        do {
+            let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+            let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [vec], wires: [], data: []))
+            model.setLiteral(nodeID: "v", pinConnectorHash: TMHash.murmur64a("x"), value: 1)
+            #expect(model.isDirty)
+        }
+        // setVariableName
+        do {
+            let get = RCP3ScriptGraph.Node(id: "g", type: "tm_get_variable_node")
+            let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [get], wires: [], data: []))
+            model.setVariableName(nodeID: "g", name: "t")
+            #expect(model.isDirty)
+        }
+    }
+
+    /// A NO-OP mutation (an invalid connect, removing a wire that isn't there) does not
+    /// dirty the model — so a clean model stays rebuildable.
+    @Test func noOpMutationsDoNotMarkDirty() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        // Invalid pairing (both inputs / same node) forms no wire.
+        let connID = model.connect(
+            GraphPortRef(nodeID: "n2", pinID: "exec.in"),
+            GraphPortRef(nodeID: "n2", pinID: "in." + TMHash.hex(TMHash.murmur64a("translation")))
+        )
+        #expect(connID == nil)
+        // Removing a non-existent connection changes nothing.
+        model.removeConnection("does-not-exist")
+        #expect(!model.isDirty)
+    }
+
     @Test func canvasGeometryResolvesPorts() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let setTranslation = GraphPortRef(nodeID: "n2", pinID: "in." + TMHash.hex(TMHash.murmur64a("translation")))
