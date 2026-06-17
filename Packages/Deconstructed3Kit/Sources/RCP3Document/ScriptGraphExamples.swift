@@ -18,12 +18,18 @@ import TMFormat
 /// with **no `unsupported` note on that path** — the backing compiler tests assert
 /// exactly that. Press ▶ Play and the box moves.
 ///
-/// The variable-driven examples (Spin / Sine Bob / Orbit / Drag Momentum) carry a
-/// LOCAL accumulator on their Get/Set variable nodes (`Node.variableName`), which the
-/// canonical compiler lowers to a stable per-script instance-property slot
-/// (`this.variable_<slot>`, slot = `MurmurHash64A(lowercase(name))`). Their wired path
-/// compiles cleanly to that real slot, so they are now `runsToday == true` (the
-/// runtime result is still user-confirmed on Play). DEFERRED: an authoring-UI variable
+/// The variable-driven examples (Spin / Sine Bob / Orbit / Squash by Sin / Drag
+/// Momentum) carry a LOCAL accumulator on their Get/Set variable nodes
+/// (`Node.variableName`), which the canonical compiler lowers to a stable per-script
+/// instance-property slot (`this.variable_<slot>`, slot =
+/// `MurmurHash64A(lowercase(name))`). The translation/scale-driven ones (Sine Bob /
+/// Orbit / Squash by Sin) compile cleanly to that real slot AND visibly animate, so
+/// they are `runsToday == true` (the runtime result is still user-confirmed on Play).
+/// The two ROTATION demos (Spin / Drag Momentum) also compile to real slots, but set
+/// `.orientation` from a raw scalar, which does NOT visibly rotate: orientation needs a
+/// quaternion and the euler→quaternion emission isn't implemented yet, so they are
+/// honestly `runsToday == false` (their rotation wiring is kept intact for that future
+/// fix). DEFERRED: the euler→quaternion emission for rotation; an authoring-UI variable
 /// picker, a graph-level variable table with real defaults/types, and the on-disk
 /// `.tm_` round-trip of `variableName` — all pending a captured `.tm_` graph that uses
 /// a variable.
@@ -250,35 +256,42 @@ public enum ScriptGraphExamples {
         runsToday: true
     )
 
-    /// On Update → Set scale = `Vector3(1, add(1, multiply(scale, sin(deltaTime))), 1)`.
-    /// A sin-driven vertical squash. Honest caveat: it reads `deltaTime` (the per-frame
-    /// step) directly, NOT an accumulated time, so without a `$t` accumulator it can't
-    /// smoothly animate — but it compiles and runs cleanly (it's marked runs-today).
+    /// On Update → `$t += deltaTime`; Set scale = `Vector3(1, 1 + 0.5·sin($t), 1)`. A
+    /// sin-driven vertical squash that oscillates for real, driven by the local `t` time
+    /// accumulator (mirroring `sineBob`) rather than the per-frame `deltaTime` — so the
+    /// box visibly pulses. The base `1` and amplitude `0.5` are baked literals; x/z = 1.
     public static let squashBySin = ScriptGraphExample(
         id: "example.squash-by-sin",
         name: "Squash by Sin",
-        summary: "Vertical scale = 1 + 0.5·sin(deltaTime), from baked literals. Runs without collapsing, but uses deltaTime directly (no time accumulator), so it won't smoothly animate — see 'Sine Bob' for the variable-driven version.",
+        summary: "Vertical scale = 1 + 0.5·sin(t), accumulating t += deltaTime each frame so the box pulses smoothly. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
-                .init(id: "sin", type: "tm_math_sin", label: "Sin", x: 200, y: 240),
-                .init(id: "mul", type: "tm_math_multiply", label: "Multiply", x: 420, y: 240),
-                .init(id: "add", type: "tm_math_add", label: "Add", x: 640, y: 200),
-                .init(id: "vec", type: "tm_make_vector3", label: "Vector3", x: 860, y: 100),
-                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 1080, y: 0),
+                .init(id: "getT", type: "tm_get_variable_node", label: "Get $t", x: 0, y: 240, variableName: "t"),
+                .init(id: "addT", type: "tm_math_add", label: "Add", x: 320, y: 140),
+                .init(id: "setT", type: "tm_set_variable_node", label: "Set $t", x: 640, y: 0, variableName: "t"),
+                .init(id: "sin", type: "tm_math_sin", label: "Sin", x: 320, y: 360),
+                .init(id: "mul", type: "tm_math_multiply", label: "Multiply", x: 540, y: 360),
+                .init(id: "add", type: "tm_math_add", label: "Add", x: 760, y: 300),
+                .init(id: "vec", type: "tm_make_vector3", label: "Vector3", x: 980, y: 200),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 1200, y: 0),
             ],
             wires: [
-                exec("e", from: "update", to: "set"),
-                // sin(deltaTime)
-                data("d1", from: "update", "deltaTime", to: "sin", "a"),
-                // amp * sin(deltaTime) — amp is a scalar literal (reads 0), so this is
-                // the wired path the compiler must lower without an `unsupported` note.
-                data("d2", from: "sin", "result", to: "mul", "b"),
-                // 1 + (amp * sin(deltaTime)) — the `1` is a scalar literal (reads 0).
-                data("d3", from: "mul", "result", to: "add", "b"),
-                // Vector3(x, <squash>, z) → scale
-                data("d4", from: "add", "result", to: "vec", "y"),
-                data("d5", from: "vec", "vec3", to: "set", "scale"),
+                exec("e1", from: "update", to: "setT"),
+                exec("e2", from: "setT", to: "set"),
+                // t += deltaTime (the accumulator), mirroring Sine Bob.
+                data("d1", from: "getT", "value", to: "addT", "a"),
+                data("d2", from: "update", "deltaTime", to: "addT", "b"),
+                data("d3", from: "addT", "result", to: "setT", "value"),
+                // sin(t) — reads the ACCUMULATED time, not deltaTime, so it oscillates.
+                data("d4", from: "getT", "value", to: "sin", "a"),
+                // amp * sin(t) — amp is the baked 0.5 literal.
+                data("d5", from: "sin", "result", to: "mul", "b"),
+                // 1 + (amp * sin(t)) — the base 1 is a baked literal.
+                data("d6", from: "mul", "result", to: "add", "b"),
+                // Vector3(1, <squash>, 1) → scale
+                data("d7", from: "add", "result", to: "vec", "y"),
+                data("d8", from: "vec", "vec3", to: "set", "scale"),
             ],
             data: [
                 lit("lit.vx", node: "vec", pin: "x", 1),
@@ -292,12 +305,15 @@ public enum ScriptGraphExamples {
 
     // MARK: - VARIABLE-DRIVEN (local accumulators)
 
-    /// On Update → `$angle += deltaTime`; Set rotation from `$angle`. A continuous
-    /// spin, driven by the local `angle` accumulator.
+    /// On Update → `$angle += deltaTime`; Set rotation from `$angle`. The `angle`
+    /// accumulator compiles to a real local variable slot, but setting `.orientation`
+    /// from a raw scalar does NOT visibly rotate: orientation needs a quaternion, and the
+    /// euler→quaternion emission isn't implemented yet (pending). The rotation wiring is
+    /// kept intact for that future fix.
     public static let spin = ScriptGraphExample(
         id: "example.spin",
         name: "Spin",
-        summary: "Continuously rotate the box by accumulating angle += deltaTime each frame. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
+        summary: "Accumulate angle += deltaTime each frame to drive rotation. The angle compiles to a real local variable slot (this.variable_<slot>), but it does NOT visibly rotate yet: setting orientation needs a quaternion, and the euler→quaternion emission is not implemented (pending).",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -316,7 +332,7 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: true
+        runsToday: false
     )
 
     /// On Update → `$t += deltaTime`; Set translation.y from `sin($t)`. A vertical bob,
@@ -385,12 +401,15 @@ public enum ScriptGraphExamples {
     )
 
     /// Two handlers: On Drag → `$angVel = sceneTranslation.x` (a kick); On Update →
-    /// `$angle += $angVel` and Set rotation from `$angle`. Flick to spin, with momentum,
-    /// driven by the local `angularVelocity` and `angle` accumulators.
+    /// `$angle += $angVel` and Set rotation from `$angle`. Both `angularVelocity` and
+    /// `angle` accumulators compile to real local variable slots, but — like Spin — it
+    /// does NOT visibly rotate yet: setting `.orientation` from a raw scalar needs a
+    /// quaternion, and the euler→quaternion emission isn't implemented (pending). The
+    /// rotation wiring is kept intact for that future fix.
     public static let dragMomentum = ScriptGraphExample(
         id: "example.drag-momentum",
         name: "Drag Momentum",
-        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, and each frame angle += angularVelocity drives rotation. Both accumulators compile to real local variable slots (this.variable_<slot>); runtime is user-confirmed on Play.",
+        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, and each frame angle += angularVelocity drives rotation. Both accumulators compile to real local variable slots (this.variable_<slot>), but it does NOT visibly rotate yet: setting orientation needs a quaternion, and the euler→quaternion emission is not implemented (pending).",
         graph: RCP3ScriptGraph(
             nodes: [
                 // Handler 1: a drag kick sets the angular velocity.
@@ -418,6 +437,6 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: true
+        runsToday: false
     )
 }

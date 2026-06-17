@@ -14,10 +14,13 @@ import RCP3Runtime
 /// NOT an `unsupported` note), and the emitted handler must have the expected
 /// canonical shape (`this.*` hooks, `event.*` gesture reads, `Math.*` / `Math3D`).
 ///
-/// The variable-driven examples (Spin / Sine Bob / Orbit / Drag Momentum) carry a
-/// LOCAL accumulator name on their Get/Set nodes, which lowers to a stable per-script
-/// slot (`this.variable_<slot>`) — so they too are `runsToday` with no placeholder on
-/// the wired path.
+/// The variable-driven examples (Spin / Sine Bob / Orbit / Squash by Sin / Drag
+/// Momentum) carry a LOCAL accumulator name on their Get/Set nodes, which lowers to a
+/// stable per-script slot (`this.variable_<slot>`) with no placeholder on the wired
+/// path. The translation/scale ones run today; the two ROTATION demos (Spin / Drag
+/// Momentum) are `runsToday == false` — they compile to real slots but set
+/// `.orientation` from a raw scalar, which needs a quaternion (euler→quaternion
+/// emission not implemented yet).
 @Suite struct ScriptGraphExamplesCompilerTests {
 
     /// A runs-today example's wired path must never surface an `unsupported` note.
@@ -61,17 +64,27 @@ import RCP3Runtime
         }
     }
 
-    @Test func everyExampleRunsTodayWithNoVariablePlaceholder() {
-        // All ten curated examples now run today — the four variable-driven ones carry a
-        // LOCAL accumulator name, so they lower to a real `this.variable_<slot>` rather
-        // than the remote-value placeholder.
+    @Test func everyExampleLowersToALocalSlotNeverARemotePlaceholder() {
+        // Every curated example's variable-driven path lowers to a real
+        // `this.variable_<slot>` rather than the remote-value placeholder — regardless of
+        // whether it's `runsToday`. (The two rotation demos are `runsToday == false`
+        // because orientation needs a quaternion, NOT because of a variable placeholder.)
         for example in ScriptGraphExamples.all {
-            #expect(example.runsToday, "\(example.name) should run today")
             let js = CanonicalScriptGraphCompiler().compile(example.graph)
             expectNoUnsupported(js, example.name)
             #expect(!js.contains("variable name unresolved"), "\(example.name) still has a variable placeholder:\n\(js)")
             #expect(!js.contains("RemoteValue"), "\(example.name) should compile locals to a slot, not RemoteValue:\n\(js)")
         }
+    }
+
+    @Test func onlyTheRotationDemosArePendingTheRestRunToday() {
+        // The honest split: Spin and Drag Momentum set `.orientation` from a raw scalar,
+        // which needs a quaternion (euler→quaternion emission not implemented yet), so
+        // they are `runsToday == false`. Every other example runs today.
+        let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
+        #expect(pending == ["Spin", "Drag Momentum"])
+        // Eight examples run today (ten total minus the two rotation demos).
+        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 8)
     }
 
     // MARK: - Runs today: per-example shape
@@ -135,16 +148,23 @@ import RCP3Runtime
         #expect(js.contains("this.entity.position = new Math3D.Vector3(0.3, 0.3,"))
     }
 
-    @Test func squashBySinDrivesScaleYFromSinOfDeltaTime() {
+    @Test func squashBySinDrivesScaleYFromSinOfAccumulatedTime() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.squashBySin.graph)
         expectNoUnsupported(js, "Squash by Sin")
         #expect(js.contains("this.update = function(deltaTime)"))
-        // sin(deltaTime) drives the Y component of the scale Vector3.
-        #expect(js.contains("Math.sin(deltaTime)"))
+        // It now accumulates `t += deltaTime` on a real local slot (mirroring Sine Bob),
+        // and drives the squash from sin(t) — NOT sin(deltaTime) — so it oscillates.
+        let t = slot("t")
+        #expect(js.contains("this.\(t) = ((this.\(t) ?? 0) + deltaTime);"))
+        // sin of the ACCUMULATED time drives the Y component of the scale Vector3, not
+        // sin of the per-frame deltaTime.
+        #expect(js.contains("Math.sin((this.\(t) ?? 0))"))
+        #expect(!js.contains("Math.sin(deltaTime)"))
         #expect(js.contains("this.entity.scale = new Math3D.Vector3("))
         // Baked base (1) + amp (0.5) + unit x/z literals, so scale no longer collapses
         // to (0,0,0) — it scales around 1.
-        #expect(js.contains("this.entity.scale = new Math3D.Vector3(1, (1 + (0.5 * Math.sin(deltaTime))), 1)"))
+        #expect(js.contains("this.entity.scale = new Math3D.Vector3(1, (1 + (0.5 * Math.sin((this.\(t) ?? 0)))), 1)"))
+        #expect(!js.contains("RemoteValue"))
     }
 
     // MARK: - Local-variable-driven: per-example shape

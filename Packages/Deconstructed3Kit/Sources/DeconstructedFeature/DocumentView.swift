@@ -366,7 +366,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 Button {
                     loadExample(example)
                 } label: {
-                    Text(example.runsToday ? example.name : "\(example.name) (needs variables)")
+                    Text(example.runsToday ? example.name : "\(example.name) (rotation pending)")
                 }
                 .help(example.summary)
             }

@@ -165,19 +165,42 @@ public struct CanonicalScriptGraphCompiler {
                 return emitTapHandler(for: node)
             case .update:
                 let body = emitActionBody(after: node, context: .update)
-                return emitFunctionHandler(name: "update", params: "deltaTime", body: body)
+                return emitFunctionHandler(name: "update", params: "deltaTime", body: body, logEvent: "update")
             case .lifecycle(let name):
                 let body = emitActionBody(after: node, context: .lifecycle)
-                return emitFunctionHandler(name: name, params: "", body: body)
+                return emitFunctionHandler(name: name, params: "", body: body, logEvent: name)
             }
         }
 
-        /// `this.<name> = function(<params>) { <body> };`
-        func emitFunctionHandler(name: String, params: String, body: [String]) -> String {
+        /// `this.<name> = function(<params>) { <body> };`, with a ONE-TIME `console.log`
+        /// at the body entry so the in-app console (Apple's RealityKitScripting log
+        /// stream) shows the handler fired without flooding — critical for `update`,
+        /// which runs every frame, so the log is guarded by a per-handler instance flag.
+        func emitFunctionHandler(name: String, params: String, body: [String], logEvent: String) -> String {
             var lines = ["this.\(name) = function(\(params)) {"]
+            for statement in Self.handlerEntryLog(logEvent) { lines.append("    " + statement) }
             for statement in body { lines.append("    " + statement) }
             lines.append("};")
             return lines.joined(separator: "\n")
+        }
+
+        /// A ONE-TIME, instance-flag-guarded `console.log` for the entry of an event
+        /// handler body. The flag (`this.__d3_log_<event>`) makes each handler log
+        /// exactly once even when the handler runs every frame (`update`) — the log is
+        /// purely additive (no behavior change). Returns the guard's lines, indented by
+        /// the caller.
+        static func handlerEntryLog(_ event: String) -> [String] {
+            let flag = "__d3_log_\(sanitize(event))"
+            return [
+                "if (!this.\(flag)) { this.\(flag) = true; console.log(\"[D3] \(event) fired\"); }"
+            ]
+        }
+
+        /// A JS-identifier-safe rendering of an arbitrary id/name (for an instance-flag
+        /// suffix): any non-alphanumeric character becomes `_`, so the resulting flag
+        /// `this.__d3_log_<suffix>` is always a valid property name.
+        static func sanitize(_ raw: String) -> String {
+            String(raw.map { $0.isLetter || $0.isNumber ? $0 : "_" })
         }
 
         /// The canonical drag handler. Keeps the input-target + collision setup and the
@@ -206,6 +229,7 @@ public struct CanonicalScriptGraphCompiler {
             lines.append("    this.entity.generateCollisionShapes(true);")
             lines.append("    this.entity.on(RealityKit.DragGestureEvent.name, (e) => {")
             lines.append("        const event = e.event;")
+            for statement in Self.handlerEntryLog("drag") { lines.append("        " + statement) }
             for statement in body { lines.append("        " + statement) }
             lines.append("    });")
             lines.append("};")
@@ -222,6 +246,7 @@ public struct CanonicalScriptGraphCompiler {
             lines.append("    this.entity.generateCollisionShapes(true);")
             lines.append("    this.entity.on(RealityKit.TapGestureEvent.name, (e) => {")
             lines.append("        const event = e.event;")
+            for statement in Self.handlerEntryLog("tap") { lines.append("        " + statement) }
             for statement in body { lines.append("        " + statement) }
             lines.append("    });")
             lines.append("};")
@@ -283,6 +308,16 @@ public struct CanonicalScriptGraphCompiler {
                 guard let wire = dataWire(into: node.id, pin: pin) else { continue }
                 var seen: Set<String> = []
                 let expr = emitExpression(from: wire, context: context, seen: &seen)
+                // A ONE-TIME log of the property + value, guarded by a unique per-set flag
+                // so a per-frame `update` set logs exactly once. The flag suffix is the
+                // sanitized set-node id + property, so a set that writes more than one
+                // property logs each once. The assignment below stays UNGUARDED (it must
+                // run every frame); only the log is once-guarded. The value is rendered by
+                // string-concatenation (`"" + (expr)`).
+                let flag = "__d3_log_set_\(Self.sanitize(node.id))_\(property)"
+                statements.append(
+                    "if (!this.\(flag)) { this.\(flag) = true; console.log(\"[D3] set \(property) = \" + (\(expr.code))); }"
+                )
                 statements.append("\(target).\(property) = \(expr.code);")
             }
 
@@ -742,6 +777,7 @@ public struct CanonicalScriptGraphCompiler {
         let dragStart;
         this.entity.on(RealityKit.DragGestureEvent.name, (e) => {
             const event = e.event;
+            if (!this.__d3_log_drag) { this.__d3_log_drag = true; console.log("[D3] drag fired"); }
             dragStart ??= event.entity.position.clone();
             event.entity.position = Math3D.add(dragStart, event.sceneTranslation);
             if (event.phase.equals(RealityKit.DragGestureEvent.Phase.ended)) dragStart = undefined;

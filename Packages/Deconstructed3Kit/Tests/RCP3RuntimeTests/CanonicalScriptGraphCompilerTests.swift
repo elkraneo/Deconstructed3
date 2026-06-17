@@ -465,6 +465,89 @@ import RCP3Runtime
         #expect(!js.contains("this.variable_"))
     }
 
+    // MARK: - Console observability (one-time guarded logs)
+
+    /// Each event handler emits a ONE-TIME `console.log` at its body entry, guarded by a
+    /// per-handler instance flag — so the in-app console shows the handler fired without
+    /// flooding. For `update` (which runs every frame) the guard is CRITICAL: the log
+    /// must sit behind the instance flag, not run unguarded each frame.
+    @Test func updateHandlerEmitsAOnceGuardedEntryLog() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component", label: "Set Transform")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let dataWire = RCP3ScriptGraph.Wire(
+            id: "d1", from: "p", to: "s",
+            fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, set, pi], wires: [exec, dataWire], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.update = function(deltaTime)"))
+        // The entry log is guarded by a per-handler instance flag — set on first call so
+        // it can't flood on a per-frame `update`. The exact guard pattern is asserted so
+        // an unguarded `console.log("[D3] update fired")` can't slip in.
+        #expect(js.contains("if (!this.__d3_log_update) { this.__d3_log_update = true; console.log(\"[D3] update fired\"); }"))
+        // The behavior line (the transform assignment) is unchanged and stays unguarded.
+        #expect(js.contains("this.entity.position = Math.PI;"))
+    }
+
+    /// A lifecycle handler (didAdd) also emits a one-time, instance-flag-guarded entry
+    /// log, keyed by the handler name so each lifecycle hook logs exactly once.
+    @Test func lifecycleHandlerEmitsAOnceGuardedEntryLog() {
+        let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "a", to: "s")
+        let dataWire = RCP3ScriptGraph.Wire(
+            id: "d1", from: "p", to: "s",
+            fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [added, set, pi], wires: [exec, dataWire], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("if (!this.__d3_log_didAdd) { this.__d3_log_didAdd = true; console.log(\"[D3] didAdd fired\"); }"))
+    }
+
+    /// A gesture (drag) handler emits its one-time entry log inside the subscription
+    /// body, guarded by its own instance flag so a held drag logs only once.
+    @Test func dragGestureHandlerEmitsAOnceGuardedEntryLog() {
+        let js = CanonicalScriptGraphCompiler().compile(Self.dragToSetTranslationGraph())
+
+        #expect(js.contains("this.entity.on(RealityKit.DragGestureEvent.name"))
+        #expect(js.contains("if (!this.__d3_log_drag) { this.__d3_log_drag = true; console.log(\"[D3] drag fired\"); }"))
+        // The reference drag behavior is unchanged (still drives event.entity.position).
+        #expect(js.contains("event.entity.position = Math3D.add(dragStart, event.sceneTranslation)"))
+    }
+
+    /// Each `tm_set_component` Set emits a ONE-TIME log of the property + value next to
+    /// the assignment, guarded by a unique per-set instance flag — so a per-frame Set
+    /// logs its value exactly once, while the assignment itself stays UNGUARDED (runs
+    /// every frame as before).
+    @Test func setComponentEmitsAOnceGuardedValueLogNextToTheUnguardedAssignment() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component", label: "Set Transform")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let dataWire = RCP3ScriptGraph.Wire(
+            id: "d1", from: "p", to: "s",
+            fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, set, pi], wires: [exec, dataWire], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // The Set's value log is guarded by a unique per-set flag (sanitized set-node id
+        // + property), logs the property name + the value (string-concatenated), and runs
+        // exactly once even inside the per-frame `update`.
+        #expect(js.contains("if (!this.__d3_log_set_s_position) { this.__d3_log_set_s_position = true; console.log(\"[D3] set position = \" + (Math.PI)); }"))
+        // The assignment itself is NOT guarded — it must run every frame, so it appears
+        // as the bare assignment statement (on its own line), not folded into the guard.
+        #expect(js.contains("\n    this.entity.position = Math.PI;\n"))
+    }
+
     @Test func undocumentedVectorOpStaysCleanRoom() {
         // A dot-product node has no PUBLICLY-documented Math3D name, so the compiler must
         // NOT emit `Math3D.dot(...)` — it emits a plain-JS fallback with an honest note.
