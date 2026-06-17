@@ -566,4 +566,267 @@ import RCP3Runtime
         #expect(js.contains("/* unsupported: tm_math_dot (Math3D op name not public) */"))
         #expect(!js.contains("Math3D.dot"))
     }
+
+    // MARK: - Phase 0: comparisons / logic / bitwise / deg-rad / string / vector2-4
+
+    /// Builds `On Update → Set Transform.translation = <op>(<two constant inputs>)`,
+    /// wiring the op node's `a`/`b` operands from a π and an e constant and its
+    /// `result` output into the Set's translation pin. Returns the compiled JS so a
+    /// family test can assert the emitted operator without re-stating the wiring.
+    /// `resultPin` is the op node's output connector name (`result` for most nodes).
+    static func opOfTwoConstantsJS(opType: String, resultPin: String = "result") -> String {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component", label: "Set Transform")
+        let op = RCP3ScriptGraph.Node(id: "m", type: opType)
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let e = RCP3ScriptGraph.Node(id: "e", type: "tm_constant_e")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wA = RCP3ScriptGraph.Wire(
+            id: "w1", from: "p", to: "m",
+            fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("a")
+        )
+        let wB = RCP3ScriptGraph.Wire(
+            id: "w2", from: "e", to: "m",
+            fromPin: TMHash.murmur64a("E"), toPin: TMHash.murmur64a("b")
+        )
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "s",
+            fromPin: TMHash.murmur64a(resultPin), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, set, op, pi, e],
+            wires: [exec, wA, wB, wOut], data: []
+        )
+        return CanonicalScriptGraphCompiler().compile(graph)
+    }
+
+    @Test func comparisonNodesCompileToInfixComparisons() {
+        for (type, op) in [
+            ("tm_math_greater", "> "),
+            ("tm_math_greater_equal", ">= "),
+            ("tm_math_less", "< "),
+            ("tm_math_less_equal", "<= "),
+        ] {
+            let js = Self.opOfTwoConstantsJS(opType: type)
+            #expect(js.contains("(Math.PI \(op)Math.E)"))
+            #expect(!js.contains("unsupported"))
+            #expect(!js.contains("0 /*"))
+        }
+    }
+
+    @Test func withinRangeCompilesToInclusiveBoundsCheck() {
+        // val/min/max pins; val wired from π, min/max fall back to their scalar default.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let wr = RCP3ScriptGraph.Node(id: "m", type: "tm_math_within_range")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wVal = RCP3ScriptGraph.Wire(
+            id: "w1", from: "p", to: "m",
+            fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("val")
+        )
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "s",
+            fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+        )
+        // min = -1, max = 1 baked as authored literals.
+        let lo = RCP3ScriptGraph.DataLiteral(id: "l1", toNode: "m", toPin: TMHash.murmur64a("min"), scalarValue: -1)
+        let hi = RCP3ScriptGraph.DataLiteral(id: "l2", toNode: "m", toPin: TMHash.murmur64a("max"), scalarValue: 1)
+        let graph = RCP3ScriptGraph(nodes: [update, set, wr, pi], wires: [exec, wVal, wOut], data: [lo, hi])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("(Math.PI >= -1 && Math.PI <= 1)"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func randomCompilesToMathRandom() {
+        // Random's pins are `min`/`max`; wire them from constants so the ranged form
+        // reads them (and exercise the unwired fallback collapsing to the unit range).
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let rnd = RCP3ScriptGraph.Node(id: "m", type: "tm_math_random")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "s",
+            fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+        )
+        // min = 0, max = 10 baked as authored literals.
+        let lo = RCP3ScriptGraph.DataLiteral(id: "l1", toNode: "m", toPin: TMHash.murmur64a("min"), scalarValue: 0)
+        let hi = RCP3ScriptGraph.DataLiteral(id: "l2", toNode: "m", toPin: TMHash.murmur64a("max"), scalarValue: 10)
+        let graph = RCP3ScriptGraph(nodes: [update, set, rnd], wires: [exec, wOut], data: [lo, hi])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("Math.random()"))
+        #expect(js.contains("(0 + Math.random() * (10 - 0))"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func logicNodesCompileToShortCircuitOperators() {
+        let andJS = Self.opOfTwoConstantsJS(opType: "tm_and")
+        #expect(andJS.contains("(Math.PI && Math.E)"))
+        #expect(!andJS.contains("unsupported"))
+
+        let orJS = Self.opOfTwoConstantsJS(opType: "tm_or")
+        #expect(orJS.contains("(Math.PI || Math.E)"))
+        #expect(!orJS.contains("unsupported"))
+    }
+
+    @Test func variadicLogicFoldsAThirdWiredInput() {
+        // `tm_and` with a third operand pin `c` wired (variadic fold).
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let and = RCP3ScriptGraph.Node(id: "m", type: "tm_and")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let e = RCP3ScriptGraph.Node(id: "e", type: "tm_constant_e")
+        let ln2 = RCP3ScriptGraph.Node(id: "l", type: "tm_constant_ln2")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wA = RCP3ScriptGraph.Wire(id: "w1", from: "p", to: "m", fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("a"))
+        let wB = RCP3ScriptGraph.Wire(id: "w2", from: "e", to: "m", fromPin: TMHash.murmur64a("E"), toPin: TMHash.murmur64a("b"))
+        let wC = RCP3ScriptGraph.Wire(id: "w3", from: "l", to: "m", fromPin: TMHash.murmur64a("LN2"), toPin: TMHash.murmur64a("c"))
+        let wOut = RCP3ScriptGraph.Wire(id: "w4", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation"))
+        let graph = RCP3ScriptGraph(nodes: [update, set, and, pi, e, ln2], wires: [exec, wA, wB, wC, wOut], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("(Math.PI && Math.E && Math.LN2)"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func bitwiseNodesCompileToBitwiseOperators() {
+        for (type, op) in [
+            ("tm_math_bitwise_and", "&"),
+            ("tm_math_bitwise_or", "|"),
+            ("tm_math_bitwise_xor", "^"),
+        ] {
+            let js = Self.opOfTwoConstantsJS(opType: type)
+            #expect(js.contains("(Math.PI \(op) Math.E)"))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
+    @Test func bitwiseNotCompilesToTildeUnary() {
+        // Unary bitwise NOT over the `a` operand (wired from π).
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let not = RCP3ScriptGraph.Node(id: "m", type: "tm_math_bitwise_not")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wA = RCP3ScriptGraph.Wire(id: "w1", from: "p", to: "m", fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("a"))
+        let wOut = RCP3ScriptGraph.Wire(id: "w3", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation"))
+        let graph = RCP3ScriptGraph(nodes: [update, set, not, pi], wires: [exec, wA, wOut], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("(~Math.PI)"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func degRadConversionsCompileToScaledExpressions() {
+        // Degrees → Radians: input pin `degrees`.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let d2r = RCP3ScriptGraph.Node(id: "m", type: "tm_math_deg_to_rad")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wIn = RCP3ScriptGraph.Wire(id: "w1", from: "p", to: "m", fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("degrees"))
+        let wOut = RCP3ScriptGraph.Wire(id: "w3", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation"))
+        let d2rGraph = RCP3ScriptGraph(nodes: [update, set, d2r, pi], wires: [exec, wIn, wOut], data: [])
+        let d2rJS = CanonicalScriptGraphCompiler().compile(d2rGraph)
+        #expect(d2rJS.contains("* Math.PI / 180"))
+        #expect(!d2rJS.contains("unsupported"))
+
+        // Radians → Degrees: input pin `rad`.
+        let r2d = RCP3ScriptGraph.Node(id: "m2", type: "tm_math_rad_to_deg")
+        let wIn2 = RCP3ScriptGraph.Wire(id: "w4", from: "p", to: "m2", fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("rad"))
+        let wOut2 = RCP3ScriptGraph.Wire(id: "w5", from: "m2", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation"))
+        let r2dGraph = RCP3ScriptGraph(nodes: [update, set, r2d, pi], wires: [exec, wIn2, wOut2], data: [])
+        let r2dJS = CanonicalScriptGraphCompiler().compile(r2dGraph)
+        #expect(r2dJS.contains("* 180 / Math.PI"))
+        #expect(!r2dJS.contains("unsupported"))
+    }
+
+    /// Builds `On Update → Set Transform.translation = <string node>(...)` with the
+    /// `string` input wired from a variable Get (so the emitted base is a non-trivial
+    /// expression) and returns the compiled JS. The arg pins fall back to their scalar
+    /// default (the wired path is what we assert).
+    static func stringNodeJS(type: String) -> String {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let str = RCP3ScriptGraph.Node(id: "m", type: type)
+        let getVar = RCP3ScriptGraph.Node(id: "g", type: "tm_get_variable_node", variableName: "label")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wStr = RCP3ScriptGraph.Wire(
+            id: "w1", from: "g", to: "m",
+            fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("string")
+        )
+        let resultPin = type == "tm_string_length" ? "length" : "result"
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "s",
+            fromPin: TMHash.murmur64a(resultPin), toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, set, str, getVar], wires: [exec, wStr, wOut], data: [])
+        return CanonicalScriptGraphCompiler().compile(graph)
+    }
+
+    @Test func stringPredicatesAndAccessorsCompileToJSStringOps() {
+        #expect(Self.stringNodeJS(type: "tm_string_has_prefix").contains(".startsWith("))
+        #expect(Self.stringNodeJS(type: "tm_string_has_suffix").contains(".endsWith("))
+        #expect(Self.stringNodeJS(type: "tm_string_contains").contains(".includes("))
+        #expect(Self.stringNodeJS(type: "tm_string_length").contains(".length"))
+        #expect(Self.stringNodeJS(type: "tm_string_prefix").contains(".slice(0, "))
+        #expect(Self.stringNodeJS(type: "tm_string_suffix").contains(".slice(-("))
+        #expect(Self.stringNodeJS(type: "tm_string_substring").contains(".substring("))
+        // None of these wired-string paths fall through to the unsupported fallback.
+        for type in [
+            "tm_string_has_prefix", "tm_string_has_suffix", "tm_string_contains",
+            "tm_string_length", "tm_string_prefix", "tm_string_suffix", "tm_string_substring",
+        ] {
+            #expect(!Self.stringNodeJS(type: type).contains("unsupported: \(type)"))
+        }
+    }
+
+    @Test func makeVector2CompilesToMath3DVector2() {
+        // On Update → Set.translation = Vector2(2.5, <unwired y → 0>).
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector2")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "v", to: "s",
+            fromPin: TMHash.murmur64a("vec2"), toPin: TMHash.murmur64a("translation")
+        )
+        let xLiteral = RCP3ScriptGraph.DataLiteral(id: "lx", toNode: "v", toPin: TMHash.murmur64a("x"), scalarValue: 2.5)
+        let graph = RCP3ScriptGraph(nodes: [update, set, vec], wires: [exec, wOut], data: [xLiteral])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("new Math3D.Vector2(2.5, 0 /* y unwired */)"))
+        #expect(js.contains("this.entity.position = new Math3D.Vector2("))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func makeVector4CompilesToMath3DVector4() {
+        // On Update → Set.translation = Vector4(1, <y→0>, <z→0>, 4) with x/w authored.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector4")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "v", to: "s",
+            fromPin: TMHash.murmur64a("vector"), toPin: TMHash.murmur64a("translation")
+        )
+        let xLiteral = RCP3ScriptGraph.DataLiteral(id: "lx", toNode: "v", toPin: TMHash.murmur64a("x"), scalarValue: 1)
+        let wLiteral = RCP3ScriptGraph.DataLiteral(id: "lw", toNode: "v", toPin: TMHash.murmur64a("w"), scalarValue: 4)
+        let graph = RCP3ScriptGraph(nodes: [update, set, vec], wires: [exec, wOut], data: [xLiteral, wLiteral])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("new Math3D.Vector4(1, 0 /* y unwired */, 0 /* z unwired */, 4)"))
+        #expect(js.contains("this.entity.position = new Math3D.Vector4("))
+        #expect(!js.contains("unsupported"))
+    }
 }

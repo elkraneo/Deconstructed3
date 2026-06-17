@@ -471,6 +471,74 @@ public struct CanonicalScriptGraphCompiler {
                 return emitBinaryMath(node.type, op: op, a: a, b: b)
             }
 
+            // Comparison nodes (scalar → bool). The library names the operands `a`/`b`
+            // and the output `result`; we lower to the obvious infix comparison. Result
+            // is a scalar (boolean).
+            if let cmp = Self.comparisonOperator(for: node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                return Expr("(\(a.code) \(cmp) \(b.code))")
+            }
+
+            // Within-range (scalar → bool). The library's pins are `val`/`min`/`max`.
+            // Implemented as the obvious INCLUSIVE form `(val >= min && val <= max)`
+            // (best-effort: the inclusive/exclusive boundary semantics are not pinned
+            // down by the library).
+            if node.type == "tm_math_within_range" {
+                let v = inputExpression(into: node, pinName: "val", context: context, seen: &seen)
+                let lo = inputExpression(into: node, pinName: "min", context: context, seen: &seen)
+                let hi = inputExpression(into: node, pinName: "max", context: context, seen: &seen)
+                return Expr("(\(v.code) >= \(lo.code) && \(v.code) <= \(hi.code))")
+            }
+
+            // Random (scalar). The library declares `min`/`max` pins, so we emit the
+            // ranged form `min + Math.random() * (max - min)`; when neither is wired the
+            // operands fall back to 0, collapsing to the unit `Math.random()` range.
+            // (Best-effort: the exact inclusivity / distribution isn't pinned down.)
+            if node.type == "tm_math_random" {
+                let lo = inputExpression(into: node, pinName: "min", context: context, seen: &seen)
+                let hi = inputExpression(into: node, pinName: "max", context: context, seen: &seen)
+                return Expr("(\(lo.code) + Math.random() * (\(hi.code) - \(lo.code)))")
+            }
+
+            // Logic reducers (→ bool). Variadic (`a`, `b`, `c`, …); fold all wired/seeded
+            // operand pins with the same operator. The library seeds `a`/`b`; we also fold
+            // any further single-letter operand pins that carry a wire or literal.
+            if let logic = Self.logicOperator(for: node.type) {
+                let operands = logicOperands(of: node, context: context, seen: &seen)
+                return Expr("(\(operands.joined(separator: " \(logic) ")))")
+            }
+
+            // Bitwise binary (scalar). Operands `a`/`b`, infix bitwise operator.
+            if let bit = Self.bitwiseBinaryOperator(for: node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                return Expr("(\(a.code) \(bit) \(b.code))")
+            }
+
+            // Bitwise NOT (unary, scalar). Operand `a`.
+            if node.type == "tm_math_bitwise_not" {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                return Expr("(~\(a.code))")
+            }
+
+            // Degree/radian conversion (scalar). The library names the input `degrees`
+            // (deg→rad) / `rad` (rad→deg).
+            if node.type == "tm_math_deg_to_rad" {
+                let x = inputExpression(into: node, pinName: "degrees", context: context, seen: &seen)
+                return Expr("((\(x.code)) * Math.PI / 180)")
+            }
+            if node.type == "tm_math_rad_to_deg" {
+                let x = inputExpression(into: node, pinName: "rad", context: context, seen: &seen)
+                return Expr("((\(x.code)) * 180 / Math.PI)")
+            }
+
+            // String predicates / accessors (→ bool / number / string). The library's
+            // first input pin is `string`; the arg pin name varies by node.
+            if let stringExpr = emitStringExpression(node, context: context, seen: &seen) {
+                return stringExpr
+            }
+
             // Vector constructors are the canonical VECTOR leaf.
             if node.type == "tm_make_vector3" {
                 usesMath3D = true
@@ -478,6 +546,23 @@ public struct CanonicalScriptGraphCompiler {
                 let y = inputExpression(into: node, pinName: "y", context: context, seen: &seen)
                 let z = inputExpression(into: node, pinName: "z", context: context, seen: &seen)
                 return Expr("new Math3D.Vector3(\(x.code), \(y.code), \(z.code))", isVector: true)
+            }
+
+            // Vector2 / Vector4 constructors mirror Vector3: component pins with a
+            // scalar-literal `?? default` fallback for unwired components, typed VECTOR.
+            if node.type == "tm_make_vector2" {
+                usesMath3D = true
+                let x = inputExpression(into: node, pinName: "x", context: context, seen: &seen)
+                let y = inputExpression(into: node, pinName: "y", context: context, seen: &seen)
+                return Expr("new Math3D.Vector2(\(x.code), \(y.code))", isVector: true)
+            }
+            if node.type == "tm_make_vector4" {
+                usesMath3D = true
+                let x = inputExpression(into: node, pinName: "x", context: context, seen: &seen)
+                let y = inputExpression(into: node, pinName: "y", context: context, seen: &seen)
+                let z = inputExpression(into: node, pinName: "z", context: context, seen: &seen)
+                let w = inputExpression(into: node, pinName: "w", context: context, seen: &seen)
+                return Expr("new Math3D.Vector4(\(x.code), \(y.code), \(z.code), \(w.code))", isVector: true)
             }
 
             // Vector ops whose Math3D names are NOT publicly documented: keep clean-room
@@ -696,6 +781,101 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_math_max": return .mathCall("Math.max")
             case "tm_math_pow": return .mathCall("Math.pow")
             default: return nil
+            }
+        }
+
+        /// Comparison nodes → the infix JS comparison operator (scalar → boolean).
+        /// `nil` if not a comparison node.
+        static func comparisonOperator(for type: String) -> String? {
+            switch type {
+            case "tm_math_greater": return ">"
+            case "tm_math_greater_equal": return ">="
+            case "tm_math_less": return "<"
+            case "tm_math_less_equal": return "<="
+            default: return nil
+            }
+        }
+
+        /// Logic reducer nodes → the infix JS logical operator (→ boolean). `nil`
+        /// otherwise.
+        static func logicOperator(for type: String) -> String? {
+            switch type {
+            case "tm_and": return "&&"
+            case "tm_or": return "||"
+            default: return nil
+            }
+        }
+
+        /// Bitwise BINARY nodes → the infix JS bitwise operator (scalar). `nil` for the
+        /// unary `_not` (handled separately) and non-bitwise nodes.
+        static func bitwiseBinaryOperator(for type: String) -> String? {
+            switch type {
+            case "tm_math_bitwise_and": return "&"
+            case "tm_math_bitwise_or": return "|"
+            case "tm_math_bitwise_xor": return "^"
+            default: return nil
+            }
+        }
+
+        /// The operand expressions of a variadic logic node (`tm_and` / `tm_or`). The
+        /// library seeds the `a`/`b` pins; on disk a node may carry more (`c`, `d`, …).
+        /// We always emit `a`/`b`, then fold any further single-letter operand pin that
+        /// actually carries a wire or a baked scalar literal, in alphabetical order.
+        mutating func logicOperands(
+            of node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> [String] {
+            var operands: [String] = [
+                inputExpression(into: node, pinName: "a", context: context, seen: &seen).code,
+                inputExpression(into: node, pinName: "b", context: context, seen: &seen).code,
+            ]
+            // Fold any additional connected operand pins (c, d, …) present in the graph.
+            for letter in "cdefghijklmnopqrstuvwxyz" {
+                let name = String(letter)
+                let pin = TMHash.murmur64a(name)
+                let hasWire = dataWire(into: node.id, pin: pin) != nil
+                let hasLiteral = graph.scalarLiteral(node: node.id, pin: pin) != nil
+                guard hasWire || hasLiteral else { continue }
+                operands.append(inputExpression(into: node, pinName: name, context: context, seen: &seen).code)
+            }
+            return operands
+        }
+
+        /// String predicate / accessor nodes → plain-JS string expressions (scalar:
+        /// boolean / number / string). The first input pin is always `string`; the arg
+        /// pin name follows the library. Returns `nil` if `node` is not a string node.
+        mutating func emitStringExpression(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> Expr? {
+            func arg(_ pinName: String) -> String {
+                inputExpression(into: node, pinName: pinName, context: context, seen: &seen).code
+            }
+            switch node.type {
+            case "tm_string_has_prefix":
+                return Expr("(\(arg("string"))).startsWith(\(arg("prefix")))")
+            case "tm_string_has_suffix":
+                return Expr("(\(arg("string"))).endsWith(\(arg("suffix")))")
+            case "tm_string_contains":
+                return Expr("(\(arg("string"))).includes(\(arg("substring")))")
+            case "tm_string_length":
+                return Expr("(\(arg("string"))).length")
+            case "tm_string_prefix":
+                // The first `length` characters.
+                return Expr("(\(arg("string"))).slice(0, \(arg("length")))")
+            case "tm_string_suffix":
+                // The last `length` characters.
+                return Expr("(\(arg("string"))).slice(-(\(arg("length"))))")
+            case "tm_string_substring":
+                // `length` characters starting at `index`.
+                let s = arg("string")
+                let index = arg("index")
+                let length = arg("length")
+                return Expr("(\(s)).substring(\(index), (\(index)) + (\(length)))")
+            default:
+                return nil
             }
         }
 
