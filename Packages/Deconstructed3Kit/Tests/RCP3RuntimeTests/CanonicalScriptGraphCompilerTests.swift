@@ -390,6 +390,50 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    /// The READ path feeds emission: a variable node whose `variableName` was parsed
+    /// from an on-disk `tm_graph_variable_ref` (here "Name1") compiles to the same
+    /// `variable_<MurmurHash64A(lowercase(name))>` slot (lowercased, so "name1").
+    @Test func variableNameLoadedFromDiskCompilesToLowercasedSlot() throws {
+        // A minimal graph with a Get variable node carrying a `tm_graph_variable_ref`
+        // on the murmur64a("name") connector — exactly the on-disk serialization.
+        let nameHex = TMHash.hex(TMHash.murmur64a("name"))
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "root"
+        graph: {
+        \t__uuid: "g"
+        \tnodes: [
+        \t\t{ __uuid: "a" type: "tm_did_add" position: { __uuid: "pa" x: 0 y: 0 } }
+        \t\t{ __uuid: "set" type: "tm_set_variable_node" position: { __uuid: "ps" x: 100 y: 0 } }
+        \t]
+        \tconnections: [ { __uuid: "e1" from_node: "a" to_node: "set" } ]
+        \tdata: [
+        \t\t{
+        \t\t\t__uuid: "d1"
+        \t\t\tto_node: "set"
+        \t\t\tto_connector_hash: "\(nameHex)"
+        \t\t\tdata: { __type: "tm_graph_variable_ref" __uuid: "v1" ref: "var-uuid" name: "Name1" }
+        \t\t}
+        \t]
+        \tvariables: [ { __uuid: "var-uuid" name: "Name1" } ]
+        }
+        """
+        let root = try #require(try TM.parse(text).objectValue)
+        let tmGraph = try #require(root["graph"]?.objectValue)
+        let graph = RCP3ScriptGraph(tmGraph: tmGraph)
+
+        // The read path attached the name to the node (not a leaked data literal).
+        #expect(graph.nodes.first { $0.id == "set" }?.variableName == "Name1")
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // The compile slot lowercases the name → MurmurHash64A("name1").
+        let slot = "variable_\(TMHash.murmur64a("name1"))"
+        #expect(js.contains("this.\(slot) = "))
+        #expect(!js.contains("variable name unresolved"))
+        #expect(!js.contains("RemoteValue"))
+    }
+
     /// A variable node with NO `variableName` (the on-disk reference isn't resolvable
     /// from the wire graph yet) falls back to the honest placeholder without crashing.
     @Test func variableNodeWithoutNameFallsBackWithoutCrashing() {

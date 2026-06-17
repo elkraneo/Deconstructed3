@@ -538,6 +538,12 @@ struct NodeInspectorView: View {
                 LabeledContent("Node", value: title)
             }
 
+            if model.isVariableNode(nodeID) {
+                Section("Variable") {
+                    VariableRow(model: model, nodeID: nodeID)
+                }
+            }
+
             let literals = model.editableLiterals(forNode: nodeID)
             if literals.isEmpty {
                 Section("Inputs") {
@@ -555,6 +561,47 @@ struct NodeInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(model.node(nodeID)?.payload.title ?? "Node")
+    }
+}
+
+/// The Variable row for a Get/Set/Clear variable node: a text field bound to the
+/// node's referenced variable name, with a menu of the graph's declared variables
+/// for quick reuse. Editing writes through ``ScriptGraphEditorModel/setVariableName(nodeID:name:)``,
+/// which declares a new variable when the name isn't in the table yet; write-back
+/// then persists the `tm_graph_variable_ref` + the `variables:` table on Save.
+private struct VariableRow: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    private var name: Binding<String> {
+        Binding(
+            get: { model.variableName(nodeID: nodeID) ?? "" },
+            set: { model.setVariableName(nodeID: nodeID, name: $0) }
+        )
+    }
+
+    var body: some View {
+        LabeledContent("Name") {
+            HStack(spacing: 8) {
+                TextField("Variable name", text: name)
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 160)
+                    .accessibilityLabel("Variable name")
+                if !model.variableNamesInOrder.isEmpty {
+                    Menu {
+                        ForEach(model.variableNamesInOrder, id: \.self) { declared in
+                            Button(declared) { model.setVariableName(nodeID: nodeID, name: declared) }
+                        }
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .accessibilityLabel("Choose a declared variable")
+                }
+            }
+        }
     }
 }
 

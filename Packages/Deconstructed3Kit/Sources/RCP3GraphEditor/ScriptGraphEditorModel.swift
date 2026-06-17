@@ -124,6 +124,19 @@ public final class ScriptGraphEditorModel {
     /// value is reflected in Play.
     public private(set) var scalarLiterals: [LiteralKey: Double]
 
+    /// The graph-level variable table (`variables:`), keyed for round-trip by `uuid`.
+    /// Seeded from the source graph; grown by ``setVariableName(nodeID:name:)`` when a
+    /// node names a variable not yet declared. Empty when the graph declares none, so
+    /// write-back emits no `variables:` for graphs that never had any.
+    public private(set) var variables: [RCP3ScriptGraph.Variable]
+
+    /// Per-node variable reference, keyed by the variable node's `__uuid`: the name of
+    /// the script-graph variable a `tm_get/set/clear_variable_node` references. The
+    /// editor's writable mirror of the on-disk `tm_graph_variable_ref` data literal.
+    /// Seeded from the source graph's nodes; updated by ``setVariableName(nodeID:name:)``;
+    /// folded back into `data[]` + `variables:` by ``ScriptGraphWriteBack``.
+    public private(set) var variableNames: [String: String]
+
     /// The selected node, if any.
     public var selectedNodeID: String?
     /// The selected connection, if any.
@@ -182,6 +195,14 @@ public final class ScriptGraphEditorModel {
             }
         }
         scalarLiterals = seeded
+
+        // Seed the variable table and the per-node variable references from the graph.
+        variables = graph.variables
+        var names: [String: String] = [:]
+        for node in graph.nodes {
+            if let name = node.variableName { names[node.id] = name }
+        }
+        variableNames = names
     }
 
     static let fallbackLaneSpacing: Double = 320
@@ -305,6 +326,49 @@ public final class ScriptGraphEditorModel {
         scalarConnectorHashes.contains(hash)
     }
 
+    // MARK: Variable nodes (name a graph variable)
+
+    /// The node types that reference a script-graph variable by name (Get/Set/Clear,
+    /// local + remote). For these the inspector offers a Variable name field.
+    public static let variableNodeTypes: Set<String> = [
+        "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node",
+        "tm_get_remote_variable_node", "tm_set_remote_variable_node", "tm_clear_remote_variable_node",
+    ]
+
+    /// Whether node `id` references a script-graph variable (so the inspector shows the
+    /// Variable row). `false` for an unknown id or a non-variable node.
+    public func isVariableNode(_ id: String) -> Bool {
+        guard let box = node(id) else { return false }
+        return Self.variableNodeTypes.contains(box.payload.type)
+    }
+
+    /// The name of the variable node `id` references, or `nil` when none is set.
+    public func variableName(nodeID: String) -> String? { variableNames[nodeID] }
+
+    /// The declared variable names, in table order — the picker's choices.
+    public var variableNamesInOrder: [String] { variables.map(\.name) }
+
+    /// Sets (or clears) the variable a node references by name. A non-empty name that
+    /// isn't already declared is appended to the variable table with a fresh `__uuid`
+    /// (matching it case-insensitively to an existing entry first, since the compile
+    /// slot is name-case-insensitive). Passing `nil` or an empty name clears the
+    /// node's reference. Mutating the model marks it changed; write-back then folds
+    /// the reference into `data[]` and the `variables:` table.
+    public func setVariableName(nodeID: String, name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty else {
+            variableNames.removeValue(forKey: nodeID)
+            return
+        }
+        variableNames[nodeID] = trimmed
+        // Declare the variable in the table if it isn't there yet (case-insensitive,
+        // since the compile slot lowercases the name).
+        let exists = variables.contains { $0.name.lowercased() == trimmed.lowercased() }
+        if !exists {
+            variables.append(RCP3ScriptGraph.Variable(uuid: UUID().uuidString, name: trimmed))
+        }
+    }
+
     // MARK: Node movement (position is renderer-space-agnostic data)
 
     public func moveNode(_ id: String, to position: CGPoint) {
@@ -393,6 +457,9 @@ public final class ScriptGraphEditorModel {
             // Drop any authored literals bound to the deleted node (they can no longer
             // apply, mirroring write-back's pruning of `data[]` for deleted nodes).
             scalarLiterals = scalarLiterals.filter { $0.key.nodeID != id }
+            // Drop the deleted node's variable reference too (the table entry stays —
+            // a declared variable can outlive its nodes).
+            variableNames.removeValue(forKey: id)
             selectedNodeID = nil
         }
     }

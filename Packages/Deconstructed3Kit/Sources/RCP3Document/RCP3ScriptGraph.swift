@@ -30,19 +30,46 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// `CanonicalScriptGraphCompiler`); `nil` for non-variable nodes (the default,
         /// so all existing call sites compile unchanged).
         ///
-        /// This is the **in-memory** reference only. The **on-disk `.tm_` round-trip**
-        /// of this field is DEFERRED — it needs a captured `.tm_` graph that uses a
-        /// variable to lock the byte layout of the `tm_graph_variable_ref` settings
-        /// field, so it is intentionally NOT wired into the parser/writer here.
-        public let variableName: String?
+        /// On disk the reference rides on the node's `name` input connector
+        /// (`murmur64a("name")`) as a `tm_graph_variable_ref` data literal pointing at
+        /// the graph-level ``RCP3ScriptGraph/variables`` table by `ref` (uuid) and
+        /// denormalizing the `name`. The parser reads it into this field; the editor's
+        /// write-back re-emits it (see `ScriptGraphWriteBack`).
+        public var variableName: String?
 
-        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil) {
+        /// For a variable node, the `__uuid` of the ``Variable`` table entry its
+        /// on-disk `tm_graph_variable_ref` pointed at (`ref`), preserved so write-back
+        /// can re-emit the reference against a stable variable identity. `nil` for a
+        /// non-variable node or a name set in-memory with no resolved table entry yet.
+        public var variableRefUUID: String?
+
+        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil) {
             self.id = id
             self.type = type
             self.label = label
             self.x = x
             self.y = y
             self.variableName = variableName
+            self.variableRefUUID = variableRefUUID
+        }
+    }
+
+    /// A declared script-graph variable: one entry of the graph-level `variables:`
+    /// table. The fixture's table is **name-only** (`{ __uuid, name }`); a type and a
+    /// default presumably appear once set, but are not modeled here yet. The variable
+    /// node's `tm_graph_variable_ref` resolves against this table by `ref == uuid`.
+    public struct Variable: Equatable, Sendable, Identifiable {
+        /// The variable's `__uuid` (what a node's `tm_graph_variable_ref.ref` points at).
+        public let uuid: String
+        /// The author-given variable name (e.g. `"Name1"`). The compile slot derives
+        /// from `MurmurHash64A(lowercase(name))`.
+        public let name: String
+
+        public var id: String { uuid }
+
+        public init(uuid: String, name: String) {
+            self.uuid = uuid
+            self.name = name
         }
     }
 
@@ -107,11 +134,19 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     public let nodes: [Node]
     public let wires: [Wire]
     public let data: [DataLiteral]
+    /// The graph-level variable table (`variables:`). Empty for a graph that declares
+    /// no variables — so existing graphs are unaffected.
+    public let variables: [Variable]
 
-    public init(nodes: [Node], wires: [Wire], data: [DataLiteral]) {
+    /// The murmur64a hash of the `name` connector that a variable node's
+    /// `tm_graph_variable_ref` literal binds to (observed as `d4c943cba60c270b`).
+    public static let variableNameConnectorHash: UInt64 = TMHash.murmur64a("name")
+
+    public init(nodes: [Node], wires: [Wire], data: [DataLiteral], variables: [Variable] = []) {
         self.nodes = nodes
         self.wires = wires
         self.data = data
+        self.variables = variables
     }
 
     /// Parses a `tm_graph` object (the `graph` member of a
@@ -172,7 +207,13 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             ))
         }
 
-        nodes = parsedNodes
+        // The graph-level variable table (`variables: [{ __uuid, name }]`). Absent on a
+        // graph that declares no variables → an empty table (existing graphs unaffected).
+        variables = (tmGraph["variables"]?.arrayValue ?? []).compactMap { value in
+            guard let object = value.objectValue, let uuid = object.uuid, let name = object.name
+            else { return nil }
+            return Variable(uuid: uuid, name: name)
+        }
 
         wires = (tmGraph["connections"]?.arrayValue ?? []).compactMap { value in
             guard
@@ -189,15 +230,28 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             )
         }
 
-        data = (tmGraph["data"]?.arrayValue ?? []).compactMap { value in
+        // Collect `[nodeUUID: (name, refUUID)]` for any `tm_graph_variable_ref` literal
+        // so the variable name lands on the node (NOT surfaced as a scalar/component
+        // data literal). All other literals become `DataLiteral`s as before.
+        var variableRefByNode: [String: (name: String, ref: String?)] = [:]
+        var parsedData: [DataLiteral] = []
+        for value in tmGraph["data"]?.arrayValue ?? [] {
             guard
                 let object = value.objectValue,
                 let toNode = object["to_node"]?.stringValue,
                 let pinHex = object["to_connector_hash"]?.stringValue,
                 let toPin = UInt64(pinHex, radix: 16)
-            else { return nil }
+            else { continue }
             let valueObject = object["data"]?.objectValue
-            return DataLiteral(
+
+            // A variable reference: attach its `name`/`ref` to `to_node`, don't surface
+            // it as a literal (it isn't a scalar/component the inspector/compiler reads).
+            if valueObject?.type == "tm_graph_variable_ref", let name = valueObject?.name {
+                variableRefByNode[toNode] = (name, valueObject?["ref"]?.stringValue)
+                continue
+            }
+
+            parsedData.append(DataLiteral(
                 id: object.uuid ?? "\(toNode)#\(pinHex)",
                 toNode: toNode,
                 toPin: toPin,
@@ -209,8 +263,21 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 // member (`data: { value: <number> }`) — what the editor authors and
                 // the compiler reads back for an unwired numeric pin.
                 scalarValue: valueObject?["value"]?.doubleValue
-            )
+            ))
         }
+        data = parsedData
+
+        // Fold the resolved variable references onto their nodes.
+        if !variableRefByNode.isEmpty {
+            for index in parsedNodes.indices {
+                if let ref = variableRefByNode[parsedNodes[index].id] {
+                    parsedNodes[index].variableName = ref.name
+                    parsedNodes[index].variableRefUUID = ref.ref
+                }
+            }
+        }
+
+        nodes = parsedNodes
     }
 
     // MARK: Pin-name resolution

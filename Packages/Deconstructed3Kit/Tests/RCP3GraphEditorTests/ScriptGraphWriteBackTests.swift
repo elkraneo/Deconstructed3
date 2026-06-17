@@ -510,4 +510,172 @@ import RCP3Document
             try ScriptGraphWriteBack.write(model: model, toAssetWithRootUUID: "nope", in: tmp)
         }
     }
+
+    // MARK: - Variable round-trip + authoring
+
+    /// Walk-up resolver for the `Random2` capture's standalone `My Script Graph`
+    /// (a graph that uses variables). No-ops cleanly when the capture is absent.
+    /// Note the SPACE in the file name.
+    static func myScriptGraphAsset() throws -> (asset: TMObject, graph: RCP3ScriptGraph)? {
+        var dir = URL(filePath: #filePath).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let file = dir.appending(path: "references/Random2.realitycomposerpro/My Script Graph.tm_script_graph")
+            if FileManager.default.fileExists(atPath: file.path) {
+                let text = try String(contentsOf: file, encoding: .utf8)
+                let asset = try #require(try TM.parse(text).objectValue)
+                let tmGraph = try #require(asset["graph"]?.objectValue)
+                return (asset, RCP3ScriptGraph(tmGraph: tmGraph))
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Parse → write-back → re-parse of the real variable-using graph reproduces the
+    /// variable table (stable uuids) + each variable node's `variableName`, and the
+    /// `tm_graph_variable_ref` entries land on the `murmur64a("name")` connector.
+    @Test func variableGraphRoundTrips() throws {
+        guard let (asset, graph) = try Self.myScriptGraphAsset() else { return } // capture absent
+        let model = ScriptGraphEditorModel(graph: graph)
+
+        // Sanity: the model seeded the table + per-node names from disk.
+        #expect(model.variables.map(\.name) == ["Name1"])
+        #expect(model.variableNames.values.allSatisfy { $0 == "Name1" })
+        let originalVariableUUID = try #require(model.variables.first?.uuid)
+
+        // Write back WITHOUT changing anything → re-parse.
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+        let graph2 = RCP3ScriptGraph(tmGraph: tmGraph)
+
+        // The variable table survived with its name + uuid (stable).
+        #expect(graph2.variables.map(\.name) == ["Name1"])
+        #expect(graph2.variables.first?.uuid == originalVariableUUID)
+
+        // Each variable node still references "Name1".
+        let varNodes2 = graph2.nodes.filter {
+            $0.type == "tm_get_variable_node" || $0.type == "tm_set_variable_node"
+        }
+        #expect(varNodes2.count == 3)
+        #expect(varNodes2.allSatisfy { $0.variableName == "Name1" })
+        #expect(varNodes2.allSatisfy { $0.variableRefUUID == originalVariableUUID })
+
+        // The `tm_graph_variable_ref` entries are on the murmur64a("name") connector,
+        // and point at the table entry by `ref`.
+        let nameHash = RCP3ScriptGraph.variableNameConnectorHash
+        let refEntries = (tmGraph["data"]?.arrayValue ?? []).compactMap(\.objectValue)
+            .filter { $0["data"]?.objectValue?.type == "tm_graph_variable_ref" }
+        #expect(refEntries.count == 3)
+        for entry in refEntries {
+            let connectorHex = try #require(entry["to_connector_hash"]?.stringValue)
+            #expect(UInt64(connectorHex, radix: 16) == nameHash)
+            #expect(entry["data"]?.objectValue?["ref"]?.stringValue == originalVariableUUID)
+            #expect(entry["data"]?.objectValue?["name"]?.stringValue == "Name1")
+        }
+
+        // The per-node ref entry uuids are preserved across the in-place rewrite.
+        let originalRefUUIDs = Set(
+            (asset["graph"]?.objectValue?["data"]?.arrayValue ?? []).compactMap(\.objectValue)
+                .filter { $0["data"]?.objectValue?.type == "tm_graph_variable_ref" }
+                .compactMap(\.uuid)
+        )
+        #expect(Set(refEntries.compactMap(\.uuid)) == originalRefUUIDs)
+    }
+
+    /// A hand-built graph with NO variables writes NO `variables:` member and NO
+    /// `tm_graph_variable_ref` entries (don't regress existing fixtures).
+    @Test func graphWithoutVariablesWritesNoVariableTable() throws {
+        let asset = try Self.handBuiltAsset()
+        let model = try Self.model(for: asset)
+        #expect(model.variables.isEmpty)
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+        #expect(tmGraph["variables"] == nil)
+        #expect(!(tmGraph["data"]?.arrayValue ?? []).contains {
+            $0.objectValue?["data"]?.objectValue?.type == "tm_graph_variable_ref"
+        })
+    }
+
+    /// A hand-built deterministic graph with two variable nodes, exercising authoring
+    /// from scratch: naming a variable on a node declares it in the table and emits a
+    /// `tm_graph_variable_ref` on the `name` connector; both Get + Set sharing a name
+    /// reuse the single table entry.
+    static func variableNodesAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "root-uuid"
+        graph: {
+        \t__uuid: "graph-uuid"
+        \tnodes: [
+        \t\t{
+        \t\t\t__uuid: "get1"
+        \t\t\ttype: "tm_get_variable_node"
+        \t\t\tposition: { __uuid: "pg" x: 0 y: 0 }
+        \t\t}
+        \t\t{
+        \t\t\t__uuid: "set1"
+        \t\t\ttype: "tm_set_variable_node"
+        \t\t\tposition: { __uuid: "ps" x: 100 y: 0 }
+        \t\t}
+        \t]
+        \tconnections: []
+        \tdata: []
+        }
+        __asset_uuid: "asset-uuid"
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    /// Setting a variable name via the inspector verb updates the node and (when new)
+    /// declares it in the table; write-back emits the ref + the `variables:` table; a
+    /// fresh model re-seeds the same name. Two nodes sharing a name reuse one entry.
+    @Test func authoringVariableNameDeclaresAndRoundTrips() throws {
+        let asset = try Self.variableNodesAsset()
+        let model = try Self.model(for: asset)
+        #expect(model.isVariableNode("get1"))
+        #expect(model.isVariableNode("set1"))
+
+        // Author the SAME variable on both nodes — declared once in the table.
+        model.setVariableName(nodeID: "get1", name: "Score")
+        model.setVariableName(nodeID: "set1", name: "Score")
+        #expect(model.variables.map(\.name) == ["Score"])
+        #expect(model.variableName(nodeID: "get1") == "Score")
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+        let graph2 = RCP3ScriptGraph(tmGraph: tmGraph)
+
+        // One table entry, two ref entries (one per node), both pointing at it.
+        #expect(graph2.variables.map(\.name) == ["Score"])
+        let varUUID = try #require(graph2.variables.first?.uuid)
+        let varNodes = graph2.nodes.filter { $0.variableName != nil }
+        #expect(varNodes.count == 2)
+        #expect(varNodes.allSatisfy { $0.variableName == "Score" })
+        #expect(varNodes.allSatisfy { $0.variableRefUUID == varUUID })
+
+        // The refs are on the murmur64a("name") connector.
+        let nameHash = RCP3ScriptGraph.variableNameConnectorHash
+        let refEntries = (tmGraph["data"]?.arrayValue ?? []).compactMap(\.objectValue)
+            .filter { $0["data"]?.objectValue?.type == "tm_graph_variable_ref" }
+        #expect(refEntries.count == 2)
+        #expect(refEntries.allSatisfy { UInt64($0["to_connector_hash"]?.stringValue ?? "", radix: 16) == nameHash })
+
+        // A fresh model re-seeds the authored name.
+        let reloaded = ScriptGraphEditorModel(graph: graph2)
+        #expect(reloaded.variableName(nodeID: "get1") == "Score")
+        #expect(reloaded.variableName(nodeID: "set1") == "Score")
+
+        // CLEARING one node's name drops only its ref; the table entry survives.
+        reloaded.setVariableName(nodeID: "get1", name: nil)
+        let clearWrite = ScriptGraphWriteBack.patched(asset: reparsed, with: reloaded)
+        let clearRoot = try #require(try TM.parse(clearWrite.tmText()).objectValue)
+        let clearGraph = RCP3ScriptGraph(tmGraph: try #require(clearRoot["graph"]?.objectValue))
+        #expect(clearGraph.nodes.first { $0.id == "get1" }?.variableName == nil)
+        #expect(clearGraph.nodes.first { $0.id == "set1" }?.variableName == "Score")
+        #expect(clearGraph.variables.map(\.name) == ["Score"]) // table entry retained
+    }
 }

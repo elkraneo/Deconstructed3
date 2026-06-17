@@ -124,6 +124,42 @@ import RCP3Document
         #expect(!graph.nodes.contains { $0.type == "?" })
     }
 
+    /// The `Random2` standalone graph uses script-graph variables: its `variables:`
+    /// table declares `Name1`, and its Get/Set variable nodes reference it via
+    /// `tm_graph_variable_ref`. The parser surfaces the table on the graph and attaches
+    /// `variableName` to each variable node — and does NOT leak the ref as a scalar/
+    /// component data literal.
+    @Test func random2VariableTableAndNodeReferencesParse() throws {
+        guard let url = Self.random2BundleURL else { return } // capture not present
+        let bundle = try RCP3Bundle.open(url)
+
+        let asset = try #require(
+            bundle.scriptGraphAssets().first { $0.name.contains("My Script Graph") }
+        )
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+
+        // The graph-level variable table declares one variable, "Name1".
+        #expect(graph.variables.map(\.name) == ["Name1"])
+        let variable = try #require(graph.variables.first)
+        #expect(!variable.uuid.isEmpty)
+
+        // The fixture has 3 variable nodes (2 Get + 1 Set), each referencing "Name1".
+        let variableNodes = graph.nodes.filter {
+            $0.type == "tm_get_variable_node" || $0.type == "tm_set_variable_node"
+        }
+        #expect(variableNodes.count == 3)
+        #expect(variableNodes.allSatisfy { $0.variableName == "Name1" })
+        // Each ref points back at the table entry's uuid.
+        #expect(variableNodes.allSatisfy { $0.variableRefUUID == variable.uuid })
+
+        // The `tm_graph_variable_ref` literals are NOT surfaced as scalar/component
+        // data literals (they live on `variableName`, not in `data`).
+        #expect(!graph.data.contains { $0.valueType == "tm_graph_variable_ref" })
+        // No variable node carries a leaked scalar on its `name` connector.
+        let nameHash = RCP3ScriptGraph.variableNameConnectorHash
+        #expect(!graph.data.contains { $0.toPin == nameHash })
+    }
+
     // MARK: Browse script graphs as assets (independent of any entity)
 
     @Test func enumeratesScriptGraphAssets() throws {

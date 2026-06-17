@@ -78,11 +78,42 @@ public enum ScriptGraphWriteBack {
         graph.set(.array(newConnections), forKey: "connections")
 
         // Preserve `data`, dropping literals whose target node was deleted, then fold
-        // in the model's authored scalar literals (update / drop / append).
+        // in the model's authored scalar literals + variable references (update/drop/append).
         let existingData = graph["data"]?.arrayValue ?? []
         graph.set(.array(patchedData(existingData, model: model, liveIDs: liveIDs)), forKey: "data")
 
+        // Rebuild the `variables:` table from the model — preserving each declared
+        // variable's `__uuid`. A graph that never had variables (empty table) writes no
+        // `variables:` member (don't regress existing fixtures).
+        let existingVariables = graph["variables"]?.arrayValue ?? []
+        if let variablesArray = patchedVariables(existingVariables, model: model) {
+            graph.set(.array(variablesArray), forKey: "variables")
+        } else {
+            graph.remove(key: "variables")
+        }
+
         return asset.setting(.object(graph), forKey: "graph")
+    }
+
+    // MARK: - Variable table
+
+    /// Rebuilds the `variables:` array from `model.variables`, preserving each entry's
+    /// `__uuid` (reusing the original object when one matches the uuid, so any unmodeled
+    /// members — a future `type`/`default` — survive). Returns `nil` when the model has
+    /// no variables, so the caller drops the member entirely.
+    @MainActor
+    private static func patchedVariables(_ existing: [TMValue], model: ScriptGraphEditorModel) -> [TMValue]? {
+        guard !model.variables.isEmpty else { return nil }
+        var objectByUUID: [String: TMObject] = [:]
+        for value in existing {
+            if let object = value.objectValue, let uuid = object.uuid { objectByUUID[uuid] = object }
+        }
+        return model.variables.map { variable in
+            var object = objectByUUID[variable.uuid] ?? TMObject()
+            object.set(.string(variable.uuid), forKey: "__uuid")
+            object.set(.string(variable.name), forKey: "name")
+            return .object(object)
+        }
     }
 
     // MARK: - Data literal patch (authored scalars)
@@ -97,6 +128,9 @@ public enum ScriptGraphWriteBack {
         liveIDs: Set<String>
     ) -> [TMValue] {
         var remaining = model.scalarLiterals // authored pins not yet matched to an existing literal
+        // Variable references the model still wants, keyed by node — consumed as we
+        // rewrite existing `tm_graph_variable_ref` entries; the rest are appended fresh.
+        var remainingVariableNodes = Set(model.variableNames.keys)
         var kept: [TMValue] = []
 
         for value in existing {
@@ -108,10 +142,24 @@ public enum ScriptGraphWriteBack {
             // Drop literals targeting a deleted node.
             guard liveIDs.contains(toNode) else { continue }
 
+            let valueObject = object["data"]?.objectValue
+
+            // A variable reference (`tm_graph_variable_ref`): reconcile it with the
+            // model's per-node variable name. Rewrite `ref`/`name` in place (preserving
+            // the entry's + inner value's `__uuid`); drop it when the node no longer
+            // names a variable.
+            if valueObject?.type == "tm_graph_variable_ref" {
+                remainingVariableNodes.remove(toNode)
+                if let name = model.variableNames[toNode] {
+                    kept.append(.object(updatedVariableRef(object, name: name, model: model)))
+                }
+                // else: the node's variable reference was cleared; drop the entry.
+                continue
+            }
+
             // A scalar literal: its value object carries a `value` number (and no
             // named `type` hash — that marks a component-type literal). Reconcile it
             // with the model's authored value for this pin.
-            let valueObject = object["data"]?.objectValue
             let isScalarLiteral = valueObject?["value"]?.doubleValue != nil
                 && valueObject?["type"] == nil
             if isScalarLiteral,
@@ -134,7 +182,61 @@ public enum ScriptGraphWriteBack {
         for (key, scalar) in remaining where liveIDs.contains(key.nodeID) {
             kept.append(.object(newScalarLiteral(key: key, value: scalar)))
         }
+
+        // Append a fresh `tm_graph_variable_ref` for each newly-named variable node.
+        for nodeID in remainingVariableNodes where liveIDs.contains(nodeID) {
+            if let name = model.variableNames[nodeID] {
+                kept.append(.object(newVariableRef(nodeID: nodeID, name: name, model: model)))
+            }
+        }
         return kept
+    }
+
+    // MARK: - Variable reference (`tm_graph_variable_ref`) literals
+
+    /// The variable table entry's `__uuid` for `name` (case-insensitive — the compile
+    /// slot lowercases), or `nil` when the name isn't declared (a defensive fallback;
+    /// the model declares any named variable, so this normally resolves).
+    @MainActor
+    private static func variableUUID(forName name: String, model: ScriptGraphEditorModel) -> String? {
+        model.variables.first { $0.name.lowercased() == name.lowercased() }?.uuid
+    }
+
+    /// `object` with its `tm_graph_variable_ref` value rewritten to point at `name`:
+    /// `name` denormalized, `ref` updated to the table entry's uuid. The entry's
+    /// `__uuid` and the value object's `__uuid` are preserved (rewrite in place).
+    @MainActor
+    private static func updatedVariableRef(_ object: TMObject, name: String, model: ScriptGraphEditorModel) -> TMObject {
+        var object = object
+        var valueObject = object["data"]?.objectValue ?? TMObject()
+        if valueObject.uuid == nil { valueObject.set(.string(UUID().uuidString), forKey: "__uuid") }
+        valueObject.set(.string("tm_graph_variable_ref"), forKey: "__type")
+        if let ref = variableUUID(forName: name, model: model) {
+            valueObject.set(.string(ref), forKey: "ref")
+        }
+        valueObject.set(.string(name), forKey: "name")
+        object.set(.object(valueObject), forKey: "data")
+        return object
+    }
+
+    /// A fresh variable-reference data literal for `nodeID` naming `name`, bound to the
+    /// `name` connector (`murmur64a("name")`):
+    /// `{ __uuid, to_node, to_connector_hash, data: { __type: "tm_graph_variable_ref", __uuid, ref, name } }`.
+    @MainActor
+    private static func newVariableRef(nodeID: String, name: String, model: ScriptGraphEditorModel) -> TMObject {
+        var object = TMObject()
+        object.set(.string(UUID().uuidString), forKey: "__uuid")
+        object.set(.string(nodeID), forKey: "to_node")
+        object.set(.string(TMHash.hex(RCP3ScriptGraph.variableNameConnectorHash)), forKey: "to_connector_hash")
+        var valueObject = TMObject()
+        valueObject.set(.string("tm_graph_variable_ref"), forKey: "__type")
+        valueObject.set(.string(UUID().uuidString), forKey: "__uuid")
+        if let ref = variableUUID(forName: name, model: model) {
+            valueObject.set(.string(ref), forKey: "ref")
+        }
+        valueObject.set(.string(name), forKey: "name")
+        object.set(.object(valueObject), forKey: "data")
+        return object
     }
 
     /// `object` with its value object's `value` member rewritten to `value`,
