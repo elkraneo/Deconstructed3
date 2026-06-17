@@ -94,6 +94,8 @@ import RCP3Runtime
         // with the Math3D.Vector3 constructor on the wired path. Math3D must be bound.
         #expect(js.contains("const Math3D = require(\"Math3D\")"))
         #expect(js.contains("event.entity.position = Math3D.add(event.sceneTranslation, new Math3D.Vector3("))
+        // The baked +0.5 X offset literal lowers into the Vector3.
+        #expect(js.contains("new Math3D.Vector3(0.5,"))
     }
 
     @Test func driftReadsItsOwnPositionViaGetAndAddsDeltaTime() {
@@ -117,6 +119,8 @@ import RCP3Runtime
         // vector add lowers to `Math3D.add`, not the scalar `+`. Math3D must be bound.
         #expect(js.contains("const Math3D = require(\"Math3D\")"))
         #expect(js.contains("event.entity.scale = Math3D.add(event.entity.scale, new Math3D.Vector3("))
+        // The baked uniform 0.2 growth literals lower into the Vector3.
+        #expect(js.contains("new Math3D.Vector3(0.2, 0.2, 0.2)"))
     }
 
     @Test func snapOnAddSetsPositionFromAVectorInADidAddHook() {
@@ -124,6 +128,8 @@ import RCP3Runtime
         expectNoUnsupported(js, "Snap on Add")
         #expect(js.contains("this.didAdd = function()"))
         #expect(js.contains("this.entity.position = new Math3D.Vector3("))
+        // The baked (0.3, 0.3, 0) snap coordinates lower into the Vector3.
+        #expect(js.contains("this.entity.position = new Math3D.Vector3(0.3, 0.3,"))
     }
 
     @Test func squashBySinDrivesScaleYFromSinOfDeltaTime() {
@@ -133,6 +139,9 @@ import RCP3Runtime
         // sin(deltaTime) drives the Y component of the scale Vector3.
         #expect(js.contains("Math.sin(deltaTime)"))
         #expect(js.contains("this.entity.scale = new Math3D.Vector3("))
+        // Baked base (1) + amp (0.5) + unit x/z literals, so scale no longer collapses
+        // to (0,0,0) — it scales around 1.
+        #expect(js.contains("this.entity.scale = new Math3D.Vector3(1, (1 + (0.5 * Math.sin(deltaTime))), 1)"))
     }
 
     // MARK: - Needs variables: per-example shape

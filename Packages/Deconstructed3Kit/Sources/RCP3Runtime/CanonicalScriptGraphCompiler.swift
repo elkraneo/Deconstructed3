@@ -548,9 +548,23 @@ public struct CanonicalScriptGraphCompiler {
         ) -> Expr {
             let pin = TMHash.murmur64a(pinName)
             guard let wire = dataWire(into: node.id, pin: pin) else {
+                // No wire feeding the pin: a bound scalar literal (a graph `data`
+                // constant) supplies it, else the safe `0`.
+                if let value = graph.scalarLiteral(node: node.id, pin: pin) {
+                    return Expr(Self.renderScalar(value))
+                }
                 return Expr("0 /* \(pinName) unwired */")
             }
             return emitExpression(from: wire, context: context, seen: &seen)
+        }
+
+        /// Renders a scalar literal as a clean JS number (integers without a
+        /// trailing `.0`).
+        static func renderScalar(_ value: Double) -> String {
+            if value == value.rounded() && abs(value) < 1e15 {
+                return String(Int(value))
+            }
+            return String(value)
         }
 
         // MARK: Static maps

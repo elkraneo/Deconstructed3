@@ -74,13 +74,20 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// 16-digit hex string). Lets a consumer resolve *which* value the literal
         /// names (the component type, the enum case, …), not just its container type.
         public let valueHash: UInt64?
+        /// A scalar (numeric) constant bound to the pin, when the literal is a plain
+        /// number — e.g. an unwired `make_vector3` component or a math operand. The
+        /// faithful on-disk encoding of scalar literals is not parsed yet (a SwiftUI
+        /// authoring + write-back round-trip lands that); today it is populated
+        /// in-memory (the curated examples) and read by the canonical compiler.
+        public let scalarValue: Double?
 
-        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil) {
+        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil, scalarValue: Double? = nil) {
             self.id = id
             self.toNode = toNode
             self.toPin = toPin
             self.valueType = valueType
             self.valueHash = valueHash
+            self.scalarValue = scalarValue
         }
     }
 
@@ -183,5 +190,11 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     /// Convenience used by callers/views: the node with this `__uuid`.
     public func node(id: String) -> Node? {
         nodes.first { $0.id == id }
+    }
+
+    /// The scalar constant bound to `pin` of node `nodeID` via a `data` literal, if
+    /// any — the value an unwired numeric pin carries.
+    public func scalarLiteral(node nodeID: String, pin: UInt64) -> Double? {
+        data.first { $0.toNode == nodeID && $0.toPin == pin && $0.scalarValue != nil }?.scalarValue
     }
 }

@@ -28,11 +28,13 @@ import TMFormat
 ///
 /// ## A note on scalar literals
 ///
-/// A few examples want a scalar literal on a `make_vector3` component (e.g. an
-/// offset of `0.2`). Scalar literals are a node-*settings* field, not a wire, and
-/// neither the editor's literal UI nor the canonical compiler reads them yet, so an
-/// unwired component pin lowers to a safe `0` (NOT an `unsupported` note). Where that
-/// matters to an example's behavior it is called out honestly in the `summary`.
+/// A few examples want a scalar literal on a `make_vector3` component or a math
+/// operand (e.g. an offset of `0.5`). These are carried as graph `data` literals
+/// (`RCP3ScriptGraph.DataLiteral.scalarValue`) and the canonical compiler now reads
+/// them, so the example shows a real result on Play. Authoring such literals in the
+/// editor UI — and round-tripping them to the on-disk `.tm_` `data` array — is the
+/// next step; an unwired pin with no literal still lowers to a safe `0` (NOT an
+/// `unsupported` note).
 public struct ScriptGraphExample: Identifiable, Sendable {
     /// A stable id (also the synthetic `openScriptGraphID` the editor uses to key the
     /// canvas when this example is loaded).
@@ -106,6 +108,13 @@ public enum ScriptGraphExamples {
         RCP3ScriptGraph.Wire(id: id, from: from, to: to)
     }
 
+    /// A scalar constant bound to `node`'s `pinName` (a graph `data` literal): the
+    /// value an unwired numeric component/math pin carries, so the example shows a
+    /// real result on Play.
+    private static func lit(_ id: String, node: String, pin pinName: String, _ value: Double) -> RCP3ScriptGraph.DataLiteral {
+        RCP3ScriptGraph.DataLiteral(id: id, toNode: node, toPin: pin(pinName), scalarValue: value)
+    }
+
     // MARK: - RUNS TODAY
 
     /// On Drag → Set Transform.translation = `sceneTranslation`. The documented
@@ -135,7 +144,7 @@ public enum ScriptGraphExamples {
     public static let dragWithOffset = ScriptGraphExample(
         id: "example.drag-with-offset",
         name: "Drag with Offset",
-        summary: "Drag, plus an X offset built from add(sceneTranslation, Vector3). (Offset magnitude is a scalar literal — not authorable yet, so it reads 0.)",
+        summary: "Drag, plus a baked +0.5 X offset via add(sceneTranslation, Vector3). (The offset is a baked data literal; in-editor literal authoring is next.)",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "drag", type: "tm_gesture_event_drag", x: 0, y: 0),
@@ -149,7 +158,9 @@ public enum ScriptGraphExamples {
                 data("d2", from: "vec", "vec3", to: "add", "b"),
                 data("d3", from: "add", "result", to: "set", "translation"),
             ],
-            data: []
+            data: [
+                lit("lit.x", node: "vec", pin: "x", 0.5),
+            ]
         ),
         runsToday: true
     )
@@ -187,7 +198,7 @@ public enum ScriptGraphExamples {
     public static let tapToGrow = ScriptGraphExample(
         id: "example.tap-to-grow",
         name: "Tap to Grow",
-        summary: "Tap the box to grow it: scale = Get scale + Vector3. (Growth amount is a scalar literal — not authorable yet, so it reads 0.)",
+        summary: "Tap the box to grow it by 0.2 each tap: scale = Get scale + Vector3(0.2, 0.2, 0.2). (Growth is a baked data literal; in-editor authoring is next.)",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
@@ -202,7 +213,11 @@ public enum ScriptGraphExamples {
                 data("d2", from: "vec", "vec3", to: "add", "b"),
                 data("d3", from: "add", "result", to: "set", "scale"),
             ],
-            data: []
+            data: [
+                lit("lit.x", node: "vec", pin: "x", 0.2),
+                lit("lit.y", node: "vec", pin: "y", 0.2),
+                lit("lit.z", node: "vec", pin: "z", 0.2),
+            ]
         ),
         runsToday: true
     )
@@ -214,7 +229,7 @@ public enum ScriptGraphExamples {
     public static let snapOnAdd = ScriptGraphExample(
         id: "example.snap-on-add",
         name: "Snap on Add",
-        summary: "When the box is added, snap its position to a fixed Vector3. (Coordinates are scalar literals — not authorable yet, so it snaps to the origin.)",
+        summary: "When the box is added, snap its position to (0.3, 0.3, 0). (Coordinates are baked data literals; in-editor authoring is next.)",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "added", type: "tm_did_add", x: 0, y: 0),
@@ -225,7 +240,10 @@ public enum ScriptGraphExamples {
                 exec("e", from: "added", to: "set"),
                 data("d", from: "vec", "vec3", to: "set", "translation"),
             ],
-            data: []
+            data: [
+                lit("lit.x", node: "vec", pin: "x", 0.3),
+                lit("lit.y", node: "vec", pin: "y", 0.3),
+            ]
         ),
         runsToday: true
     )
@@ -237,7 +255,7 @@ public enum ScriptGraphExamples {
     public static let squashBySin = ScriptGraphExample(
         id: "example.squash-by-sin",
         name: "Squash by Sin",
-        summary: "Vertical scale = 1 + amp·sin(deltaTime). Compiles + runs, but uses deltaTime directly (no time accumulator), so it won't smoothly animate — see 'Sine Bob' for the variable-driven version.",
+        summary: "Vertical scale = 1 + 0.5·sin(deltaTime), from baked literals. Runs without collapsing, but uses deltaTime directly (no time accumulator), so it won't smoothly animate — see 'Sine Bob' for the variable-driven version.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -260,7 +278,12 @@ public enum ScriptGraphExamples {
                 data("d4", from: "add", "result", to: "vec", "y"),
                 data("d5", from: "vec", "vec3", to: "set", "scale"),
             ],
-            data: []
+            data: [
+                lit("lit.vx", node: "vec", pin: "x", 1),
+                lit("lit.vz", node: "vec", pin: "z", 1),
+                lit("lit.base", node: "add", pin: "a", 1),
+                lit("lit.amp", node: "mul", pin: "a", 0.5),
+            ]
         ),
         runsToday: true
     )
