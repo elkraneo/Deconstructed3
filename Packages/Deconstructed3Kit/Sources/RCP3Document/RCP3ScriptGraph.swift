@@ -24,13 +24,25 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// Canvas position, when present.
         public let x: Double?
         public let y: Double?
+        /// For a variable Get/Set/Clear node, the name of the script-graph variable it
+        /// references (the simplified `tm_graph_variable_ref`). A LOCAL variable
+        /// compiles to a stable per-script slot derived from this name (see
+        /// `CanonicalScriptGraphCompiler`); `nil` for non-variable nodes (the default,
+        /// so all existing call sites compile unchanged).
+        ///
+        /// This is the **in-memory** reference only. The **on-disk `.tm_` round-trip**
+        /// of this field is DEFERRED — it needs a captured `.tm_` graph that uses a
+        /// variable to lock the byte layout of the `tm_graph_variable_ref` settings
+        /// field, so it is intentionally NOT wired into the parser/writer here.
+        public let variableName: String?
 
-        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil) {
+        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil) {
             self.id = id
             self.type = type
             self.label = label
             self.x = x
             self.y = y
+            self.variableName = variableName
         }
     }
 

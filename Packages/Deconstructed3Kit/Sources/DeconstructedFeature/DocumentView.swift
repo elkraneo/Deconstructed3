@@ -349,8 +349,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
         // EXAMPLES gallery: a curated set of canonical script-graph examples. Selecting
         // one LOADs it into the center as the open graph (`.exampleSelected`), switches
         // the center to Graph mode so the canvas shows it, and leaves the user to press
-        // ▶ Play to run it on the box. Runs-today examples are listed first; the
-        // needs-variables ports are marked "(needs variables)".
+        // ▶ Play to run it on the box. Every curated example runs today (the
+        // variable-driven ones compile to real local slots); a future example that
+        // doesn't yet run is still labeled "(needs variables)".
         ToolbarItem {
             examplesMenu
         }

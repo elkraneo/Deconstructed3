@@ -56,6 +56,14 @@ public struct CanonicalScriptGraphCompiler {
     static let rotationPin = TMHash.murmur64a("rotation")
     static let scalePin = TMHash.murmur64a("scale")
 
+    /// The stable per-script instance-property slot for a LOCAL variable referenced by
+    /// `name`: `variable_<MurmurHash64A(lowercase(name), seed 0)>` with the hash
+    /// rendered as a DECIMAL `UInt64`. A Get reads `this.<slot>`, a Set assigns it, so
+    /// a Get and a Set of the same name always resolve to the same property.
+    static func variableSlot(for name: String) -> String {
+        "variable_\(TMHash.murmur64a(name.lowercased()))"
+    }
+
     /// Emits the canonical-runtime JavaScript source for `graph`. The result is a
     /// complete script body suitable for `ScriptingComponent(source:)`.
     public func compile(_ graph: RCP3ScriptGraph) -> String {
@@ -251,7 +259,7 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_set_variable_node", "tm_set_remote_variable_node":
                 return emitSetVariable(node, context: context)
             case "tm_clear_variable_node", "tm_clear_remote_variable_node":
-                return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
+                return emitClearVariable(node)
             default:
                 return ["// unsupported node: \(node.type)"]
             }
@@ -284,10 +292,12 @@ public struct CanonicalScriptGraphCompiler {
             return statements
         }
 
-        /// A variable-set action. The runtime exposes remote values through
-        /// `this.setRemoteValue(name, value)`. The *name* of the variable lives in node
-        /// settings we can't resolve from the wire graph alone, so it is emitted as a
-        /// placeholder with an honest note — the value expression IS faithfully resolved.
+        /// A variable-set action. A LOCAL variable (the node carries a `variableName`)
+        /// writes the stable per-script instance-property slot:
+        /// `this.variable_<slot> = <valueExpr>;`. Without a name (the on-disk reference
+        /// isn't resolvable from the wire graph alone) it falls back to the honest
+        /// remote-value placeholder. The value expression is faithfully resolved either
+        /// way.
         mutating func emitSetVariable(
             _ node: RCP3ScriptGraph.Node,
             context: ExprContext
@@ -300,11 +310,24 @@ public struct CanonicalScriptGraphCompiler {
             } else {
                 valueExpr = "undefined /* no value wired */"
             }
-            // The variable name is a node-settings reference, not a wire — left as a
-            // placeholder rather than fabricated.
+            if let name = node.variableName {
+                let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
+                return ["this.\(slot) = \(valueExpr);"]
+            }
+            // No resolvable name → honest remote-value placeholder rather than fabricated.
             return [
                 "this.setRemoteValue(/* variable name unresolved */ \"\", \(valueExpr));"
             ]
+        }
+
+        /// A variable-clear action. A LOCAL variable resets its slot to the numeric
+        /// default: `this.variable_<slot> = 0;`. Without a name it stays an honest no-op.
+        func emitClearVariable(_ node: RCP3ScriptGraph.Node) -> [String] {
+            if let name = node.variableName {
+                let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
+                return ["this.\(slot) = 0;"]
+            }
+            return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
         }
 
         // MARK: Data inputs → expressions (the recursive core)
@@ -445,10 +468,16 @@ public struct CanonicalScriptGraphCompiler {
                 return getComponentExpression(outputPin: outputPin, context: context)
             }
 
-            // Variable get: best-effort remote read. The variable name is a node-settings
-            // reference, not a wire, so it can't be resolved here — honest placeholder.
-            // The stored type is unknown from the wire graph alone → treat as scalar.
+            // Variable get. A LOCAL variable (the node carries a `variableName`) reads the
+            // stable per-script slot, guarded with `?? 0` so an uninitialized accumulator's
+            // first read is the numeric default rather than `undefined` → NaN. The slot is
+            // scalar (our accumulators are scalar), so the result is left scalar-typed.
+            // Without a resolvable name it falls back to the honest remote-read placeholder.
             if node.type == "tm_get_variable_node" || node.type == "tm_get_remote_variable_node" {
+                if let name = node.variableName {
+                    let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
+                    return Expr("(this.\(slot) ?? 0)")
+                }
                 return Expr("this.getRemoteValue(/* variable name unresolved */ \"\")")
             }
 

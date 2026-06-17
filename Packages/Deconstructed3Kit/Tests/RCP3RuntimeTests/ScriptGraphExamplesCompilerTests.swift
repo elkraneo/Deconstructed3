@@ -14,9 +14,10 @@ import RCP3Runtime
 /// NOT an `unsupported` note), and the emitted handler must have the expected
 /// canonical shape (`this.*` hooks, `event.*` gesture reads, `Math.*` / `Math3D`).
 ///
-/// For every needs-variables example: it must compile WITHOUT crashing, emitting the
-/// honest `getRemoteValue`/`setRemoteValue` placeholder for the unresolved variable
-/// name — it loads + edits today, and runs once variable-name authoring lands.
+/// The variable-driven examples (Spin / Sine Bob / Orbit / Drag Momentum) carry a
+/// LOCAL accumulator name on their Get/Set nodes, which lowers to a stable per-script
+/// slot (`this.variable_<slot>`) — so they too are `runsToday` with no placeholder on
+/// the wired path.
 @Suite struct ScriptGraphExamplesCompilerTests {
 
     /// A runs-today example's wired path must never surface an `unsupported` note.
@@ -29,14 +30,14 @@ import RCP3Runtime
 
     @Test func galleryHasTheCuratedExamples() {
         let names = ScriptGraphExamples.all.map(\.name)
-        // Runs today.
+        // Literal-driven.
         #expect(names.contains("Drag to Move"))
         #expect(names.contains("Drag with Offset"))
         #expect(names.contains("Drift"))
         #expect(names.contains("Tap to Grow"))
         #expect(names.contains("Snap on Add"))
         #expect(names.contains("Squash by Sin"))
-        // Needs variables.
+        // Local-variable-driven.
         #expect(names.contains("Spin"))
         #expect(names.contains("Sine Bob"))
         #expect(names.contains("Orbit"))
@@ -60,14 +61,16 @@ import RCP3Runtime
         }
     }
 
-    @Test func everyNeedsVariablesExampleCompilesWithoutCrashing() {
-        for example in ScriptGraphExamples.all where !example.runsToday {
+    @Test func everyExampleRunsTodayWithNoVariablePlaceholder() {
+        // All ten curated examples now run today — the four variable-driven ones carry a
+        // LOCAL accumulator name, so they lower to a real `this.variable_<slot>` rather
+        // than the remote-value placeholder.
+        for example in ScriptGraphExamples.all {
+            #expect(example.runsToday, "\(example.name) should run today")
             let js = CanonicalScriptGraphCompiler().compile(example.graph)
-            // It compiled (produced a non-trivial script) and emitted the honest
-            // remote-variable placeholder rather than fabricating a name.
-            #expect(!js.isEmpty)
-            #expect(js.contains("RemoteValue"))
-            #expect(js.contains("variable name unresolved"))
+            expectNoUnsupported(js, example.name)
+            #expect(!js.contains("variable name unresolved"), "\(example.name) still has a variable placeholder:\n\(js)")
+            #expect(!js.contains("RemoteValue"), "\(example.name) should compile locals to a slot, not RemoteValue:\n\(js)")
         }
     }
 
@@ -144,39 +147,64 @@ import RCP3Runtime
         #expect(js.contains("this.entity.scale = new Math3D.Vector3(1, (1 + (0.5 * Math.sin(deltaTime))), 1)"))
     }
 
-    // MARK: - Needs variables: per-example shape
+    // MARK: - Local-variable-driven: per-example shape
 
-    @Test func spinAccumulatesAngleViaRemoteVariablePlaceholders() {
+    /// The slot a LOCAL variable `name` lowers to: `variable_<MurmurHash64A(lowercase)>`
+    /// rendered as a decimal `UInt64` — recomputed here from the same hash, never hard-coded.
+    private func slot(_ name: String) -> String {
+        "variable_\(TMHash.murmur64a(name.lowercased()))"
+    }
+
+    @Test func spinAccumulatesAngleViaLocalVariableSlot() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.spin.graph)
+        expectNoUnsupported(js, "Spin")
         #expect(js.contains("this.update = function(deltaTime)"))
-        // $angle += deltaTime, then orientation from $angle — both via the honest
-        // unresolved-name remote placeholder (the name lives in node settings).
-        #expect(js.contains("this.setRemoteValue(/* variable name unresolved */ \"\", (this.getRemoteValue(/* variable name unresolved */ \"\") + deltaTime))"))
-        #expect(js.contains("this.entity.orientation = this.getRemoteValue("))
+        let angle = slot("angle")
+        // angle += deltaTime, then orientation from angle — both on the SAME local slot,
+        // with the `?? 0` guard on each read.
+        #expect(js.contains("this.\(angle) = ((this.\(angle) ?? 0) + deltaTime);"))
+        #expect(js.contains("this.entity.orientation = (this.\(angle) ?? 0);"))
+        // Real slot, not the remote placeholder.
+        #expect(!js.contains("RemoteValue"))
+        #expect(!js.contains("variable name unresolved"))
     }
 
-    @Test func sineBobReadsTViaRemotePlaceholderInsideSin() {
+    @Test func sineBobReadsTFromItsLocalSlotInsideSin() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.sineBob.graph)
+        expectNoUnsupported(js, "Sine Bob")
         #expect(js.contains("this.update = function(deltaTime)"))
-        #expect(js.contains("Math.sin(this.getRemoteValue("))
+        let t = slot("t")
+        #expect(js.contains("this.\(t) = ((this.\(t) ?? 0) + deltaTime);"))
+        #expect(js.contains("Math.sin((this.\(t) ?? 0))"))
         #expect(js.contains("this.entity.position = new Math3D.Vector3("))
+        #expect(!js.contains("RemoteValue"))
     }
 
-    @Test func orbitReadsTViaRemotePlaceholderInBothCosAndSin() {
+    @Test func orbitReadsTFromItsLocalSlotInBothCosAndSin() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.orbit.graph)
+        expectNoUnsupported(js, "Orbit")
         #expect(js.contains("this.update = function(deltaTime)"))
-        #expect(js.contains("Math.cos(this.getRemoteValue("))
-        #expect(js.contains("Math.sin(this.getRemoteValue("))
+        let t = slot("t")
+        #expect(js.contains("Math.cos((this.\(t) ?? 0))"))
+        #expect(js.contains("Math.sin((this.\(t) ?? 0))"))
         #expect(js.contains("this.entity.position = new Math3D.Vector3("))
+        #expect(!js.contains("RemoteValue"))
     }
 
-    @Test func dragMomentumEmitsBothADragAndAnUpdateHandler() {
+    @Test func dragMomentumEmitsBothHandlersOverTwoLocalSlots() {
         let js = CanonicalScriptGraphCompiler().compile(ScriptGraphExamples.dragMomentum.graph)
-        // Two handlers: a drag kick sets $angVel, and a per-frame integrate updates
-        // $angle and drives rotation — both through the remote-variable placeholder.
+        expectNoUnsupported(js, "Drag Momentum")
+        // Two handlers: a drag kick sets angularVelocity, and a per-frame integrate
+        // updates angle and drives rotation — both via real local slots.
         #expect(js.contains("this.entity.on(RealityKit.DragGestureEvent.name"))
         #expect(js.contains("this.update = function(deltaTime)"))
-        #expect(js.contains("this.setRemoteValue(/* variable name unresolved */ \"\", event.sceneTranslation)"))
-        #expect(js.contains("this.entity.orientation = this.getRemoteValue("))
+        let vel = slot("angularVelocity")
+        let angle = slot("angle")
+        // The drag kick writes the velocity slot.
+        #expect(js.contains("this.\(vel) = event.sceneTranslation;"))
+        // The per-frame integrate accumulates angle += angularVelocity over the two slots.
+        #expect(js.contains("this.\(angle) = ((this.\(angle) ?? 0) + (this.\(vel) ?? 0));"))
+        #expect(js.contains("this.entity.orientation = (this.\(angle) ?? 0);"))
+        #expect(!js.contains("RemoteValue"))
     }
 }

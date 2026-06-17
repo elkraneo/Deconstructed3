@@ -322,6 +322,105 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    // MARK: - Local variables
+
+    /// On Update → Set `angle` = (Get `angle` + deltaTime); Set Transform.rotation = Get
+    /// `angle`. A LOCAL variable named on the Get/Set nodes must lower to the stable
+    /// per-script slot `variable_<MurmurHash64A(lowercase("angle"))>`, with Get and Set
+    /// resolving to the SAME slot and Get carrying the `?? 0` accumulator guard.
+    @Test func localVariableGetAndSetUseTheSameSlotWithGuard() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let getAngle = RCP3ScriptGraph.Node(id: "g", type: "tm_get_variable_node", variableName: "angle")
+        let add = RCP3ScriptGraph.Node(id: "m", type: "tm_math_add")
+        let setAngle = RCP3ScriptGraph.Node(id: "sv", type: "tm_set_variable_node", variableName: "angle")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let e1 = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "sv")
+        let e2 = RCP3ScriptGraph.Wire(id: "e2", from: "sv", to: "s")
+        let wGet = RCP3ScriptGraph.Wire(
+            id: "w1", from: "g", to: "m",
+            fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("a")
+        )
+        let wDt = RCP3ScriptGraph.Wire(
+            id: "w2", from: "u", to: "m",
+            fromPin: TMHash.murmur64a("deltaTime"), toPin: TMHash.murmur64a("b")
+        )
+        let wAdd = RCP3ScriptGraph.Wire(
+            id: "w3", from: "m", to: "sv",
+            fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+        )
+        let wRot = RCP3ScriptGraph.Wire(
+            id: "w4", from: "g", to: "s",
+            fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("rotation")
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, getAngle, add, setAngle, set],
+            wires: [e1, e2, wGet, wDt, wAdd, wRot], data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // The slot is the decimal MurmurHash64A of the lowercased name — recomputed here,
+        // never hard-coded.
+        let slot = "variable_\(TMHash.murmur64a("angle"))"
+        // Get reads `(this.variable_<slot> ?? 0)` (the `?? 0` accumulator guard).
+        #expect(js.contains("(this.\(slot) ?? 0)"))
+        // Set writes the SAME slot.
+        #expect(js.contains("this.\(slot) = "))
+        #expect(js.contains("this.update = function(deltaTime)"))
+        // The accumulate-and-drive shape, all on the one slot.
+        #expect(js.contains("this.\(slot) = ((this.\(slot) ?? 0) + deltaTime);"))
+        #expect(js.contains("this.entity.orientation = (this.\(slot) ?? 0);"))
+        // A local variable lowers to a slot, not the remote placeholder.
+        #expect(!js.contains("RemoteValue"))
+        #expect(!js.contains("variable name unresolved"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    /// A LOCAL clear node resets its slot to the numeric default `0`.
+    @Test func localVariableClearResetsSlotToZero() {
+        let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
+        let clear = RCP3ScriptGraph.Node(id: "c", type: "tm_clear_variable_node", variableName: "angle")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "a", to: "c")
+        let graph = RCP3ScriptGraph(nodes: [added, clear], wires: [exec], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        let slot = "variable_\(TMHash.murmur64a("angle"))"
+        #expect(js.contains("this.\(slot) = 0;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    /// A variable node with NO `variableName` (the on-disk reference isn't resolvable
+    /// from the wire graph yet) falls back to the honest placeholder without crashing.
+    @Test func variableNodeWithoutNameFallsBackWithoutCrashing() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setVar = RCP3ScriptGraph.Node(id: "sv", type: "tm_set_variable_node")
+        let getVar = RCP3ScriptGraph.Node(id: "g", type: "tm_get_variable_node")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let e1 = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "sv")
+        let e2 = RCP3ScriptGraph.Wire(id: "e2", from: "sv", to: "s")
+        let wVal = RCP3ScriptGraph.Wire(
+            id: "w1", from: "g", to: "sv",
+            fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("value")
+        )
+        let wRot = RCP3ScriptGraph.Wire(
+            id: "w2", from: "g", to: "s",
+            fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("rotation")
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, setVar, getVar, set],
+            wires: [e1, e2, wVal, wRot], data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // No name → the honest remote placeholder, and it did NOT fabricate a slot.
+        #expect(js.contains("variable name unresolved"))
+        #expect(js.contains("this.getRemoteValue("))
+        #expect(js.contains("this.setRemoteValue("))
+        #expect(!js.contains("this.variable_"))
+    }
+
     @Test func undocumentedVectorOpStaysCleanRoom() {
         // A dot-product node has no PUBLICLY-documented Math3D name, so the compiler must
         // NOT emit `Math3D.dot(...)` — it emits a plain-JS fallback with an honest note.

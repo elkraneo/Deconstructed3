@@ -319,6 +319,31 @@ control-flow actions (exec in + exec out); Get is data-only.
 | `tm_set_remote_variable_node` | `Variable`, `value` | — | in + out |
 | `tm_clear_remote_variable_node` | `Variable` | — | in + out |
 
+**Variable compilation model (observed).** A graph declares its variables once in a
+**graph-level variable table** — each entry a `{ name, type, default }` (variables are
+renameable). A Get/Set/Clear node holds only a **by-name reference** to one of these
+(a `tm_graph_variable_ref` settings field); the reference resolves against the table by
+the **lowercased** name. The `value` pin's type derives from the referenced variable's
+declared type (an unresolved reference falls back to an "any" type id).
+
+- **Local** variables compile to an **instance property on the script** named by a
+  stable slot. The slot id is `MurmurHash64A(lowercase(variableName), seed 0)`; the
+  read slot is `variable_<id>` and the write slot is `variable_<id>_store`. So *Get*
+  reads `this.variable_<id>` and *Set* writes it. (RCP authors this as a class
+  getter/setter pair plus a `set_<name>` change message; a simpler faithful emission is
+  a single `this.variable_<id>` property read on Get and assigned on Set — behaviorally
+  identical for in-script accumulators, which is all our examples need.)
+- **Remote** variables compile to `this.getRemoteValue(...)` / `this.setRemoteValue(...)`
+  over a per-entity storage bag, keyed by the variable, and consume the `Variable`
+  Entity input pin. Clear gates on whether the key is present before clearing.
+
+> **Unconfirmed — needs a captured `.tm_` graph that uses a variable.** The *on-disk*
+> serialization of the `tm_graph_variable_ref` settings field and of the graph-level
+> variable table (field order for name/type/default) is not yet locked. The **emission**
+> above (and the slot = `MurmurHash64A(lowercase(name))` rule) is high-confidence and can
+> be implemented now; the **save/round-trip** of an authored variable must be verified
+> against a real capture before it is trusted.
+
 **Deferred — dynamic pins, pending a follow-up harvest.** A residual family still
 presents a fully **dynamic** pin set the editor grows from configuration, beyond the
 fixed seed transcribed above: `tm_to_string` and `tm_string_merge`. These are omitted

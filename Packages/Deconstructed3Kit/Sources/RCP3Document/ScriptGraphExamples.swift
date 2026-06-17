@@ -11,20 +11,22 @@ import TMFormat
 /// example presents exactly the named pins the editor draws, and the canonical
 /// compiler resolves them the same way it resolves a real captured graph).
 ///
-/// ## Runs today vs. needs variables
+/// ## Runs today
 ///
 /// `runsToday == true` examples are wired so the canonical
 /// `CanonicalScriptGraphCompiler` lowers the whole wired path to faithful runtime JS
 /// with **no `unsupported` note on that path** — the backing compiler tests assert
 /// exactly that. Press ▶ Play and the box moves.
 ///
-/// `runsToday == false` examples need a graph **variable** (an accumulator like
-/// `$angle` or `$t`). The variable get/set nodes exist in the library and the
-/// example authors + compiles, but the canonical compiler can't yet resolve the
-/// variable's *name* (it lives in node settings, not the wire graph), so it emits a
-/// placeholder for the variable read/write — the example loads and edits fine, but
-/// won't run correctly until variable-name authoring lands. Each says so in its
-/// `summary`.
+/// The variable-driven examples (Spin / Sine Bob / Orbit / Drag Momentum) carry a
+/// LOCAL accumulator on their Get/Set variable nodes (`Node.variableName`), which the
+/// canonical compiler lowers to a stable per-script instance-property slot
+/// (`this.variable_<slot>`, slot = `MurmurHash64A(lowercase(name))`). Their wired path
+/// compiles cleanly to that real slot, so they are now `runsToday == true` (the
+/// runtime result is still user-confirmed on Play). DEFERRED: an authoring-UI variable
+/// picker, a graph-level variable table with real defaults/types, and the on-disk
+/// `.tm_` round-trip of `variableName` — all pending a captured `.tm_` graph that uses
+/// a variable.
 ///
 /// ## A note on scalar literals
 ///
@@ -67,8 +69,8 @@ public struct ScriptGraphExample: Identifiable, Sendable {
     }
 }
 
-/// The curated example gallery. Public, ordered (runs-today first, then the
-/// needs-variables ports), and built once.
+/// The curated example gallery. Public, ordered (the literal-driven examples first,
+/// then the local-variable-driven ones), and built once.
 public enum ScriptGraphExamples {
 
     /// All examples, in gallery order.
@@ -288,20 +290,20 @@ public enum ScriptGraphExamples {
         runsToday: true
     )
 
-    // MARK: - NEEDS VARIABLES (author / compile only)
+    // MARK: - VARIABLE-DRIVEN (local accumulators)
 
     /// On Update → `$angle += deltaTime`; Set rotation from `$angle`. A continuous
-    /// spin. Needs a graph variable (`$angle`) the compiler can't name yet.
+    /// spin, driven by the local `angle` accumulator.
     public static let spin = ScriptGraphExample(
         id: "example.spin",
         name: "Spin",
-        summary: "Continuously rotate the box by accumulating $angle += deltaTime each frame. NEEDS VARIABLES: the $angle accumulator's name isn't authorable yet, so it loads + compiles but won't run correctly.",
+        summary: "Continuously rotate the box by accumulating angle += deltaTime each frame. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
-                .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 220),
+                .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 220, variableName: "angle"),
                 .init(id: "add", type: "tm_math_add", label: "Add", x: 320, y: 120),
-                .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 0),
+                .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 0, variableName: "angle"),
                 .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 960, y: 0),
             ],
             wires: [
@@ -314,21 +316,21 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: false
+        runsToday: true
     )
 
-    /// On Update → `$t += deltaTime`; Set translation.y from `sin($t)`. A vertical bob.
-    /// Needs a graph variable (`$t`) the compiler can't name yet.
+    /// On Update → `$t += deltaTime`; Set translation.y from `sin($t)`. A vertical bob,
+    /// driven by the local `t` time accumulator.
     public static let sineBob = ScriptGraphExample(
         id: "example.sine-bob",
         name: "Sine Bob",
-        summary: "Bob the box up and down with sin($t), accumulating $t += deltaTime. NEEDS VARIABLES: the $t accumulator isn't authorable yet, so it loads + compiles but won't run correctly.",
+        summary: "Bob the box up and down with sin(t), accumulating t += deltaTime. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
-                .init(id: "getT", type: "tm_get_variable_node", label: "Get $t", x: 0, y: 220),
+                .init(id: "getT", type: "tm_get_variable_node", label: "Get $t", x: 0, y: 220, variableName: "t"),
                 .init(id: "addT", type: "tm_math_add", label: "Add", x: 320, y: 120),
-                .init(id: "setT", type: "tm_set_variable_node", label: "Set $t", x: 640, y: 0),
+                .init(id: "setT", type: "tm_set_variable_node", label: "Set $t", x: 640, y: 0, variableName: "t"),
                 .init(id: "sin", type: "tm_math_sin", label: "Sin", x: 320, y: 320),
                 .init(id: "vec", type: "tm_make_vector3", label: "Vector3", x: 640, y: 320),
                 .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 960, y: 0),
@@ -345,22 +347,21 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: false
+        runsToday: true
     )
 
     /// On Update → `$t += deltaTime`; Set translation = `Vector3(cos($t), 0, sin($t))`.
-    /// An orbit in the XZ plane. Needs a graph variable (`$t`) the compiler can't name
-    /// yet.
+    /// An orbit in the XZ plane, driven by the local `t` time accumulator.
     public static let orbit = ScriptGraphExample(
         id: "example.orbit",
         name: "Orbit",
-        summary: "Orbit the box in the XZ plane with Vector3(cos($t), 0, sin($t)), accumulating $t += deltaTime. NEEDS VARIABLES: $t isn't authorable yet, so it loads + compiles but won't run correctly.",
+        summary: "Orbit the box in the XZ plane with Vector3(cos(t), 0, sin(t)), accumulating t += deltaTime. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
-                .init(id: "getT", type: "tm_get_variable_node", label: "Get $t", x: 0, y: 240),
+                .init(id: "getT", type: "tm_get_variable_node", label: "Get $t", x: 0, y: 240, variableName: "t"),
                 .init(id: "addT", type: "tm_math_add", label: "Add", x: 320, y: 140),
-                .init(id: "setT", type: "tm_set_variable_node", label: "Set $t", x: 640, y: 0),
+                .init(id: "setT", type: "tm_set_variable_node", label: "Set $t", x: 640, y: 0, variableName: "t"),
                 .init(id: "cos", type: "tm_math_cos", label: "Cos", x: 320, y: 360),
                 .init(id: "sin", type: "tm_math_sin", label: "Sin", x: 320, y: 460),
                 .init(id: "vec", type: "tm_make_vector3", label: "Vector3", x: 640, y: 400),
@@ -380,27 +381,27 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: false
+        runsToday: true
     )
 
     /// Two handlers: On Drag → `$angVel = sceneTranslation.x` (a kick); On Update →
-    /// `$angle += $angVel` and Set rotation from `$angle`. Flick to spin, with momentum.
-    /// Needs two graph variables (`$angVel`, `$angle`) the compiler can't name yet.
+    /// `$angle += $angVel` and Set rotation from `$angle`. Flick to spin, with momentum,
+    /// driven by the local `angularVelocity` and `angle` accumulators.
     public static let dragMomentum = ScriptGraphExample(
         id: "example.drag-momentum",
         name: "Drag Momentum",
-        summary: "Flick the box to spin it with momentum: drag sets $angVel, and each frame $angle += $angVel drives rotation. NEEDS VARIABLES: the two accumulators ($angVel, $angle) aren't authorable yet, so it loads + compiles but won't run correctly.",
+        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, and each frame angle += angularVelocity drives rotation. Both accumulators compile to real local variable slots (this.variable_<slot>); runtime is user-confirmed on Play.",
         graph: RCP3ScriptGraph(
             nodes: [
                 // Handler 1: a drag kick sets the angular velocity.
                 .init(id: "drag", type: "tm_gesture_event_drag", x: 0, y: 0),
-                .init(id: "setVel", type: "tm_set_variable_node", label: "Set $angVel", x: 320, y: 0),
+                .init(id: "setVel", type: "tm_set_variable_node", label: "Set $angVel", x: 320, y: 0, variableName: "angularVelocity"),
                 // Handler 2: per-frame integrate angle += angVel and drive rotation.
                 .init(id: "update", type: "tm_update", x: 0, y: 320),
-                .init(id: "getVel", type: "tm_get_variable_node", label: "Get $angVel", x: 0, y: 540),
-                .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 640),
+                .init(id: "getVel", type: "tm_get_variable_node", label: "Get $angVel", x: 0, y: 540, variableName: "angularVelocity"),
+                .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 640, variableName: "angle"),
                 .init(id: "add", type: "tm_math_add", label: "Add", x: 320, y: 440),
-                .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 320),
+                .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 320, variableName: "angle"),
                 .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 960, y: 320),
             ],
             wires: [
@@ -417,6 +418,6 @@ public enum ScriptGraphExamples {
             ],
             data: []
         ),
-        runsToday: false
+        runsToday: true
     )
 }
