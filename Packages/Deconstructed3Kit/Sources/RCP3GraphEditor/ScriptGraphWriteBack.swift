@@ -55,6 +55,33 @@ public enum ScriptGraphWriteBack {
     public static func patched(asset: TMObject, with model: ScriptGraphEditorModel) -> TMObject {
         guard var graph = asset["graph"]?.objectValue else { return asset }
 
+        // GAP-2 GUARD — do NOT corrupt an instance-override graph.
+        //
+        // A prototype-INSTANCE graph (the `source.graph` embedded on an entity's
+        // `re_scripting_component`) splits its node list into `nodes` (added on the
+        // instance, each with its own `type`) and `nodes__instantiated` (instances of
+        // PROTOTYPE nodes, each carrying a `__prototype_uuid` and NO `type`). The parser
+        // (`RCP3ScriptGraph.init(tmGraph:prototypeNodeTypes:)`) MERGES both arrays into
+        // the model's flat node list. This write-back, however, is hardcoded to the
+        // standalone-asset shape: it rebuilds `graph.nodes` from the whole model and
+        // only matches against the original `nodes` array, so every instantiated node
+        // becomes an "insert" — synthesizing a `type`, dropping its `__prototype_uuid`,
+        // and emitting its uuid into `nodes` while the original `nodes__instantiated`
+        // is left intact. That duplicates uuids across both arrays into a graph RCP3
+        // won't reopen.
+        //
+        // Full, faithful entity-override write-back (the nodes/nodes__instantiated split
+        // + writing back into `world.tm_entity`, GAP 3) is DEFERRED to a later
+        // entity-editing effort and needs a capture; do NOT attempt it here. The minimal
+        // safe behavior is to REFUSE to patch this shape: return the asset unchanged so
+        // we never duplicate uuids across `nodes` + `nodes__instantiated` (nor drop a
+        // `__prototype_uuid`). An entity-override edit is simply a no-op write until
+        // proper override write-back lands, which is non-corrupting (the on-disk graph
+        // stays byte-identical) rather than damaging.
+        if graph["nodes__instantiated"] != nil {
+            return asset
+        }
+
         let existingNodes = graph["nodes"]?.arrayValue ?? []
         let liveIDs = Set(model.nodes.map(\.id))
 
@@ -271,9 +298,19 @@ public enum ScriptGraphWriteBack {
         if var node = existing {
             // Update position.x / position.y, preserving the position object's __uuid
             // and any other members.
+            //
+            // Precision-preservation (byte-exact interchange): the model's
+            // `box.position` is `Double(originalLexeme)` — the SAME parse that produced
+            // the original `position.x`/`.y` `.number` lexemes. RCP writes 17-sig-fig
+            // floats; Swift's `String(Double)` emits the 16-sig-fig shortest form, so
+            // unconditionally re-emitting drifts every node ~1 ULP on EVERY save even
+            // with no edits (e.g. `-84.444442749023438` → `-84.44444274902344`). So we
+            // only rewrite a component when its parsed-Double genuinely DIFFERS from the
+            // model's (a node that was actually moved); an unchanged component keeps its
+            // original lexeme untouched. The compare is exact (same parse, no epsilon).
             var position = node["position"]?.objectValue ?? TMObject()
-            position.set(.number(numberLexeme(box.position.x)), forKey: "x")
-            position.set(.number(numberLexeme(box.position.y)), forKey: "y")
+            setPositionComponent(&position, key: "x", value: box.position.x)
+            setPositionComponent(&position, key: "y", value: box.position.y)
             node.set(.object(position), forKey: "position")
 
             // Mirror the label: set it when present, drop it when the payload has none.
@@ -297,6 +334,20 @@ public enum ScriptGraphWriteBack {
         position.set(.number(numberLexeme(box.position.y)), forKey: "y")
         node.set(.object(position), forKey: "position")
         return node
+    }
+
+    /// Sets `position[key]` to `value` ONLY when it genuinely differs from the
+    /// component already stored — preserving the original `.number` lexeme (byte-exact)
+    /// when the node wasn't moved.
+    ///
+    /// The stored component's `doubleValue` (`Double(lexeme)`) is the very Double the
+    /// model carries for an unmoved node, so the equality test is exact, not
+    /// epsilon-fragile. Only when they differ (a real move) do we re-emit, accepting the
+    /// shortest-form lexeme for the new value. A component that was previously absent
+    /// (or non-numeric) is always written.
+    private static func setPositionComponent(_ position: inout TMObject, key: String, value: Double) {
+        if let existing = position[key]?.doubleValue, existing == value { return }
+        position.set(.number(numberLexeme(value)), forKey: key)
     }
 
     // MARK: - Connection serialization

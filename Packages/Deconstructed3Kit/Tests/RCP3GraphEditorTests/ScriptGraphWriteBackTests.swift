@@ -678,4 +678,205 @@ import RCP3Document
         #expect(clearGraph.nodes.first { $0.id == "set1" }?.variableName == "Score")
         #expect(clearGraph.variables.map(\.name) == ["Score"]) // table entry retained
     }
+
+    // MARK: - GAP 1: position float-precision no-drift round-trip
+
+    /// Walk-up resolver for a standalone `.tm_script_graph` fixture by file name under
+    /// `references/<bundle>/`. No-ops cleanly when the capture is absent. Note the SPACE
+    /// in the `Random2` file name.
+    static func standaloneGraphAsset(bundle: String, file: String) throws -> TMObject? {
+        var dir = URL(filePath: #filePath).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let path = dir.appending(path: "references/\(bundle)/\(file)")
+            if FileManager.default.fileExists(atPath: path.path) {
+                let text = try String(contentsOf: path, encoding: .utf8)
+                return try #require(try TM.parse(text).objectValue)
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
+    }
+
+    /// Every node's `position.x`/`.y` `.number` lexeme of `graph`, keyed by node uuid —
+    /// the EXACT on-disk text, not a re-parsed Double (the precision drift we guard).
+    static func positionLexemes(of graph: TMObject) -> [String: (x: String?, y: String?)] {
+        var out: [String: (x: String?, y: String?)] = [:]
+        for value in graph["nodes"]?.arrayValue ?? [] {
+            guard let node = value.objectValue, let id = node.uuid else { continue }
+            let position = node["position"]?.objectValue
+            out[id] = (position?["x"]?.numberLexeme, position?["y"]?.numberLexeme)
+        }
+        return out
+    }
+
+    /// Opening a real graph and writing it back with NO edits must NOT drift any node's
+    /// position lexeme. RCP writes 17-sig-fig floats; the previous unconditional re-emit
+    /// turned `-84.444442749023438` into the 16-sig-fig `-84.44444274902344` on every
+    /// save. The compare-and-skip in `patchedNode` now preserves the original lexeme for
+    /// every unmoved node, so a no-edit round-trip is byte-identical for positions.
+    @Test func noEditRoundTripPreservesPositionLexemesRandom() throws {
+        guard let asset = try Self.standaloneGraphAsset(
+            bundle: "Random.realitycomposerpro", file: "Script Graph.tm_script_graph"
+        ) else { return } // capture absent
+        try assertNoEditRoundTripPreservesPositions(asset: asset)
+    }
+
+    @Test func noEditRoundTripPreservesPositionLexemesRandom2() throws {
+        guard let asset = try Self.standaloneGraphAsset(
+            bundle: "Random2.realitycomposerpro", file: "My Script Graph.tm_script_graph"
+        ) else { return } // capture absent
+        try assertNoEditRoundTripPreservesPositions(asset: asset)
+    }
+
+    /// Shared assertion: parse → build model (no edits) → write-back → re-parse, and the
+    /// per-node `position.x`/`.y` lexemes are IDENTICAL to the original.
+    private func assertNoEditRoundTripPreservesPositions(asset: TMObject) throws {
+        let tmGraph = try #require(asset["graph"]?.objectValue)
+        let original = Self.positionLexemes(of: tmGraph)
+        #expect(!original.isEmpty)
+
+        // No edits: the model is built straight from the parsed graph.
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let after = Self.positionLexemes(of: try #require(reparsed["graph"]?.objectValue))
+
+        #expect(after.count == original.count)
+        for (id, lexemes) in original {
+            #expect(after[id]?.x == lexemes.x, "x lexeme drifted for node \(id)")
+            #expect(after[id]?.y == lexemes.y, "y lexeme drifted for node \(id)")
+        }
+    }
+
+    /// Sanity: the unconditional re-emit WOULD have drifted — proving the fixture
+    /// actually exercises the precision gap (and isn't trivially clean). The original
+    /// `Random` x lexeme `-84.444442749023438` is 17 sig-figs; `String(Double(...))`
+    /// emits the shorter form, so they must differ (else the test would pass vacuously).
+    @Test func positionLexemeDriftIsRealForFixture() throws {
+        guard let asset = try Self.standaloneGraphAsset(
+            bundle: "Random.realitycomposerpro", file: "Script Graph.tm_script_graph"
+        ) else { return } // capture absent
+        let tmGraph = try #require(asset["graph"]?.objectValue)
+        let lexemes = Self.positionLexemes(of: tmGraph)
+        // At least one node's x or y lexeme must NOT survive a Double round-trip,
+        // otherwise the no-drift test would be vacuous.
+        let drifts = lexemes.values.contains { entry in
+            (entry.x.map { $0 != String(Double($0) ?? .nan) } ?? false)
+                || (entry.y.map { $0 != String(Double($0) ?? .nan) } ?? false)
+        }
+        #expect(drifts, "fixture has no 17-sig-fig float — no-drift test would be vacuous")
+    }
+
+    /// A node that was actually MOVED still gets its new position written (the
+    /// compare-and-skip only preserves UNCHANGED components). Built on the hand asset
+    /// (whole-number positions) so the expectation is exact.
+    @Test func movedNodeStillRewritesPosition() throws {
+        let asset = try Self.handBuiltAsset()
+        let model = try Self.model(for: asset)
+
+        // Move n1 to a fractional position whose shortest-form lexeme is deterministic.
+        model.moveNode("n1", to: CGPoint(x: 12.5, y: -7.25))
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let graph = try #require(reparsed["graph"]?.objectValue)
+
+        let n1 = try #require(
+            graph["nodes"]?.arrayValue?.compactMap(\.objectValue).first { $0.uuid == "n1" }
+        )
+        let position = try #require(n1["position"]?.objectValue)
+        #expect(position["x"]?.doubleValue == 12.5)
+        #expect(position["y"]?.doubleValue == -7.25)
+        #expect(position["x"]?.numberLexeme == "12.5")
+        #expect(position["y"]?.numberLexeme == "-7.25")
+
+        // n2 was NOT moved — its original integer lexemes survive untouched.
+        let n2 = try #require(
+            graph["nodes"]?.arrayValue?.compactMap(\.objectValue).first { $0.uuid == "n2" }
+        )
+        let n2pos = try #require(n2["position"]?.objectValue)
+        #expect(n2pos["x"]?.numberLexeme == "300")
+        #expect(n2pos["y"]?.numberLexeme == "40")
+    }
+
+    // MARK: - GAP 2: don't corrupt instance-override graphs on save
+
+    /// A minimal instance-override graph root mirroring the `source.graph` embedded on
+    /// an entity's `re_scripting_component`: a `nodes` array (instance-added nodes, each
+    /// with a `type`) PLUS a `nodes__instantiated` array (prototype-node instances, each
+    /// with a `__prototype_uuid` and NO `type`). This is the shape `patched()` must not
+    /// flatten/corrupt.
+    static func instanceOverrideAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "root-uuid"
+        graph: {
+        \t__uuid: "graph-uuid"
+        \tnodes: [
+        \t\t{
+        \t\t\t__uuid: "added1"
+        \t\t\ttype: "tm_set_component"
+        \t\t\tposition: { __uuid: "pa1" x: 5 y: 10 }
+        \t\t}
+        \t]
+        \tnodes__instantiated: [
+        \t\t{
+        \t\t\t__uuid: "inst1"
+        \t\t\t__prototype_type: "tm_graph_node"
+        \t\t\t__prototype_uuid: "proto1"
+        \t\t\tposition: { __uuid: "pi1" __prototype_uuid: "pproto1" x: -246.33290100097656 y: -190.22328186035156 }
+        \t\t}
+        \t\t{
+        \t\t\t__uuid: "inst2"
+        \t\t\t__prototype_type: "tm_graph_node"
+        \t\t\t__prototype_uuid: "proto2"
+        \t\t\tposition: { __uuid: "pi2" __prototype_uuid: "pproto2" }
+        \t\t}
+        \t]
+        \tconnections: []
+        \tdata: []
+        }
+        __asset_uuid: "asset-uuid"
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    /// Patching an instance-override graph (one with `nodes__instantiated`) must NOT
+    /// corrupt it: no node uuid may appear in BOTH `nodes` and `nodes__instantiated`,
+    /// the instantiated nodes keep their `__prototype_uuid` (not flattened into a
+    /// synthesized `type`), and `nodes__instantiated` stays intact. (Full, faithful
+    /// entity-override write-back is DEFERRED — GAP 3 — so this path is a non-corrupting
+    /// no-op for now.)
+    @Test func patchingInstanceOverrideGraphDoesNotCorruptIt() throws {
+        let asset = try Self.instanceOverrideAsset()
+        let tmGraph = try #require(asset["graph"]?.objectValue)
+
+        // The parser merges nodes + nodes__instantiated into the model's flat list.
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
+        #expect(Set(model.nodes.map(\.id)) == ["added1", "inst1", "inst2"])
+
+        // Even with an edit (a move), the override shape must not be corrupted.
+        model.moveNode("inst1", to: CGPoint(x: 999, y: 888))
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let patchedGraph = try #require(reparsed["graph"]?.objectValue)
+
+        let nodes = (patchedGraph["nodes"]?.arrayValue ?? []).compactMap(\.objectValue)
+        let instantiated = (patchedGraph["nodes__instantiated"]?.arrayValue ?? []).compactMap(\.objectValue)
+
+        // `nodes__instantiated` is still present and intact (the instances survive).
+        #expect(Set(instantiated.compactMap(\.uuid)) == ["inst1", "inst2"])
+        // Each instantiated node keeps its `__prototype_uuid` (not flattened away).
+        #expect(instantiated.allSatisfy { $0.prototypeUUID != nil })
+        #expect(instantiated.allSatisfy { $0["type"] == nil })
+
+        // `nodes` does NOT swallow the instantiated uuids — no cross-array duplication.
+        let nodeUUIDs = Set(nodes.compactMap(\.uuid))
+        let instUUIDs = Set(instantiated.compactMap(\.uuid))
+        #expect(nodeUUIDs.isDisjoint(with: instUUIDs), "instantiated uuid leaked into nodes[]")
+
+        // Globally: every node uuid is unique across both arrays (no corruption).
+        let allUUIDs = nodes.compactMap(\.uuid) + instantiated.compactMap(\.uuid)
+        #expect(allUUIDs.count == Set(allUUIDs).count, "duplicate node uuid across nodes + nodes__instantiated")
+    }
 }
