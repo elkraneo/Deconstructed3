@@ -169,6 +169,76 @@ import RCP3Document
         #expect(model.connections.contains { $0.from == newExecOut && $0.to == existingExecIn })
     }
 
+    // MARK: - Scalar pin literals (author an unwired numeric input)
+
+    /// A lone `make_vector3` exposes its x/y/z as editable, unwired numeric pins;
+    /// `setLiteral` authors a value, which the editable-pin query then reflects, and a
+    /// `nil` clears it.
+    @Test func setLiteralAuthorsAndClearsAScalarPin() {
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [vec], wires: [], data: []))
+
+        // x/y/z are offered as editable numeric pins, all defaulting to 0.
+        let editable = model.editableLiterals(forNode: "v")
+        #expect(editable.map(\.displayName).sorted() == ["X", "Y", "Z"])
+        #expect(editable.allSatisfy { $0.value == 0 })
+
+        // Author the x literal.
+        let x = TMHash.murmur64a("x")
+        model.setLiteral(nodeID: "v", pinConnectorHash: x, value: 2.5)
+        #expect(model.literal(nodeID: "v", pinConnectorHash: x) == 2.5)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == 2.5)
+
+        // Clearing it removes the authored value (pin reverts to default 0).
+        model.setLiteral(nodeID: "v", pinConnectorHash: x, value: nil)
+        #expect(model.literal(nodeID: "v", pinConnectorHash: x) == nil)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == 0)
+    }
+
+    /// A wired input pin is NOT offered as a literal (the wire feeds it); only the
+    /// remaining unwired numeric pins are editable.
+    @Test func wiredPinIsNotLiteralEditable() {
+        let drag = RCP3ScriptGraph.Node(id: "d", type: "tm_gesture_event_drag")
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        // Wire the drag's sceneTranslation → the vector's x input.
+        let wire = RCP3ScriptGraph.Wire(
+            id: "w", from: "d", to: "v",
+            fromPin: TMHash.murmur64a("sceneTranslation"),
+            toPin: TMHash.murmur64a("x")
+        )
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [drag, vec], wires: [wire], data: []))
+
+        let editable = model.editableLiterals(forNode: "v")
+        // x is wired → not editable; y and z remain.
+        #expect(editable.map(\.displayName).sorted() == ["Y", "Z"])
+    }
+
+    /// A scalar `data[]` literal in the source graph seeds the model's editable value.
+    @Test func scalarLiteralFromGraphSeedsEditableValue() {
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        let z = TMHash.murmur64a("z")
+        let literal = RCP3ScriptGraph.DataLiteral(
+            id: "lit", toNode: "v", toPin: z, scalarValue: -3
+        )
+        let model = ScriptGraphEditorModel(
+            graph: RCP3ScriptGraph(nodes: [vec], wires: [], data: [literal])
+        )
+        #expect(model.literal(nodeID: "v", pinConnectorHash: z) == -3)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "Z" }?.value == -3)
+    }
+
+    /// Deleting a node drops the scalar literals bound to it.
+    @Test func deletingNodeDropsItsLiterals() {
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [vec], wires: [], data: []))
+        model.setLiteral(nodeID: "v", pinConnectorHash: TMHash.murmur64a("x"), value: 9)
+        #expect(!model.scalarLiterals.isEmpty)
+
+        model.selectNode("v")
+        model.deleteSelection()
+        #expect(model.scalarLiterals.isEmpty)
+    }
+
     @Test func canvasGeometryResolvesPorts() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let setTranslation = GraphPortRef(nodeID: "n2", pinID: "in." + TMHash.hex(TMHash.murmur64a("translation")))

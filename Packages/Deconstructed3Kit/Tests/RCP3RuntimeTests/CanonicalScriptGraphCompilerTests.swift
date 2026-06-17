@@ -216,6 +216,46 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func authoredScalarLiteralsCompileIntoVectorConstructor() {
+        // The end of the authoring loop: a `make_vector3` feeds a Set Transform, and
+        // its x/z components carry AUTHORED scalar `data[]` literals (the editor wrote
+        // them; the parser reads them back into `DataLiteral.scalarValue`). The unwired
+        // y stays 0. The compiler must emit those literal values verbatim in the
+        // constructor — proving an edited pin value is reflected in Play.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let vec = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wOut = RCP3ScriptGraph.Wire(
+            id: "w3", from: "v", to: "s",
+            fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("translation")
+        )
+        // Authored literals on x (= 2.5) and z (= -4); y unwired → 0.
+        let xLiteral = RCP3ScriptGraph.DataLiteral(
+            id: "lx", toNode: "v", toPin: TMHash.murmur64a("x"), scalarValue: 2.5
+        )
+        let zLiteral = RCP3ScriptGraph.DataLiteral(
+            id: "lz", toNode: "v", toPin: TMHash.murmur64a("z"), scalarValue: -4
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, set, vec],
+            wires: [exec, wOut],
+            data: [xLiteral, zLiteral]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        // The authored x/z literals appear verbatim in the constructor (x first, z
+        // last); the unwired y falls back to 0. Proves an edited pin value is reflected
+        // in the compiled (Play) output.
+        #expect(js.contains("new Math3D.Vector3(2.5, 0 /* y unwired */, -4)"))
+        #expect(js.contains("this.entity.position = new Math3D.Vector3("))
+        // The authored pins are NOT reported as unwired (they carry a literal).
+        #expect(!js.contains("x unwired"))
+        #expect(!js.contains("z unwired"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func unknownDataNodeFallsBackWithoutCrashing() {
         // An unknown node feeding the transform pin must NOT fabricate behavior: it
         // emits a safe fallback expression with an inline `unsupported:` note, and the

@@ -43,8 +43,14 @@ public enum ScriptGraphWriteBack {
     /// `from_connector_hash` / `to_connector_hash` for a data wire (the hex after the
     /// dot of `out.<hex>` / `in.<hex>`). Exec wires omit the hashes.
     ///
-    /// **Data.** `graph.data` is preserved as-is, except literals bound to a deleted
-    /// node (`to_node` no longer present) are dropped, since they can no longer apply.
+    /// **Data.** `graph.data` is preserved as-is, except: literals bound to a deleted
+    /// node (`to_node` no longer present) are dropped, since they can no longer apply;
+    /// and the model's authored **scalar** literals (``ScriptGraphEditorModel/scalarLiterals``)
+    /// are folded in — an existing scalar literal on a `(to_node, to_connector_hash)`
+    /// is updated in place (its value object's `value` member rewritten, identity +
+    /// other members preserved), one with no authored value is dropped, and a newly
+    /// authored pin is appended as a fresh `{ to_node, to_connector_hash, data: { value } }`.
+    /// Non-scalar literals (e.g. the `component_type`) are untouched.
     @MainActor
     public static func patched(asset: TMObject, with model: ScriptGraphEditorModel) -> TMObject {
         guard var graph = asset["graph"]?.objectValue else { return asset }
@@ -71,16 +77,87 @@ public enum ScriptGraphWriteBack {
         let newConnections = model.connections.map { TMValue.object(connectionObject(for: $0)) }
         graph.set(.array(newConnections), forKey: "connections")
 
-        // Preserve `data`, dropping literals whose target node was deleted.
-        if let data = graph["data"]?.arrayValue {
-            let kept = data.filter { value in
-                guard let toNode = value.objectValue?["to_node"]?.stringValue else { return true }
-                return liveIDs.contains(toNode)
-            }
-            graph.set(.array(kept), forKey: "data")
-        }
+        // Preserve `data`, dropping literals whose target node was deleted, then fold
+        // in the model's authored scalar literals (update / drop / append).
+        let existingData = graph["data"]?.arrayValue ?? []
+        graph.set(.array(patchedData(existingData, model: model, liveIDs: liveIDs)), forKey: "data")
 
         return asset.setting(.object(graph), forKey: "graph")
+    }
+
+    // MARK: - Data literal patch (authored scalars)
+
+    /// Rebuilds the `data[]` array: keeps every literal bound to a live node, updating
+    /// or dropping the **scalar** ones to match the model's authored values, then
+    /// appends a fresh literal for each newly-authored pin not already present.
+    @MainActor
+    private static func patchedData(
+        _ existing: [TMValue],
+        model: ScriptGraphEditorModel,
+        liveIDs: Set<String>
+    ) -> [TMValue] {
+        var remaining = model.scalarLiterals // authored pins not yet matched to an existing literal
+        var kept: [TMValue] = []
+
+        for value in existing {
+            guard let object = value.objectValue,
+                  let toNode = object["to_node"]?.stringValue else {
+                kept.append(value)
+                continue
+            }
+            // Drop literals targeting a deleted node.
+            guard liveIDs.contains(toNode) else { continue }
+
+            // A scalar literal: its value object carries a `value` number (and no
+            // named `type` hash — that marks a component-type literal). Reconcile it
+            // with the model's authored value for this pin.
+            let valueObject = object["data"]?.objectValue
+            let isScalarLiteral = valueObject?["value"]?.doubleValue != nil
+                && valueObject?["type"] == nil
+            if isScalarLiteral,
+               let pinHex = object["to_connector_hash"]?.stringValue,
+               let pinHash = UInt64(pinHex, radix: 16) {
+                let key = LiteralKey(nodeID: toNode, pinConnectorHash: pinHash)
+                if let authored = remaining.removeValue(forKey: key) {
+                    // Rewrite the value in place, preserving identity + other members.
+                    kept.append(.object(updatedScalarLiteral(object, value: authored)))
+                }
+                // else: no authored value for this pin → the literal was cleared; drop it.
+                continue
+            }
+
+            // Non-scalar literal (e.g. component_type) — preserved untouched.
+            kept.append(value)
+        }
+
+        // Append a fresh literal for each newly-authored pin (bound to a live node).
+        for (key, scalar) in remaining where liveIDs.contains(key.nodeID) {
+            kept.append(.object(newScalarLiteral(key: key, value: scalar)))
+        }
+        return kept
+    }
+
+    /// `object` with its value object's `value` member rewritten to `value`,
+    /// preserving the literal's `__uuid` and the value object's `__type`/`__uuid`.
+    private static func updatedScalarLiteral(_ object: TMObject, value: Double) -> TMObject {
+        var object = object
+        var valueObject = object["data"]?.objectValue ?? TMObject()
+        valueObject.set(.number(numberLexeme(value)), forKey: "value")
+        object.set(.object(valueObject), forKey: "data")
+        return object
+    }
+
+    /// A fresh scalar data literal `{ __uuid, to_node, to_connector_hash, data: { value } }`
+    /// for a newly-authored pin.
+    private static func newScalarLiteral(key: LiteralKey, value: Double) -> TMObject {
+        var object = TMObject()
+        object.set(.string(UUID().uuidString), forKey: "__uuid")
+        object.set(.string(key.nodeID), forKey: "to_node")
+        object.set(.string(TMHash.hex(key.pinConnectorHash)), forKey: "to_connector_hash")
+        var valueObject = TMObject()
+        valueObject.set(.number(numberLexeme(value)), forKey: "value")
+        object.set(.object(valueObject), forKey: "data")
+        return object
     }
 
     // MARK: - Node patch

@@ -130,11 +130,24 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     }
                 }
         } detail: {
-            if let entity = store.selectedEntity {
-                EntityInspectorView(store: store, entity: entity)
-            } else {
-                ContentUnavailableView("Nothing selected", systemImage: "cube")
-            }
+            detailColumn
+        }
+    }
+
+    /// The detail (inspector) column. In Graph mode with a node selected it shows the
+    /// **Node inspector** (its editable, unwired scalar pin literals) over the
+    /// host-owned `graphModel`; otherwise it falls back to the entity inspector.
+    @ViewBuilder
+    private var detailColumn: some View {
+        if centerMode == .graph,
+           let model = graphModel,
+           let nodeID = model.selectedNodeID,
+           model.node(nodeID) != nil {
+            NodeInspectorView(model: model, nodeID: nodeID)
+        } else if let entity = store.selectedEntity {
+            EntityInspectorView(store: store, entity: entity)
+        } else {
+            ContentUnavailableView("Nothing selected", systemImage: "cube")
         }
     }
 
@@ -498,6 +511,79 @@ struct EntityInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
+    }
+}
+
+// MARK: - Node inspector (scalar pin literals)
+
+/// The detail-pane inspector for a SELECTED graph node: a numeric field per editable
+/// unwired data pin, bound through the host-owned `ScriptGraphEditorModel`. Editing a
+/// value authors a scalar `data[]` literal on that pin; Save (⌘S) writes it back to
+/// the `.tm_script_graph`, and the canonical compiler reads it so Play reflects the
+/// value.
+///
+/// v1 scope is NUMERIC (`Double`) literals — the `make_vector*` components and math
+/// operands the compiler reads as scalars. A node with no editable numeric pins (an
+/// event source, a wired-only node) shows an explanatory placeholder. (Boolean /
+/// string literals, and variable-name authoring, are noted follow-ups that reuse this
+/// inspector.)
+struct NodeInspectorView: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    var body: some View {
+        Form {
+            if let title = model.node(nodeID)?.payload.title {
+                LabeledContent("Node", value: title)
+            }
+
+            let literals = model.editableLiterals(forNode: nodeID)
+            if literals.isEmpty {
+                Section("Inputs") {
+                    Text("This node has no editable values. Wire its inputs, or select a node with numeric pins (e.g. a Vector or a math operator).")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section("Inputs") {
+                    ForEach(literals) { literal in
+                        LiteralRow(model: model, literal: literal)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(model.node(nodeID)?.payload.title ?? "Node")
+    }
+}
+
+/// One editable scalar-literal row: a labelled numeric `TextField` plus a `Stepper`,
+/// both writing through `setLiteral`. The binding reads the pin's current value
+/// (authored, else `0`) and writes the edited number straight to the model.
+private struct LiteralRow: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let literal: EditableLiteral
+
+    private var value: Binding<Double> {
+        Binding(
+            get: { model.literal(nodeID: literal.key.nodeID, pinConnectorHash: literal.key.pinConnectorHash) ?? 0 },
+            set: { model.setLiteral(nodeID: literal.key.nodeID, pinConnectorHash: literal.key.pinConnectorHash, value: $0) }
+        )
+    }
+
+    var body: some View {
+        LabeledContent(literal.displayName) {
+            HStack(spacing: 8) {
+                TextField(literal.displayName, value: value, format: .number)
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 120)
+                    .accessibilityLabel(literal.displayName)
+                Stepper(literal.displayName, value: value)
+                    .labelsHidden()
+                    .accessibilityLabel("\(literal.displayName) stepper")
+            }
+        }
     }
 }
 

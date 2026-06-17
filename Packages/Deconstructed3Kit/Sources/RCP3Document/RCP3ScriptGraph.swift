@@ -75,10 +75,11 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// names (the component type, the enum case, …), not just its container type.
         public let valueHash: UInt64?
         /// A scalar (numeric) constant bound to the pin, when the literal is a plain
-        /// number — e.g. an unwired `make_vector3` component or a math operand. The
-        /// faithful on-disk encoding of scalar literals is not parsed yet (a SwiftUI
-        /// authoring + write-back round-trip lands that); today it is populated
-        /// in-memory (the curated examples) and read by the canonical compiler.
+        /// number — e.g. an unwired `make_vector3` component or a math operand. Read by
+        /// the canonical compiler (an unwired numeric pin compiles to this value), and
+        /// round-tripped through the on-disk `data[]` by the editor's scalar-literal
+        /// authoring: the value object carries a `value` number member
+        /// (`data: { value: <number> }`) which the parser reads back into `scalarValue`.
         public let scalarValue: Double?
 
         public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil, scalarValue: Double? = nil) {
@@ -147,7 +148,11 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 valueType: valueObject?.type,
                 // The value object's plain `type` member (not the reserved `__type`)
                 // carries the named value's hash as a 16-digit hex string.
-                valueHash: valueObject?["type"]?.stringValue.flatMap { UInt64($0, radix: 16) }
+                valueHash: valueObject?["type"]?.stringValue.flatMap { UInt64($0, radix: 16) },
+                // A scalar literal stores its number as the value object's `value`
+                // member (`data: { value: <number> }`) — what the editor authors and
+                // the compiler reads back for an unwired numeric pin.
+                scalarValue: valueObject?["value"]?.doubleValue
             )
         }
     }

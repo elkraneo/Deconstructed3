@@ -67,6 +67,43 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Identifies a single authored pin literal: a node and one of its INPUT data pins
+/// (by `connector_hash = murmur64a(pinName)`). The key into a node's editable
+/// literals and the address ``ScriptGraphEditorModel/setLiteral(nodeID:pinConnectorHash:value:)``
+/// writes through.
+public struct LiteralKey: Hashable, Sendable {
+    public let nodeID: String
+    /// The bound pin's `connector_hash` (`murmur64a(connectorName)`).
+    public let pinConnectorHash: UInt64
+
+    public init(nodeID: String, pinConnectorHash: UInt64) {
+        self.nodeID = nodeID
+        self.pinConnectorHash = pinConnectorHash
+    }
+}
+
+/// One editable, unwired numeric input pin of a node, as surfaced to the inspector:
+/// the pin to author (`key`), its readable name, and its current literal value (the
+/// authored value if set, else the default `0`). Renderer-agnostic — the SwiftUI
+/// inspector binds a numeric field through ``ScriptGraphEditorModel/setLiteral(nodeID:pinConnectorHash:value:)``.
+public struct EditableLiteral: Identifiable, Hashable, Sendable {
+    /// Stable identity for `ForEach`: the pin's handle id (`in.<hex>`).
+    public let id: String
+    /// The bound pin (node + connector hash).
+    public let key: LiteralKey
+    /// The Title Case pin name (e.g. `"X"`, `"A"`).
+    public let displayName: String
+    /// The pin's current literal value: the authored value, else `0`.
+    public let value: Double
+
+    public init(id: String, key: LiteralKey, displayName: String, value: Double) {
+        self.id = id
+        self.key = key
+        self.displayName = displayName
+        self.value = value
+    }
+}
+
 /// The editor's observable state + interaction logic, shared across renderers.
 ///
 /// It owns the logical graph (nodes + connections), selection, and an in-progress
@@ -77,6 +114,15 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
 public final class ScriptGraphEditorModel {
     public private(set) var nodes: [GraphNodeBox]
     public private(set) var connections: [GraphConnection]
+
+    /// Authored scalar (`Double`) pin literals, keyed by the bound pin. Each is a
+    /// constant value fed into a node's INPUT data pin when no wire feeds it — the
+    /// editor's writable mirror of the graph's `data[]` scalar literals. Seeded from
+    /// the source graph at `init` (any `data` literal carrying a scalar), updated by
+    /// ``setLiteral(nodeID:pinConnectorHash:value:)``, and folded back into `data[]`
+    /// by ``ScriptGraphWriteBack``. The canonical compiler reads these so an edited
+    /// value is reflected in Play.
+    public private(set) var scalarLiterals: [LiteralKey: Double]
 
     /// The selected node, if any.
     public var selectedNodeID: String?
@@ -125,6 +171,17 @@ public final class ScriptGraphEditorModel {
             }
         }
         connections = conns
+
+        // Seed the writable scalar literals from the source graph's `data[]`: any
+        // literal carrying a scalar (a numeric constant on an unwired pin) becomes an
+        // authored value the inspector can edit and write-back can persist.
+        var seeded: [LiteralKey: Double] = [:]
+        for literal in graph.data {
+            if let scalar = literal.scalarValue {
+                seeded[LiteralKey(nodeID: literal.toNode, pinConnectorHash: literal.toPin)] = scalar
+            }
+        }
+        scalarLiterals = seeded
     }
 
     static let fallbackLaneSpacing: Double = 320
@@ -162,6 +219,90 @@ public final class ScriptGraphEditorModel {
         nodes.append(GraphNodeBox(id: newID, position: position, payload: payload))
         selectNode(newID)
         return newID
+    }
+
+    // MARK: Scalar pin literals (author an unwired numeric input)
+
+    /// The editable, unwired numeric INPUT pins of node `id`, in declared order — the
+    /// rows the node inspector shows. A pin qualifies when it is a *numeric* data
+    /// input the node type declares (per ``ScriptGraphNodeLibrary``) and **no wire**
+    /// feeds it. Scope (v1): the components of `make_vector*`/`make_cgsize`/… and the
+    /// math operands the compiler reads as scalars (`a`, `b`, `x`, `y`, `z`, `w`, …).
+    /// Each row's `value` is the authored literal if set, else the default `0`.
+    ///
+    /// Returns `[]` for an unknown node id or a node with no editable numeric pins.
+    public func editableLiterals(forNode id: String) -> [EditableLiteral] {
+        guard let box = node(id) else { return [] }
+        return box.payload.inputPins.compactMap { pin -> EditableLiteral? in
+            guard !pin.isExec else { return nil }
+            // Only pins whose connector name is a recognized scalar component (so we
+            // don't offer a numeric field for an Entity/Component/Vector input).
+            guard let hash = Self.connectorHash(forInputPinID: pin.id),
+                  Self.isScalarConnector(hash) else { return nil }
+            // An input already fed by a wire is not literal-editable (the wire wins).
+            let ref = GraphPortRef(nodeID: id, pinID: pin.id)
+            guard connections(touching: ref).allSatisfy({ $0.to != ref }) else { return nil }
+
+            let key = LiteralKey(nodeID: id, pinConnectorHash: hash)
+            return EditableLiteral(
+                id: pin.id,
+                key: key,
+                displayName: pin.label,
+                value: scalarLiterals[key] ?? 0
+            )
+        }
+    }
+
+    /// The authored scalar literal on a pin, or `nil` when none is set.
+    public func literal(nodeID: String, pinConnectorHash: UInt64) -> Double? {
+        scalarLiterals[LiteralKey(nodeID: nodeID, pinConnectorHash: pinConnectorHash)]
+    }
+
+    /// Sets (or clears) the scalar literal bound to a node's input data pin. The pin
+    /// is addressed by its `connector_hash` (`murmur64a(connectorName)`). Passing
+    /// `nil` removes the authored literal (the pin reverts to the compiler's default).
+    /// Mutating `scalarLiterals` marks the model changed; write-back then folds the
+    /// value into the asset's `data[]`.
+    public func setLiteral(nodeID: String, pinConnectorHash: UInt64, value: Double?) {
+        let key = LiteralKey(nodeID: nodeID, pinConnectorHash: pinConnectorHash)
+        if let value {
+            scalarLiterals[key] = value
+        } else {
+            scalarLiterals.removeValue(forKey: key)
+        }
+    }
+
+    /// The `connector_hash` carried by a data INPUT pin id (`in.<hex>`), or `nil` for
+    /// an exec pin / an unparsable id.
+    static func connectorHash(forInputPinID pinID: String) -> UInt64? {
+        guard pinID.hasPrefix("in.") else { return nil }
+        return UInt64(pinID.dropFirst(3), radix: 16)
+    }
+
+    /// The connector hashes of the input-pin names the editor treats as plain scalars
+    /// (the values the canonical compiler reads as numbers): vector/size/color/matrix
+    /// components and math operands. A pin whose hash is in this set gets a numeric
+    /// literal field; everything else (Entity, Component, Vector inputs) does not.
+    static let scalarConnectorHashes: Set<UInt64> = {
+        // The faithful connector names of numeric component/operand pins across the
+        // node library (make_vector*, make_color/cgcolor, make_cgsize, make_edge_insets,
+        // and the math operands the compiler reads via `inputExpression`).
+        let names = [
+            "x", "y", "z", "w",                  // make_vector2/3/4
+            "a", "b", "exponent",                // math operands (binary + pow)
+            "min", "max", "val",                 // clamp / within_range / random
+            "number",                            // multiply_by_scalar
+            "degrees", "rad", "angle",           // rotation scalars
+            "red", "green", "blue", "alpha",     // colors
+            "width", "height",                   // cgsize
+            "top", "left", "bottom", "right",    // edge insets
+            "length", "index",                   // string slicing offsets
+        ]
+        return Set(names.map(TMHash.murmur64a))
+    }()
+
+    static func isScalarConnector(_ hash: UInt64) -> Bool {
+        scalarConnectorHashes.contains(hash)
     }
 
     // MARK: Node movement (position is renderer-space-agnostic data)
@@ -249,6 +390,9 @@ public final class ScriptGraphEditorModel {
         } else if let id = selectedNodeID {
             connections.removeAll { $0.from.nodeID == id || $0.to.nodeID == id }
             nodes.removeAll { $0.id == id }
+            // Drop any authored literals bound to the deleted node (they can no longer
+            // apply, mirroring write-back's pruning of `data[]` for deleted nodes).
+            scalarLiterals = scalarLiterals.filter { $0.key.nodeID != id }
             selectedNodeID = nil
         }
     }

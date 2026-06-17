@@ -254,6 +254,128 @@ import RCP3Document
         #expect((graph["data"]?.arrayValue ?? []).isEmpty)
     }
 
+    // MARK: - Scalar literal authoring round-trips through data[]
+
+    /// A minimal asset with a single `tm_make_vector3` node and NO data literals — a
+    /// clean canvas for authoring scalar pin literals.
+    static func vectorAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "root-uuid"
+        graph: {
+        \t__uuid: "graph-uuid"
+        \tnodes: [
+        \t\t{
+        \t\t\t__uuid: "v1"
+        \t\t\ttype: "tm_make_vector3"
+        \t\t\tposition: {
+        \t\t\t\t__uuid: "pv"
+        \t\t\t\tx: 0
+        \t\t\t\ty: 0
+        \t\t\t}
+        \t\t}
+        \t]
+        \tconnections: [
+        \t]
+        \tdata: [
+        \t]
+        }
+        __asset_uuid: "asset-uuid"
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    /// Authoring a scalar literal on an unwired numeric pin survives a write → parse
+    /// round-trip: the value lands in `data[]` and re-parses back to the same number
+    /// (read by `RCP3ScriptGraph.scalarLiteral`).
+    @Test func authoredScalarLiteralRoundTrips() throws {
+        let asset = try Self.vectorAsset()
+        let model = try Self.model(for: asset)
+
+        let x = TMHash.murmur64a("x")
+        let z = TMHash.murmur64a("z")
+        model.setLiteral(nodeID: "v1", pinConnectorHash: x, value: 2.5)
+        model.setLiteral(nodeID: "v1", pinConnectorHash: z, value: -4)
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+
+        // Two scalar literals were written into data[].
+        let data = try #require(tmGraph["data"]?.arrayValue)
+        #expect(data.count == 2)
+
+        // Re-parse to a display graph and read the scalars back.
+        let graph = RCP3ScriptGraph(tmGraph: tmGraph)
+        #expect(graph.scalarLiteral(node: "v1", pin: x) == 2.5)
+        #expect(graph.scalarLiteral(node: "v1", pin: z) == -4)
+
+        // And a fresh editor model re-seeds those authored values.
+        let reloaded = ScriptGraphEditorModel(graph: graph)
+        #expect(reloaded.literal(nodeID: "v1", pinConnectorHash: x) == 2.5)
+        #expect(reloaded.literal(nodeID: "v1", pinConnectorHash: z) == -4)
+    }
+
+    /// Editing an existing scalar literal rewrites its value in place (preserving the
+    /// literal's identity); clearing it drops the literal from data[].
+    @Test func editingAndClearingScalarLiteral() throws {
+        let asset = try Self.vectorAsset()
+        let x = TMHash.murmur64a("x")
+
+        // Start with an authored literal, write it, then re-open from the written form.
+        let model = try Self.model(for: asset)
+        model.setLiteral(nodeID: "v1", pinConnectorHash: x, value: 1)
+        let firstWrite = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let firstReparsed = try #require(try TM.parse(firstWrite.tmText()).objectValue)
+        let literalUUID = try #require(
+            firstReparsed["graph"]?.objectValue?["data"]?.arrayValue?.first?.objectValue?.uuid
+        )
+
+        // EDIT: change the value; the literal keeps its __uuid (updated in place).
+        let edited = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: try #require(firstReparsed["graph"]?.objectValue)))
+        edited.setLiteral(nodeID: "v1", pinConnectorHash: x, value: 7.5)
+        let editWrite = ScriptGraphWriteBack.patched(asset: firstReparsed, with: edited)
+        let editReparsed = try #require(try TM.parse(editWrite.tmText()).objectValue)
+        let editData = try #require(editReparsed["graph"]?.objectValue?["data"]?.arrayValue)
+        #expect(editData.count == 1)
+        #expect(editData.first?.objectValue?.uuid == literalUUID) // identity preserved
+        #expect(RCP3ScriptGraph(tmGraph: try #require(editReparsed["graph"]?.objectValue))
+            .scalarLiteral(node: "v1", pin: x) == 7.5)
+
+        // CLEAR: removing the authored value drops the literal entirely.
+        let cleared = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: try #require(editReparsed["graph"]?.objectValue)))
+        cleared.setLiteral(nodeID: "v1", pinConnectorHash: x, value: nil)
+        let clearWrite = ScriptGraphWriteBack.patched(asset: editReparsed, with: cleared)
+        let clearReparsed = try #require(try TM.parse(clearWrite.tmText()).objectValue)
+        #expect((clearReparsed["graph"]?.objectValue?["data"]?.arrayValue ?? []).isEmpty)
+    }
+
+    /// Authoring a scalar literal does NOT disturb a non-scalar (`component_type`)
+    /// literal already in the graph — both survive the round-trip.
+    @Test func authoredScalarLiteralPreservesComponentTypeLiteral() throws {
+        let asset = try Self.handBuiltAsset() // has the component_type literal on n2
+        let model = try Self.model(for: asset)
+
+        // Author a numeric literal on n2's `scale` input (unwired numeric-ish pin).
+        let scale = TMHash.murmur64a("scale")
+        model.setLiteral(nodeID: "n2", pinConnectorHash: scale, value: 3)
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+        let data = try #require(tmGraph["data"]?.arrayValue).compactMap(\.objectValue)
+
+        // The component_type literal is intact.
+        let componentType = try #require(
+            data.first { $0["data"]?.objectValue?.type == "re_scripting_graph_component_type" }
+        )
+        #expect(componentType.uuid == "d1")
+        #expect(componentType["data"]?.objectValue?["type"]?.stringValue == "8c878bd87b046f80")
+
+        // The authored scalar literal is present and reads back.
+        #expect(RCP3ScriptGraph(tmGraph: tmGraph).scalarLiteral(node: "n2", pin: scale) == 3)
+    }
+
     // MARK: - Round trip against the Random capture (skips when absent)
 
     /// The workspace-local `Random` capture (a box with a `re_scripting_component`),
