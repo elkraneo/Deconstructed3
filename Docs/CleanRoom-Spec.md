@@ -337,12 +337,23 @@ declared type (an unresolved reference falls back to an "any" type id).
   over a per-entity storage bag, keyed by the variable, and consume the `Variable`
   Entity input pin. Clear gates on whether the key is present before clearing.
 
-> **Unconfirmed — needs a captured `.tm_` graph that uses a variable.** The *on-disk*
-> serialization of the `tm_graph_variable_ref` settings field and of the graph-level
-> variable table (field order for name/type/default) is not yet locked. The **emission**
-> above (and the slot = `MurmurHash64A(lowercase(name))` rule) is high-confidence and can
-> be implemented now; the **save/round-trip** of an authored variable must be verified
-> against a real capture before it is trusted.
+**On-disk serialization (confirmed from a captured graph).** A graph that uses
+variables stores, inside its `graph` object:
+
+- A **variable table** under `variables:` — one entry per declared variable, each
+  `{ __uuid, name }` (a type/default presumably appears once set; a freshly-declared
+  variable carries just `__uuid` + `name`).
+- A **per-node reference** in the graph's `data:` array — one entry per variable node,
+  shaped exactly like a pin data-literal: `{ __uuid, to_node: <variable-node uuid>,
+  to_connector_hash: <murmur64a("name")>, data: { __type: "tm_graph_variable_ref",
+  __uuid, ref: <variable __uuid>, name: <variable name> } }`. So the node's **`name`**
+  input connector carries a `tm_graph_variable_ref` value that points at the table entry
+  by `ref` (uuid) and denormalizes the `name`.
+
+Round-trip therefore is: parse `variables:` into a table; for each `tm_graph_variable_ref`
+data entry, attach its `name` to the node identified by `to_node`. Writing back emits the
+`variables:` table plus one `tm_graph_variable_ref` data entry per variable node. The
+compile slot remains `variable_<MurmurHash64A(lowercase(name))>`.
 
 **Deferred — dynamic pins, pending a follow-up harvest.** A residual family still
 presents a fully **dynamic** pin set the editor grows from configuration, beyond the
