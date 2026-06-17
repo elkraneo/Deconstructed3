@@ -15,7 +15,18 @@ import RealityKitScripting
 public final class ScriptLog {
     public private(set) var entries: [LogEntry] = []
 
-    func append(_ entry: LogEntry) { entries.append(entry) }
+    /// Upper bound on retained entries. The process-global logger forwards every
+    /// scene's `console.*` + exceptions here for the whole session, so without a
+    /// cap the array grows unbounded. The console only shows the tail, so we keep
+    /// a rolling window of the most recent entries.
+    static let maxEntries = 2000
+
+    func append(_ entry: LogEntry) {
+        entries.append(entry)
+        if entries.count > Self.maxEntries {
+            entries.removeFirst(entries.count - Self.maxEntries)
+        }
+    }
     public func clear() { entries.removeAll() }
 
     /// A one-line rendering of an entry for a console panel.

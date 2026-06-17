@@ -28,6 +28,11 @@ public struct CanonicalPlayView: View {
     /// Whether the runtime-log console overlay is shown. Collapsed by default so the
     /// inline 3D viewport isn't dominated; a small toolbar button toggles it.
     @State private var showsConsole = false
+    /// Weakly holds the running scene so Stop (this view disappearing) can make the
+    /// SYMMETRIC `enableDebugger(false)` call for the context it enabled below. RKS
+    /// exposes no auto-teardown, so without this each Play leaves a debugger-registered
+    /// JSContext behind. Weak: this view must never keep the scene/context alive.
+    @State private var session = PlaySession()
 
     public init(graph: RCP3ScriptGraph) {
         self.source = CanonicalScriptGraphCompiler().compile(graph)
@@ -52,11 +57,18 @@ public struct CanonicalPlayView: View {
             // (breakpoints, stepping, live console, evaluate).
             box.scene?.renameJSContext("Deconstructed 3 — Script Graph")
             box.scene?.enableDebugger(true)
+            // Capture the scene so teardown can disable the debugger it just enabled
+            // (mutates the holder, not @State — safe inside the make closure).
+            session.scene = box.scene
         }
         .realityScripting()
         #if os(macOS) || os(iOS)
         .realityViewCameraControls(.orbit)
         #endif
+        // Stop = this view disappears. Disable the debugger for the context we enabled
+        // so it doesn't linger registered with the Web Inspector (the leak fix). If the
+        // scene already deallocated, the weak ref is nil and this is a no-op.
+        .onDisappear { session.scene?.enableDebugger(false) }
         // Console as a small, collapsible OVERLAY pinned to the bottom — it doesn't
         // dominate the inline viewport, and a toggle in the top-right reveals it.
         .overlay(alignment: .topTrailing) {
@@ -83,6 +95,16 @@ public struct CanonicalPlayView: View {
             validationError = CanonicalRuntime.validationError(in: source)
         }
     }
+}
+
+/// Weakly retains the running Play scene so the view's teardown can disable the JS
+/// debugger it enabled. A reference holder (not a value) so the make closure can set
+/// it without mutating `@State` during a view update; weak so it never keeps the
+/// scene — and thus the JSContext — alive past Stop.
+@MainActor
+final class PlaySession {
+    weak var scene: RealityKit.Scene?
+    init() {}
 }
 
 /// A live console showing Apple's structured runtime log — script `console` output
