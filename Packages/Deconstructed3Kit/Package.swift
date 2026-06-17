@@ -30,11 +30,11 @@ let package = Package(
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
     ],
     dependencies: [
-        // StageView — TEMPORARILY pinned to the LOCAL checkout while consuming
-        // the unreleased 0.3.27 entity-source adoption APIs. Flip back to the
-        // pinned git URL once 0.3.27 is published:
-        //   .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.27"),
-        .package(path: "../../../../../StageView"),
+        // StageView — the proven RealityKit viewport. Pinned to the published git
+        // tag (entity-source adoption APIs landed in 0.3.27), so the repo is
+        // clone-and-build anywhere with no local sibling required. For active
+        // StageView development, swap to `.package(path: "../../../../../StageView")`.
+        .package(url: "https://github.com/Reality2713/StageView.git", from: "0.3.28"),
         // TCA is available transitively through StageView; we depend on it
         // DIRECTLY here so `DeconstructedFeature` can own a `@Reducer` feature.
         // Pinned to the same revision StageView resolves (1.26.0).

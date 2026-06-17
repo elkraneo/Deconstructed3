@@ -11,12 +11,21 @@
       }
     },
     {
+      "identity" : "realitykitscripting",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/realitykitscripting.git",
+      "state" : {
+        "revision" : "e0a8a395f3c0f935e98df715f021770dcd3f47f1",
+        "version" : "1.0.0"
+      }
+    },
+    {
       "identity" : "stageview",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Reality2713/StageView.git",
       "state" : {
-        "revision" : "efc801a74c59439073d0e43711a1da84e886d615",
-        "version" : "0.3.26"
+        "revision" : "bcac5adbd04ce881f6cce25e458a9885e6f43a76",
+        "version" : "0.3.28"
       }
     },
     {
