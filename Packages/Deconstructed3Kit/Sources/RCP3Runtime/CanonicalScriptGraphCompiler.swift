@@ -38,12 +38,12 @@ import TMFormat
 ///
 /// Emitted JS is grounded ONLY in the **public** `apple/realitykitscripting`
 /// surface (the documented `RealityKit` / `Math3D` modules + the lifecycle/gesture
-/// shapes in its `overview.md`) and in plain ECMAScript (`Math.*`, operators). The
-/// only `Math3D` function name the public docs actually show is `Math3D.add` (used
-/// by the reference drag handler) and the constructors `new Math3D.Vector3(…)` /
-/// `new Math3D.Quaternion(…)`. Vector operations whose `Math3D` names are NOT
-/// publicly documented (dot, cross, subtract, length, …) are emitted as plain-JS
-/// fallbacks with an inline `/* … */` note rather than a fabricated `Math3D.*` call.
+/// shapes in its `overview.md`) and in plain ECMAScript (`Math.*`, operators).
+/// Math3D calls are limited to names visible in that package's public surface
+/// (`add`, `multiplyByScalar`, quaternion helpers, and constructors). Vector
+/// operations whose `Math3D` names are NOT publicly documented (dot, cross,
+/// subtract, length, …) are emitted as plain-JS fallbacks with an inline `/* … */`
+/// note rather than a fabricated `Math3D.*` call.
 ///
 /// Node types with no faithful mapping become a `0 /* unsupported: <type> */`
 /// expression (data) or a `// unsupported node: <type>` statement (action) — an
@@ -720,6 +720,23 @@ public struct CanonicalScriptGraphCompiler {
                 let bName = node.type == "tm_math_pow" ? "exponent" : "b"
                 let b = inputExpression(into: node, pinName: bName, context: context, seen: &seen)
                 return emitBinaryMath(node.type, op: op, a: a, b: b)
+            }
+
+            if node.type == "tm_math_clamp" {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let lo = inputExpression(into: node, pinName: "min", context: context, seen: &seen)
+                let hi = inputExpression(into: node, pinName: "max", context: context, seen: &seen)
+                return Expr("Math.min(Math.max(\(a.code), \(lo.code)), \(hi.code))")
+            }
+
+            if node.type == "tm_math_multiply_by_scalar" {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let number = inputExpression(into: node, pinName: "number", context: context, seen: &seen)
+                if a.isVector {
+                    usesMath3D = true
+                    return Expr("Math3D.multiplyByScalar(\(a.code), \(number.code))", isVector: true)
+                }
+                return Expr("(\(a.code) * \(number.code))")
             }
 
             // Comparison nodes (scalar → bool). The library names the operands `a`/`b`

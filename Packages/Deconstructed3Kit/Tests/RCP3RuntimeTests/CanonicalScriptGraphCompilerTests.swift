@@ -179,6 +179,73 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func clampCompilesToNestedMathMinMax() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_variable_node", variableName: "clamped")
+        let clamp = RCP3ScriptGraph.Node(id: "m", type: "tm_math_clamp")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(
+                id: "out", from: "m", to: "s",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "a", toNode: "m", toPin: TMHash.murmur64a("a"), scalarValue: 12),
+            RCP3ScriptGraph.DataLiteral(id: "min", toNode: "m", toPin: TMHash.murmur64a("min"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "max", toNode: "m", toPin: TMHash.murmur64a("max"), scalarValue: 8),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, clamp], wires: wires, data: data))
+
+        #expect(js.contains(" = Math.min(Math.max(12, 2), 8);"))
+        #expect(!js.contains("const Math3D = require"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func multiplyByScalarCompilesScalarAndVectorForms() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setScalar = RCP3ScriptGraph.Node(id: "setScalar", type: "tm_set_variable_node", variableName: "scaled")
+        let setVector = RCP3ScriptGraph.Node(id: "setVector", type: "tm_set_component")
+        let scalarMultiply = RCP3ScriptGraph.Node(id: "scalar", type: "tm_math_multiply_by_scalar")
+        let vectorMultiply = RCP3ScriptGraph.Node(id: "vector", type: "tm_math_multiply_by_scalar")
+        let vec = RCP3ScriptGraph.Node(id: "vec", type: "tm_make_vector3")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "setScalar"),
+            RCP3ScriptGraph.Wire(id: "e2", from: "u", to: "setVector"),
+            RCP3ScriptGraph.Wire(
+                id: "scalarOut", from: "scalar", to: "setScalar",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "vecIn", from: "vec", to: "vector",
+                fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "vectorOut", from: "vector", to: "setVector",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "sa", toNode: "scalar", toPin: TMHash.murmur64a("a"), scalarValue: 4),
+            RCP3ScriptGraph.DataLiteral(id: "sn", toNode: "scalar", toPin: TMHash.murmur64a("number"), scalarValue: 3),
+            RCP3ScriptGraph.DataLiteral(id: "vx", toNode: "vec", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "vy", toNode: "vec", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "vz", toNode: "vec", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+            RCP3ScriptGraph.DataLiteral(id: "vn", toNode: "vector", toPin: TMHash.murmur64a("number"), scalarValue: 0.5),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(
+            RCP3ScriptGraph(nodes: [update, setScalar, setVector, scalarMultiply, vectorMultiply, vec], wires: wires, data: data)
+        )
+
+        #expect(js.contains(" = (4 * 3);"))
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("this.entity.position = Math3D.multiplyByScalar(new Math3D.Vector3(1, 2, 3), 0.5);"))
+        #expect(!js.contains("TODO: vector op"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func unaryMathAndVectorConstructorCompile() {
         // On Update → Set.translation = Vector3(sin(π), 0, 0): unary Math.* feeding a
         // Math3D.Vector3 constructor (the one publicly-documented Math3D constructor).
