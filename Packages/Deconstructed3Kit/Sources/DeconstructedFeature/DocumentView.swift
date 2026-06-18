@@ -533,6 +533,10 @@ struct EntityInspectorView: View {
             }
             LabeledContent("Children", value: "\(entity.children.count)")
 
+            if store.selectedEntityTransform != nil {
+                TransformSection(store: store)
+            }
+
             if !entity.componentTypes.isEmpty {
                 Section("Components") {
                     ForEach(Array(entity.componentTypes.enumerated()), id: \.offset) { _, type in
@@ -547,6 +551,121 @@ struct EntityInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
+    }
+}
+
+// MARK: - Transform section (editable local transform)
+
+/// The editable local-transform block of the entity inspector: position (x/y/z),
+/// rotation (presented as **Euler degrees** x/y/z for usability, converted to/from the
+/// stored quaternion on every edit), and scale (x/y/z). Each field writes through
+/// `DocumentFeature.Action.transformEdited`, which folds the value into the entity's
+/// `tm_transform_component` and marks the document dirty so Save (⌘S) persists it.
+///
+/// The fields read the live (possibly unsaved) transform off the store, so an edit to
+/// one axis re-renders the others consistently. Only shown when the selected entity
+/// actually carries a transform (`store.selectedEntityTransform != nil`).
+struct TransformSection: View {
+    @Bindable var store: StoreOf<DocumentFeature>
+
+    /// The live transform, or identity as a safe fallback (the parent only mounts this
+    /// view when a transform is present, so the fallback is never displayed).
+    private var transform: RCP3Transform {
+        store.selectedEntityTransform ?? .identity
+    }
+
+    var body: some View {
+        Section("Transform") {
+            transformRow(
+                "Position",
+                x: positionBinding(\.translation.x) { $0.translation.x = $1 },
+                y: positionBinding(\.translation.y) { $0.translation.y = $1 },
+                z: positionBinding(\.translation.z) { $0.translation.z = $1 }
+            )
+            transformRow(
+                "Rotation",
+                x: eulerBinding(\.x) { $0.x = $1 },
+                y: eulerBinding(\.y) { $0.y = $1 },
+                z: eulerBinding(\.z) { $0.z = $1 },
+                suffix: "°"
+            )
+            transformRow(
+                "Scale",
+                x: positionBinding(\.scale.x) { $0.scale.x = $1 },
+                y: positionBinding(\.scale.y) { $0.scale.y = $1 },
+                z: positionBinding(\.scale.z) { $0.scale.z = $1 }
+            )
+        }
+    }
+
+    /// A binding to a translation/scale component: reads through `read`, and on write
+    /// rebuilds the whole transform via `write` and sends `.transformEdited`.
+    private func positionBinding(
+        _ read: KeyPath<RCP3Transform, Double>,
+        write: @escaping (inout RCP3Transform, Double) -> Void
+    ) -> Binding<Double> {
+        Binding(
+            get: { transform[keyPath: read] },
+            set: { newValue in
+                var edited = transform
+                write(&edited, newValue)
+                store.send(.transformEdited(edited))
+            }
+        )
+    }
+
+    /// A binding to one Euler-degree axis of the rotation: reads the derived Euler
+    /// angles, and on write rebuilds the quaternion from the edited angles.
+    private func eulerBinding(
+        _ axis: KeyPath<(x: Double, y: Double, z: Double), Double>,
+        write: @escaping (inout (x: Double, y: Double, z: Double), Double) -> Void
+    ) -> Binding<Double> {
+        Binding(
+            get: { transform.eulerDegrees[keyPath: axis] },
+            set: { newValue in
+                var degrees = transform.eulerDegrees
+                write(&degrees, newValue)
+                store.send(.transformEdited(transform.settingEulerDegrees(degrees)))
+            }
+        )
+    }
+
+    /// A labelled x/y/z row of numeric fields, each with an optional unit suffix.
+    @ViewBuilder
+    private func transformRow(
+        _ title: String,
+        x: Binding<Double>,
+        y: Binding<Double>,
+        z: Binding<Double>,
+        suffix: String = ""
+    ) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                axisField("X", title: title, value: x, suffix: suffix)
+                axisField("Y", title: title, value: y, suffix: suffix)
+                axisField("Z", title: title, value: z, suffix: suffix)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func axisField(
+        _ axis: String,
+        title: String,
+        value: Binding<Double>,
+        suffix: String
+    ) -> some View {
+        HStack(spacing: 2) {
+            Text(axis).font(.caption2).foregroundStyle(.secondary)
+            TextField(axis, value: value, format: .number)
+                .labelsHidden()
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 64)
+                .accessibilityLabel("\(title) \(axis)")
+            if !suffix.isEmpty {
+                Text(suffix).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

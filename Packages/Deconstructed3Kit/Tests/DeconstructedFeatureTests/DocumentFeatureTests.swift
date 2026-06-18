@@ -162,6 +162,96 @@ import Testing
         )
     }
 
+    // MARK: open → select → transformEdited → saveTapped → reopen
+
+    /// A minimal world whose box carries an inherited (identity) transform component,
+    /// so the inspector's transform editing has something to override.
+    static let worldWithBoxTransform = """
+    __type: "tm_entity"
+    __uuid: "4ed8c306-8868-275b-5a64-c75d82d13db5"
+    name: "world"
+    children: [
+      {
+        __uuid: "9cc43bcd-448b-c524-ef9a-16696d9feb7a"
+        __prototype_type: "tm_entity"
+        __prototype_uuid: "05fe482f-df58-c56a-fa4b-ddf77c8dcfa0"
+        name: "box"
+        components__instantiated: [
+          {
+            __type: "tm_transform_component"
+            __uuid: "3dcae77c-3539-b923-144a-4a172d99fe8d"
+            __prototype_type: "tm_transform_component"
+            __prototype_uuid: "a2fed85d-b27e-81ad-31ed-843c8efc7d97"
+            local_rotation: {
+              __uuid: "5ec96c4e-91ca-9137-76e7-ea2a7c9dc624"
+              __prototype_type: "tm_rotation"
+              __prototype_uuid: "57af832e-ffd8-3b93-df13-c9e5698f7cb2"
+            }
+          }
+        ]
+      }
+    ]
+    __asset_uuid: "5512ba55-a43b-8e72-7c89-2650f503b325"
+    """
+
+    @Test func transformEditMarksDirtyAndPersists() async throws {
+        let dir = try Self.makeTempBundle(world: Self.worldWithBoxTransform)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        } withDependencies: {
+            $0.documentClient = .live
+        }
+
+        let opened = try RCP3Editor.open(dir)
+        await store.send(.openTapped(dir))
+        await store.receive(\.opened.success) {
+            $0.editor = opened
+            $0.selection = opened.entity.id
+        }
+
+        // SELECT the box and read its (identity) transform off the store.
+        let boxID = try #require(opened.entity.children.first?.id)
+        await store.send(.selected(boxID)) {
+            $0.selection = boxID
+        }
+        let current = try #require(store.state.selectedEntityTransform)
+        #expect(current == .identity)
+
+        // EDIT the rotation through the inspector's action.
+        var edited = current
+        edited.rotation = (
+            x: -0.02881590835750103,
+            y: -0.28827366232872009,
+            z: -0.17299818992614746,
+            w: 0.94134980440139771
+        )
+        var editedEditor = opened
+        editedEditor.setTransform(edited, forEntityID: boxID)
+        await store.send(.transformEdited(edited)) {
+            $0.editor = editedEditor
+        }
+        #expect(store.state.hasUnsavedChanges)
+        #expect(store.state.selectedEntityTransform?.rotation.w == 0.94134980440139771)
+
+        // SAVE and reopen — the rotation override persisted.
+        var savedEditor = editedEditor
+        try savedEditor.save()
+        await store.send(.saveTapped)
+        await store.receive(\.saved.success) {
+            $0.editor = savedEditor
+        }
+        #expect(!store.state.hasUnsavedChanges)
+
+        let reopened = try RCP3Editor.open(dir)
+        let reopenedTransform = try #require(reopened.transform(forEntityID: boxID))
+        #expect(reopenedTransform.rotation.x == -0.02881590835750103)
+        #expect(reopenedTransform.rotation.w == 0.94134980440139771)
+        #expect(reopenedTransform.translation == RCP3Transform.identity.translation)
+        #expect(reopenedTransform.scale == RCP3Transform.identity.scale)
+    }
+
     @Test func renamingRootReflectsInSceneGraph() async throws {
         let dir = try Self.makeTempBundle(world: Self.minimalWorld)
         defer { try? FileManager.default.removeItem(at: dir) }

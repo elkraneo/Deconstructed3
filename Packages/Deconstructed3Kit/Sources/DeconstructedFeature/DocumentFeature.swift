@@ -72,6 +72,14 @@ public struct DocumentFeature: Sendable {
             return Self.find(selection, in: rootEntity)
         }
 
+        /// The local transform of the currently selected entity, read from the live
+        /// editor (inherited/omitted components fall back to the identity defaults).
+        /// `nil` when nothing is selected or the entity has no `tm_transform_component`.
+        public var selectedEntityTransform: RCP3Transform? {
+            guard let editor, let selection else { return nil }
+            return editor.transform(forEntityID: selection)
+        }
+
         /// The script graph attached to the selected entity (via its
         /// `re_scripting_component`), or `nil` when there is none. Resolved against
         /// the live editor's root + bundle, so it follows the current selection.
@@ -120,6 +128,9 @@ public struct DocumentFeature: Sendable {
         case exampleSelected(id: String, graph: RCP3ScriptGraph?)
         /// The inspector's name field edited the selected entity to this string.
         case nameEdited(String)
+        /// The inspector's transform fields edited the selected entity's local
+        /// transform. Mutates the live `tm_transform_component` and marks dirty.
+        case transformEdited(RCP3Transform)
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -191,6 +202,11 @@ public struct DocumentFeature: Sendable {
             case let .nameEdited(newName):
                 guard let id = state.selection else { return .none }
                 state.editor?.renameEntity(id: id, to: newName)
+                return .none
+
+            case let .transformEdited(transform):
+                guard let id = state.selection else { return .none }
+                state.editor?.setTransform(transform, forEntityID: id)
                 return .none
 
             case .saveTapped:

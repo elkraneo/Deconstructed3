@@ -92,6 +92,67 @@ children: [
 child_sort_values: [ { child: "<box uuid>" } ]
 ```
 
+## Entity transform editing — write-back (observed)
+
+Captured by saving the same project twice in RCP3 — once untouched (`Random3
+(base)`), once after editing **only** the box's rotation in the inspector (`Random3
+(transformed)`) — and diffing the two `world.tm_entity` files. The files differ in
+**exactly four lines**: `x`, `y`, `z`, `w` appearing inside the box's
+`local_rotation`. Everything else (every `__uuid`, the `components__instantiated`
+slot, the unedited position/scale subobjects) is byte-identical.
+
+A `tm_transform_component` carries three value subobjects, each a UUID'd, prototype-
+instanced object: `local_position_double` (`tm_position_double`), `local_rotation`
+(`tm_rotation`), and `local_scale` (`tm_scale`). In the **base** file all three are
+present but hold only their identity members (`__uuid`, `__prototype_type`,
+`__prototype_uuid`) — no value fields — so each **inherits** its prototype's value
+(the geometry library's identity transform). The **transformed** file's
+`local_rotation` gains four value fields, in this order **after** the identity
+members:
+
+```
+local_rotation: {
+	__uuid: "5ec96c4e-…"
+	__prototype_type: "tm_rotation"
+	__prototype_uuid: "57af832e-…"
+	x: -0.02881590835750103
+	y: -0.28827366232872009
+	z: -0.17299818992614746
+	w: 0.94134980440139771
+}
+```
+
+Observed write rules for a transform edit:
+
+- **Rotation is a quaternion**, fields in the order **`x, y, z, w`** (`w` is the
+  real/scalar part, written last). Identity rotation is `(0, 0, 0, 1)`.
+- **Override in place.** The edited value floats are written **into the existing
+  instanced subobject**, preserving its `__uuid` / `__prototype_type` /
+  `__prototype_uuid` and the component's slot in `components` (or, for a prototype
+  instance, `components__instantiated`). Only value fields are added/changed.
+- **Default ⇒ omit (inherit).** A component left at the prototype default is **not
+  written** — RCP3 left the unchanged `local_position_double` and `local_scale`
+  empty (identity members only), so they keep inheriting. The identity defaults are
+  position `(0, 0, 0)`, rotation `(0, 0, 0, 1)`, scale `(1, 1, 1)` (the
+  `tm_position_double` / `tm_rotation` / `tm_scale` schema defaults).
+- **Float lexemes are 17-significant-figure** (the C `printf "%.17g"` round-trip
+  form, e.g. `0.94134980440139771`). Whole-valued components are written without a
+  radix point (`2`, not `2.0`). An unchanged-but-explicit field keeps its original
+  lexeme byte-for-byte (no re-emit/drift).
+
+The same field names and ordering for **position** (`local_position_double`: `x, y,
+z`) and **scale** (`local_scale`: `x, y, z`) are read back identically by the loader
+and follow by symmetry, but were **not exercised** by this single rotation-only
+capture — a position/scale edit capture would confirm their on-disk write directly.
+
+Caveat on "default ⇒ omit": the observed default is the **schema identity**, which
+for `core.lib` geometry prototypes also equals the prototype's value, so omitting a
+schema-identity component correctly inherits identity. Whether RCP3 omits against a
+**non-identity prototype** value (an entity instancing a prototype whose transform is
+itself non-default) is unobserved here — confirming it needs a capture over a
+non-identity prototype. The reader (`resolvedLocalTransform`) makes the same identity
+assumption, so read and write stay self-consistent within this scope.
+
 ## Type-system map (926 types)
 
 Prefixes (inferred from naming): `tm_*` = object-database/engine layer; `re_*` /
