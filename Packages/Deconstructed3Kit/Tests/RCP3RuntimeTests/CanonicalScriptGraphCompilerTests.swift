@@ -999,6 +999,36 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func makeVector4WithVector3ReadsXYZComponents() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let vec3 = RCP3ScriptGraph.Node(id: "v3", type: "tm_make_vector3")
+        let vec4 = RCP3ScriptGraph.Node(id: "v4", type: "tm_make_vector4_with_vector3")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(
+                id: "xyz", from: "v3", to: "v4",
+                fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("xyz")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "out", from: "v4", to: "s",
+                fromPin: TMHash.murmur64a("vector"), toPin: TMHash.murmur64a("translation")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "x", toNode: "v3", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "y", toNode: "v3", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "z", toNode: "v3", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+            RCP3ScriptGraph.DataLiteral(id: "w", toNode: "v4", toPin: TMHash.murmur64a("w"), scalarValue: 4),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, vec3, vec4], wires: wires, data: data))
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("const xyz = new Math3D.Vector3(1, 2, 3); return new Math3D.Vector4(xyz.x, xyz.y, xyz.z, 4);"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func ifCompilesAlwaysThenTrueFalseBranches() {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let branch = RCP3ScriptGraph.Node(id: "if", type: "tm_if")

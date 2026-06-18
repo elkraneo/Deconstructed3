@@ -880,6 +880,21 @@ public struct CanonicalScriptGraphCompiler {
                 let w = inputExpression(into: node, pinName: "w", context: context, seen: &seen)
                 return Expr("new Math3D.Vector4(\(x.code), \(y.code), \(z.code), \(w.code))", isVector: true)
             }
+            if node.type == "tm_make_vector4_with_vector3" {
+                usesMath3D = true
+                let xyz = inputExpression(
+                    into: node,
+                    pinName: "xyz",
+                    context: context,
+                    seen: &seen,
+                    defaultValue: Expr("new Math3D.Vector3(0, 0, 0)", isVector: true)
+                )
+                let w = inputExpression(into: node, pinName: "w", context: context, seen: &seen)
+                return Expr(
+                    "(() => { const xyz = \(xyz.code); return new Math3D.Vector4(xyz.x, xyz.y, xyz.z, \(w.code)); })()",
+                    isVector: true
+                )
+            }
 
             // Vector ops whose Math3D names are NOT publicly documented: keep clean-room
             // by emitting a plain-JS fallback with an honest note rather than inventing a
