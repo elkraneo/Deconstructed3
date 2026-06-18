@@ -20,6 +20,17 @@ import RCP3Runtime
 /// path. Rotation examples build a quaternion before writing orientation, so all
 /// curated examples run today.
 @Suite struct ScriptGraphExamplesCompilerTests {
+    static func referenceBundle(named name: String) -> URL? {
+        var dir = URL(filePath: #filePath).deletingLastPathComponent()
+        for _ in 0..<12 {
+            let bundle = dir.appending(path: "references/\(name)")
+            if FileManager.default.fileExists(atPath: bundle.appending(path: "world.tm_entity").path) {
+                return bundle
+            }
+            dir = dir.deletingLastPathComponent()
+        }
+        return nil
+    }
 
     /// A runs-today example's wired path must never surface an `unsupported` note.
     /// (`/* unsupported: … */` and `// unsupported node: …` both count.)
@@ -77,6 +88,29 @@ import RCP3Runtime
         let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
         #expect(pending.isEmpty)
         #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 10)
+    }
+
+    @Test func random2CapturedEntityRelativeTransformPathCompiles() throws {
+        guard let url = Self.referenceBundle(named: "Random2.realitycomposerpro") else { return }
+        let bundle = try RCP3Bundle.open(url)
+        let asset = try #require(bundle.scriptGraphAssets().first { $0.name.contains("My Script Graph") })
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+        let entityPathNodeIDs = Set(
+            graph.nodes
+                .filter { ["tm_gesture_event_drag", "tm_entity_set_relative_transform"].contains($0.type) }
+                .map(\.id)
+        )
+        let entityPath = RCP3ScriptGraph(
+            nodes: graph.nodes.filter { entityPathNodeIDs.contains($0.id) },
+            wires: graph.wires.filter { entityPathNodeIDs.contains($0.from) && entityPathNodeIDs.contains($0.to) },
+            data: graph.data.filter { entityPathNodeIDs.contains($0.toNode) }
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(entityPath)
+
+        expectNoUnsupported(js, "Random2 entity relative-transform path")
+        #expect(js.contains("this.entity.on(RealityKit.DragGestureEvent.name"))
+        #expect(js.contains("this.entity.setRelativePosition(event.sceneTranslation, null);"))
     }
 
     // MARK: - Runs today: per-example shape
