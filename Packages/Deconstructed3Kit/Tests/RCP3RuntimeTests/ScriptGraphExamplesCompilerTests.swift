@@ -17,10 +17,8 @@ import RCP3Runtime
 /// The variable-driven examples (Spin / Sine Bob / Orbit / Squash by Sin / Drag
 /// Momentum) carry a LOCAL accumulator name on their Get/Set nodes, which lowers to a
 /// stable per-script slot (`this.variable_<slot>`) with no placeholder on the wired
-/// path. The translation/scale ones run today; the two ROTATION demos (Spin / Drag
-/// Momentum) are `runsToday == false` — they compile to real slots but set
-/// `.orientation` from a raw scalar, which needs a quaternion (euler→quaternion
-/// emission not implemented yet).
+/// path. Rotation examples build a quaternion before writing orientation, so all
+/// curated examples run today.
 @Suite struct ScriptGraphExamplesCompilerTests {
 
     /// A runs-today example's wired path must never surface an `unsupported` note.
@@ -66,9 +64,7 @@ import RCP3Runtime
 
     @Test func everyExampleLowersToALocalSlotNeverARemotePlaceholder() {
         // Every curated example's variable-driven path lowers to a real
-        // `this.variable_<slot>` rather than the remote-value placeholder — regardless of
-        // whether it's `runsToday`. (The two rotation demos are `runsToday == false`
-        // because orientation needs a quaternion, NOT because of a variable placeholder.)
+        // `this.variable_<slot>` rather than the remote-value placeholder.
         for example in ScriptGraphExamples.all {
             let js = CanonicalScriptGraphCompiler().compile(example.graph)
             expectNoUnsupported(js, example.name)
@@ -77,14 +73,10 @@ import RCP3Runtime
         }
     }
 
-    @Test func onlyTheRotationDemosArePendingTheRestRunToday() {
-        // The honest split: Spin and Drag Momentum set `.orientation` from a raw scalar,
-        // which needs a quaternion (euler→quaternion emission not implemented yet), so
-        // they are `runsToday == false`. Every other example runs today.
+    @Test func allCuratedExamplesRunToday() {
         let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
-        #expect(pending == ["Spin", "Drag Momentum"])
-        // Eight examples run today (ten total minus the two rotation demos).
-        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 8)
+        #expect(pending.isEmpty)
+        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 10)
     }
 
     // MARK: - Runs today: per-example shape
@@ -180,10 +172,10 @@ import RCP3Runtime
         expectNoUnsupported(js, "Spin")
         #expect(js.contains("this.update = function(deltaTime)"))
         let angle = slot("angle")
-        // angle += deltaTime, then orientation from angle — both on the SAME local slot,
-        // with the `?? 0` guard on each read.
+        // angle += deltaTime, then orientation from a Y-axis quaternion built from that
+        // angle slot.
         #expect(js.contains("this.\(angle) = ((this.\(angle) ?? 0) + deltaTime);"))
-        #expect(js.contains("this.entity.orientation = (this.\(angle) ?? 0);"))
+        #expect(js.contains("this.entity.orientation = new Math3D.Quaternion((this.\(angle) ?? 0), new Math3D.Vector3(0 /* x unwired */, 1, 0 /* z unwired */));"))
         // Real slot, not the remote placeholder.
         #expect(!js.contains("RemoteValue"))
         #expect(!js.contains("variable name unresolved"))
@@ -220,11 +212,11 @@ import RCP3Runtime
         #expect(js.contains("this.update = function(deltaTime)"))
         let vel = slot("angularVelocity")
         let angle = slot("angle")
-        // The drag kick writes the velocity slot.
-        #expect(js.contains("this.\(vel) = event.sceneTranslation;"))
+        // The drag kick writes the velocity slot from a scalar literal.
+        #expect(js.contains("this.\(vel) = 0.05;"))
         // The per-frame integrate accumulates angle += angularVelocity over the two slots.
         #expect(js.contains("this.\(angle) = ((this.\(angle) ?? 0) + (this.\(vel) ?? 0));"))
-        #expect(js.contains("this.entity.orientation = (this.\(angle) ?? 0);"))
+        #expect(js.contains("this.entity.orientation = new Math3D.Quaternion((this.\(angle) ?? 0), new Math3D.Vector3(0 /* x unwired */, 1, 0 /* z unwired */));"))
         #expect(!js.contains("RemoteValue"))
     }
 }

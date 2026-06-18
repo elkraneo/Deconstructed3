@@ -256,6 +256,87 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func makeRotationCompilesToMath3DQuaternionConstructor() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let rotation = RCP3ScriptGraph.Node(id: "r", type: "tm_make_rotation")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wRotation = RCP3ScriptGraph.Wire(
+            id: "w1", from: "r", to: "s",
+            fromPin: TMHash.murmur64a("new"), toPin: TMHash.murmur64a("rotation")
+        )
+        let angle = RCP3ScriptGraph.DataLiteral(
+            id: "angle", toNode: "r", toPin: TMHash.murmur64a("angle"), scalarValue: 1.25
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, rotation, set], wires: [exec, wRotation], data: [angle])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("this.entity.orientation = new Math3D.Quaternion(1.25, new Math3D.Vector3(0, 1, 0));"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func eulerToQuaternionCompilesToMath3DHelperCall() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let angles = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
+        let convert = RCP3ScriptGraph.Node(id: "q", type: "tm_math_euler_to_quaternion")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, angles, convert, set],
+            wires: [
+                RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+                RCP3ScriptGraph.Wire(
+                    id: "w1", from: "v", to: "q",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("angles")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "w2", from: "q", to: "s",
+                    fromPin: TMHash.murmur64a("quaternion"), toPin: TMHash.murmur64a("rotation")
+                ),
+            ],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "x", toNode: "v", toPin: TMHash.murmur64a("x"), scalarValue: 0.1),
+                RCP3ScriptGraph.DataLiteral(id: "y", toNode: "v", toPin: TMHash.murmur64a("y"), scalarValue: 0.2),
+                RCP3ScriptGraph.DataLiteral(id: "z", toNode: "v", toPin: TMHash.murmur64a("z"), scalarValue: 0.3),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.entity.orientation = Math3D.eulerAnglesToQuaternion(new Math3D.Vector3(0.1, 0.2, 0.3));"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func quaternionToEulerCompilesToMath3DHelperCall() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let rotation = RCP3ScriptGraph.Node(id: "r", type: "tm_make_rotation")
+        let convert = RCP3ScriptGraph.Node(id: "e", type: "tm_math_quaternion_to_euler")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, rotation, convert, set],
+            wires: [
+                RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+                RCP3ScriptGraph.Wire(
+                    id: "w1", from: "r", to: "e",
+                    fromPin: TMHash.murmur64a("new"), toPin: TMHash.murmur64a("quaternion")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "w2", from: "e", to: "s",
+                    fromPin: TMHash.murmur64a("angles"), toPin: TMHash.murmur64a("translation")
+                ),
+            ],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "angle", toNode: "r", toPin: TMHash.murmur64a("angle"), scalarValue: 0.75),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.entity.position = Math3D.quaternionToEulerAngles(new Math3D.Quaternion(0.75, new Math3D.Vector3(0, 1, 0)));"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func unknownDataNodeFallsBackWithoutCrashing() {
         // An unknown node feeding the transform pin must NOT fabricate behavior: it
         // emits a safe fallback expression with an inline `unsupported:` note, and the

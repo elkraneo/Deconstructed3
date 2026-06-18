@@ -342,6 +342,8 @@ public struct CanonicalScriptGraphCompiler {
             if let wire = dataWire(into: node.id, pin: valuePin) {
                 var seen: Set<String> = []
                 valueExpr = emitExpression(from: wire, context: context, seen: &seen).code
+            } else if let value = graph.scalarLiteral(node: node.id, pin: valuePin) {
+                valueExpr = Self.renderScalar(value)
             } else {
                 valueExpr = "undefined /* no value wired */"
             }
@@ -533,6 +535,37 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("((\(x.code)) * 180 / Math.PI)")
             }
 
+            if node.type == "tm_make_rotation" {
+                usesMath3D = true
+                let angle = inputExpression(
+                    into: node,
+                    pinName: "angle",
+                    context: context,
+                    seen: &seen,
+                    defaultValue: Expr("0")
+                )
+                let axis = inputExpression(
+                    into: node,
+                    pinName: "axis",
+                    context: context,
+                    seen: &seen,
+                    defaultValue: Expr("new Math3D.Vector3(0, 1, 0)", isVector: true)
+                )
+                return Expr("new Math3D.Quaternion(\(angle.code), \(axis.code))", isVector: true)
+            }
+
+            if node.type == "tm_math_euler_to_quaternion" {
+                usesMath3D = true
+                let angles = inputExpression(into: node, pinName: "angles", context: context, seen: &seen)
+                return Expr("Math3D.eulerAnglesToQuaternion(\(angles.code))", isVector: true)
+            }
+
+            if node.type == "tm_math_quaternion_to_euler" {
+                usesMath3D = true
+                let quaternion = inputExpression(into: node, pinName: "quaternion", context: context, seen: &seen)
+                return Expr("Math3D.quaternionToEulerAngles(\(quaternion.code))", isVector: true)
+            }
+
             // String predicates / accessors (→ bool / number / string). The library's
             // first input pin is `string`; the arg pin name varies by node.
             if let stringExpr = emitStringExpression(node, context: context, seen: &seen) {
@@ -693,7 +726,8 @@ public struct CanonicalScriptGraphCompiler {
             into node: RCP3ScriptGraph.Node,
             pinName: String,
             context: ExprContext,
-            seen: inout Set<String>
+            seen: inout Set<String>,
+            defaultValue: Expr? = nil
         ) -> Expr {
             let pin = TMHash.murmur64a(pinName)
             guard let wire = dataWire(into: node.id, pin: pin) else {
@@ -702,6 +736,7 @@ public struct CanonicalScriptGraphCompiler {
                 if let value = graph.scalarLiteral(node: node.id, pin: pin) {
                     return Expr(Self.renderScalar(value))
                 }
+                if let defaultValue { return defaultValue }
                 return Expr("0 /* \(pinName) unwired */")
             }
             return emitExpression(from: wire, context: context, seen: &seen)

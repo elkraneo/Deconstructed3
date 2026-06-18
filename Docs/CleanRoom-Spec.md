@@ -204,6 +204,17 @@ outputs.
 | `tm_math_deg_to_rad` | `degrees` | `result` |
 | `tm_math_rad_to_deg` | `rad` | `result` |
 
+Observed JS emission for the rotation nodes implemented in the canonical compiler:
+
+| type | emitted expression |
+| --- | --- |
+| `tm_make_rotation` | `new Math3D.Quaternion(angle, axis)` |
+| `tm_math_euler_to_quaternion` | `Math3D.eulerAnglesToQuaternion(angles)` |
+| `tm_math_quaternion_to_euler` | `Math3D.quaternionToEulerAngles(quaternion)` |
+
+`tm_make_rotation` uses default inputs `angle = 0` and
+`axis = new Math3D.Vector3(0, 1, 0)` when those pins are not otherwise supplied.
+
 **Math — Constant** (no inputs; single output, named uppercase).
 
 | type | output |

@@ -384,7 +384,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
         // the center to Graph mode so the canvas shows it, and leaves the user to press
         // ▶ Play to run it on the box. Every curated example runs today (the
         // variable-driven ones compile to real local slots); a future example that
-        // doesn't yet run is still labeled "(needs variables)".
+        // doesn't yet run is still labeled generically.
         ToolbarItem {
             examplesMenu
         }
@@ -399,7 +399,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 Button {
                     loadExample(example)
                 } label: {
-                    Text(example.runsToday ? example.name : "\(example.name) (rotation pending)")
+                    Text(example.runsToday ? example.name : "\(example.name) (pending)")
                 }
                 .help(example.summary)
             }

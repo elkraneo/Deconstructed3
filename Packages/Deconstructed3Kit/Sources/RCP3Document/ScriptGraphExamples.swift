@@ -22,14 +22,9 @@ import TMFormat
 /// Momentum) carry a LOCAL accumulator on their Get/Set variable nodes
 /// (`Node.variableName`), which the canonical compiler lowers to a stable per-script
 /// instance-property slot (`this.variable_<slot>`, slot =
-/// `MurmurHash64A(lowercase(name))`). The translation/scale-driven ones (Sine Bob /
-/// Orbit / Squash by Sin) compile cleanly to that real slot AND visibly animate, so
-/// they are `runsToday == true` (the runtime result is still user-confirmed on Play).
-/// The two ROTATION demos (Spin / Drag Momentum) also compile to real slots, but set
-/// `.orientation` from a raw scalar, which does NOT visibly rotate: orientation needs a
-/// quaternion and the euler→quaternion emission isn't implemented yet, so they are
-/// honestly `runsToday == false` (their rotation wiring is kept intact for that future
-/// fix). DEFERRED: the euler→quaternion emission for rotation; an authoring-UI variable
+/// `MurmurHash64A(lowercase(name))`). They compile cleanly to that real slot and
+/// visibly animate: translation/scale examples write vectors, and rotation examples
+/// build a quaternion before assigning orientation. DEFERRED: an authoring-UI variable
 /// picker, a graph-level variable table with real defaults/types, and the on-disk
 /// `.tm_` round-trip of `variableName` — all pending a captured `.tm_` graph that uses
 /// a variable.
@@ -315,22 +310,22 @@ public enum ScriptGraphExamples {
 
     // MARK: - VARIABLE-DRIVEN (local accumulators)
 
-    /// On Update → `$angle += deltaTime`; Set rotation from `$angle`. The `angle`
-    /// accumulator compiles to a real local variable slot, but setting `.orientation`
-    /// from a raw scalar does NOT visibly rotate: orientation needs a quaternion, and the
-    /// euler→quaternion emission isn't implemented yet (pending). The rotation wiring is
-    /// kept intact for that future fix.
+    /// On Update → `$angle += deltaTime`; build `Quaternion(angle, Vector3(0, 1, 0))`;
+    /// Set rotation from that quaternion. The `angle` accumulator compiles to a real
+    /// local variable slot and the orientation write now receives a quaternion.
     public static let spin = ScriptGraphExample(
         id: "example.spin",
         name: "Spin",
-        summary: "Accumulate angle += deltaTime each frame to drive rotation. The angle compiles to a real local variable slot (this.variable_<slot>), but it does NOT visibly rotate yet: setting orientation needs a quaternion, and the euler→quaternion emission is not implemented (pending).",
+        summary: "Accumulate angle += deltaTime each frame, build a quaternion around the Y axis, and assign orientation.",
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
                 .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 220, variableName: "angle"),
                 .init(id: "add", type: "tm_math_add", label: "Add", x: 320, y: 120),
                 .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 0, variableName: "angle"),
-                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 960, y: 0),
+                .init(id: "axis", type: "tm_make_vector3", label: "Vector3", x: 640, y: 240),
+                .init(id: "rotation", type: "tm_make_rotation", label: "Rotation", x: 960, y: 120),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 1280, y: 0),
             ],
             wires: [
                 exec("e1", from: "update", to: "setAngle"),
@@ -338,11 +333,15 @@ public enum ScriptGraphExamples {
                 data("d1", from: "getAngle", "value", to: "add", "a"),
                 data("d2", from: "update", "deltaTime", to: "add", "b"),
                 data("d3", from: "add", "result", to: "setAngle", "value"),
-                data("d4", from: "getAngle", "value", to: "set", "rotation"),
+                data("d4", from: "getAngle", "value", to: "rotation", "angle"),
+                data("d5", from: "axis", "vec3", to: "rotation", "axis"),
+                data("d6", from: "rotation", "new", to: "set", "rotation"),
             ],
-            data: []
+            data: [
+                lit("lit.axisY", node: "axis", pin: "y", 1),
+            ]
         ),
-        runsToday: false
+        runsToday: true
     )
 
     /// On Update → `$t += deltaTime`; Set translation.y from `sin($t)`. A vertical bob,
@@ -410,16 +409,13 @@ public enum ScriptGraphExamples {
         runsToday: true
     )
 
-    /// Two handlers: On Drag → `$angVel = sceneTranslation.x` (a kick); On Update →
-    /// `$angle += $angVel` and Set rotation from `$angle`. Both `angularVelocity` and
-    /// `angle` accumulators compile to real local variable slots, but — like Spin — it
-    /// does NOT visibly rotate yet: setting `.orientation` from a raw scalar needs a
-    /// quaternion, and the euler→quaternion emission isn't implemented (pending). The
-    /// rotation wiring is kept intact for that future fix.
+    /// Two handlers: On Drag → `$angVel = 0.05`; On Update →
+    /// `$angle += $angVel`, build `Quaternion(angle, Vector3(0, 1, 0))`, and set
+    /// rotation from that quaternion.
     public static let dragMomentum = ScriptGraphExample(
         id: "example.drag-momentum",
         name: "Drag Momentum",
-        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, and each frame angle += angularVelocity drives rotation. Both accumulators compile to real local variable slots (this.variable_<slot>), but it does NOT visibly rotate yet: setting orientation needs a quaternion, and the euler→quaternion emission is not implemented (pending).",
+        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, then angle drives a Y-axis quaternion.",
         graph: RCP3ScriptGraph(
             nodes: [
                 // Handler 1: a drag kick sets the angular velocity.
@@ -431,22 +427,28 @@ public enum ScriptGraphExamples {
                 .init(id: "getAngle", type: "tm_get_variable_node", label: "Get $angle", x: 0, y: 640, variableName: "angle"),
                 .init(id: "add", type: "tm_math_add", label: "Add", x: 320, y: 440),
                 .init(id: "setAngle", type: "tm_set_variable_node", label: "Set $angle", x: 640, y: 320, variableName: "angle"),
-                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 960, y: 320),
+                .init(id: "axis", type: "tm_make_vector3", label: "Vector3", x: 640, y: 560),
+                .init(id: "rotation", type: "tm_make_rotation", label: "Rotation", x: 960, y: 440),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 1280, y: 320),
             ],
             wires: [
                 // Handler 1
                 exec("e1", from: "drag", to: "setVel"),
-                data("d1", from: "drag", "sceneTranslation", to: "setVel", "value"),
                 // Handler 2
                 exec("e2", from: "update", to: "setAngle"),
                 exec("e3", from: "setAngle", to: "set"),
                 data("d2", from: "getAngle", "value", to: "add", "a"),
                 data("d3", from: "getVel", "value", to: "add", "b"),
                 data("d4", from: "add", "result", to: "setAngle", "value"),
-                data("d5", from: "getAngle", "value", to: "set", "rotation"),
+                data("d5", from: "getAngle", "value", to: "rotation", "angle"),
+                data("d6", from: "axis", "vec3", to: "rotation", "axis"),
+                data("d7", from: "rotation", "new", to: "set", "rotation"),
             ],
-            data: []
+            data: [
+                lit("lit.angularVelocity", node: "setVel", pin: "value", 0.05),
+                lit("lit.axisY", node: "axis", pin: "y", 1),
+            ]
         ),
-        runsToday: false
+        runsToday: true
     )
 }
