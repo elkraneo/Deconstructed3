@@ -409,9 +409,33 @@ deferred); the unary operators take a single `a`; a few take a named auxiliary i
 | `tm_math_bitwise_not` | `a` | `result` |
 | `tm_math_pow` | `a`, `exponent` | `result` |
 | `tm_math_clamp` | `a`, `min`, `max` | `result` |
-| `tm_math_multiply_by_scalar` | `a`, `number` | `result` |
-| `tm_math_multiply_by_quaternion` | `a`, `quaternion` | `result` |
-| `tm_math_multiply_by_matrix` | `a`, `matrix` | `result` |
+| `tm_math_multiply_by_scalar` | `a`, `b` | `result` |
+| `tm_math_multiply_by_quaternion` | `a`, `b` | `result` |
+| `tm_math_multiply_by_matrix` | `a`, `b` | `result` |
+
+Observed JS emission for the vector-math nodes implemented in the canonical compiler.
+Each `Math3D.*` call requires the `Math3D` module. Scalar arithmetic
+(`add`/`subtract`/`multiply`/`divide`) stays a bare JS operator and is *not* a
+`Math3D` call. The two-operand vector nodes read pins `a`/`b`; the single-operand
+ones read pin `a`.
+
+| type | emitted expression | result |
+| --- | --- | --- |
+| `tm_math_dot` | `Math3D.dot(a, b)` | scalar |
+| `tm_math_cross` | `Math3D.cross(a, b)` | vector |
+| `tm_math_reflect` | `Math3D.reflect(a, b)` | vector |
+| `tm_math_length` | `Math3D.length(a)` | scalar |
+| `tm_math_normal` | `Math3D.normal(a)` | vector |
+| `tm_math_multiply_by_scalar` | `Math3D.multiply(a, b)` | vector |
+| `tm_math_multiply_by_quaternion` | `Math3D.multiply(a, b)` | vector/quaternion |
+| `tm_math_multiply_by_matrix` | `Math3D.multiply(a, b)` | vector |
+
+`tm_math_normal` is the **normalize** node; its emitted function is literally `normal`
+(not `normalize`). The whole multiply-by-X family emits the same `Math3D.multiply(a, b)`
+(the runtime's `multiply` dispatches on the operand types). The interpolation nodes
+`tm_math_lerp`/`tm_math_slerp`/`tm_math_smoothstep` and a `tm_math_clamp` object/pin
+form are **deferred** until their operand pin names are confirmed; `tm_math_distance`
+is **not a node** (a distance is composed from `length` of a difference).
 
 **Math — Constant** (literal). One additional constant node carries its literal value
 in node **settings** rather than on a pin: it has no inputs and a single `value` output.

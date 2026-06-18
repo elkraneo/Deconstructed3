@@ -288,20 +288,16 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
-    @Test func multiplyByScalarCompilesScalarAndVectorForms() {
+    @Test func multiplyFamilyCompilesToMath3DMultiply() {
+        // The three multiply-by-X nodes all lower to the SAME `Math3D.multiply(a, b)`
+        // call, reading their two operand pins `a`/`b`. Exercise the by-scalar variant
+        // wiring a vector into `a` and a scalar literal into `b`.
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
-        let setScalar = RCP3ScriptGraph.Node(id: "setScalar", type: "tm_set_variable_node", variableName: "scaled")
         let setVector = RCP3ScriptGraph.Node(id: "setVector", type: "tm_set_component")
-        let scalarMultiply = RCP3ScriptGraph.Node(id: "scalar", type: "tm_math_multiply_by_scalar")
         let vectorMultiply = RCP3ScriptGraph.Node(id: "vector", type: "tm_math_multiply_by_scalar")
         let vec = RCP3ScriptGraph.Node(id: "vec", type: "tm_make_vector3")
         let wires = [
-            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "setScalar"),
             RCP3ScriptGraph.Wire(id: "e2", from: "u", to: "setVector"),
-            RCP3ScriptGraph.Wire(
-                id: "scalarOut", from: "scalar", to: "setScalar",
-                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
-            ),
             RCP3ScriptGraph.Wire(
                 id: "vecIn", from: "vec", to: "vector",
                 fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")
@@ -312,23 +308,41 @@ import RCP3Runtime
             ),
         ]
         let data = [
-            RCP3ScriptGraph.DataLiteral(id: "sa", toNode: "scalar", toPin: TMHash.murmur64a("a"), scalarValue: 4),
-            RCP3ScriptGraph.DataLiteral(id: "sn", toNode: "scalar", toPin: TMHash.murmur64a("number"), scalarValue: 3),
             RCP3ScriptGraph.DataLiteral(id: "vx", toNode: "vec", toPin: TMHash.murmur64a("x"), scalarValue: 1),
             RCP3ScriptGraph.DataLiteral(id: "vy", toNode: "vec", toPin: TMHash.murmur64a("y"), scalarValue: 2),
             RCP3ScriptGraph.DataLiteral(id: "vz", toNode: "vec", toPin: TMHash.murmur64a("z"), scalarValue: 3),
-            RCP3ScriptGraph.DataLiteral(id: "vn", toNode: "vector", toPin: TMHash.murmur64a("number"), scalarValue: 0.5),
+            RCP3ScriptGraph.DataLiteral(id: "vb", toNode: "vector", toPin: TMHash.murmur64a("b"), scalarValue: 0.5),
         ]
 
         let js = CanonicalScriptGraphCompiler().compile(
-            RCP3ScriptGraph(nodes: [update, setScalar, setVector, scalarMultiply, vectorMultiply, vec], wires: wires, data: data)
+            RCP3ScriptGraph(nodes: [update, setVector, vectorMultiply, vec], wires: wires, data: data)
         )
 
-        #expect(js.contains(" = (4 * 3);"))
         #expect(js.contains("const Math3D = require(\"Math3D\")"))
-        #expect(js.contains("this.entity.position = Math3D.multiplyByScalar(new Math3D.Vector3(1, 2, 3), 0.5);"))
+        #expect(js.contains("this.entity.position = Math3D.multiply(new Math3D.Vector3(1, 2, 3), 0.5);"))
+        #expect(!js.contains("multiplyByScalar"))
         #expect(!js.contains("TODO: vector op"))
         #expect(!js.contains("unsupported"))
+    }
+
+    @Test func multiplyByQuaternionAndMatrixAlsoEmitMath3DMultiply() {
+        // The quaternion/matrix variants share the same `Math3D.multiply(a, b)` emission.
+        for type in ["tm_math_multiply_by_quaternion", "tm_math_multiply_by_matrix"] {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+            let mul = RCP3ScriptGraph.Node(id: "m", type: type)
+            let a = RCP3ScriptGraph.Node(id: "a", type: "tm_make_vector3")
+            let b = RCP3ScriptGraph.Node(id: "b", type: "tm_make_vector3")
+            let wires = [
+                RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+                RCP3ScriptGraph.Wire(id: "wa", from: "a", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")),
+                RCP3ScriptGraph.Wire(id: "wb", from: "b", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")),
+                RCP3ScriptGraph.Wire(id: "out", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")),
+            ]
+            let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, mul, a, b], wires: wires, data: []))
+            #expect(js.contains("this.entity.position = Math3D.multiply(new Math3D.Vector3("))
+            #expect(!js.contains("unsupported"))
+        }
     }
 
     @Test func unaryMathAndVectorConstructorCompile() {
@@ -781,23 +795,52 @@ import RCP3Runtime
         #expect(js.contains("\n    this.entity.position = Math.PI;\n"))
     }
 
-    @Test func undocumentedVectorOpStaysCleanRoom() {
-        // A dot-product node has no PUBLICLY-documented Math3D name, so the compiler must
-        // NOT emit `Math3D.dot(...)` — it emits a plain-JS fallback with an honest note.
+    /// Builds `On Update → Set Transform.translation = <vector-op>(a[, b])`, wiring a
+    /// `tm_make_vector3` constructor into the op's `a` pin (and, for binary ops, a second
+    /// into `b`) and its `result` into the Set's translation pin. Returns the JS.
+    static func vectorOpJS(type: String, binary: Bool) -> String {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
-        let dot = RCP3ScriptGraph.Node(id: "d", type: "tm_math_dot")
-        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
-        let wOut = RCP3ScriptGraph.Wire(
-            id: "w3", from: "d", to: "s",
-            fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
-        )
-        let graph = RCP3ScriptGraph(nodes: [update, set, dot], wires: [exec, wOut], data: [])
+        let op = RCP3ScriptGraph.Node(id: "m", type: type)
+        let va = RCP3ScriptGraph.Node(id: "va", type: "tm_make_vector3")
+        var nodes = [update, set, op, va]
+        var wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(id: "wa", from: "va", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")),
+            RCP3ScriptGraph.Wire(id: "out", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")),
+        ]
+        if binary {
+            let vb = RCP3ScriptGraph.Node(id: "vb", type: "tm_make_vector3")
+            nodes.append(vb)
+            wires.append(RCP3ScriptGraph.Wire(id: "wb", from: "vb", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")))
+        }
+        return CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: nodes, wires: wires, data: []))
+    }
 
-        let js = CanonicalScriptGraphCompiler().compile(graph)
-
-        #expect(js.contains("/* unsupported: tm_math_dot (Math3D op name not public) */"))
-        #expect(!js.contains("Math3D.dot"))
+    @Test func vectorMathOpsEmitFaithfulMath3DCalls() {
+        // dot/cross/reflect take two operands; length/normal take one. The function name
+        // is the observed Math3D name (NOTE: normalize's function is `normal`).
+        for (type, fn, binary) in [
+            ("tm_math_dot", "dot", true),
+            ("tm_math_cross", "cross", true),
+            ("tm_math_reflect", "reflect", true),
+            ("tm_math_length", "length", false),
+            ("tm_math_normal", "normal", false),
+        ] {
+            let js = Self.vectorOpJS(type: type, binary: binary)
+            #expect(js.contains("const Math3D = require(\"Math3D\")"))
+            #expect(js.contains("Math3D.\(fn)(new Math3D.Vector3("))
+            if !binary {
+                // Unary: a single operand, no comma-joined second argument.
+                #expect(js.contains("Math3D.\(fn)(new Math3D.Vector3(0 /* x unwired */, 0 /* y unwired */, 0 /* z unwired */));"))
+            }
+            // No fallback note survives on these any more.
+            #expect(!js.contains("Math3D op name not public"))
+            #expect(!js.contains("unsupported"))
+        }
+        // `tm_math_normal` is the normalize node — its function is literally `normal`,
+        // NOT `normalize`.
+        #expect(!Self.vectorOpJS(type: "tm_math_normal", binary: false).contains("normalize"))
     }
 
     // MARK: - Phase 0: comparisons / logic / bitwise / deg-rad / string / vector2-4

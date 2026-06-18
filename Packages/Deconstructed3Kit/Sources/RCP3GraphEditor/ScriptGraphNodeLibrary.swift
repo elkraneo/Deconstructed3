@@ -562,9 +562,9 @@ public enum ScriptGraphNodeLibrary {
         "tm_math_bitwise_not":  NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .math),
         "tm_math_pow":          NodeSpec(inputs: [data("a", "A"), data("exponent", "Exponent")], outputs: [data("result", "Result")], category: .math),
         "tm_math_clamp":        NodeSpec(inputs: [data("a", "A"), data("min", "Min"), data("max", "Max")], outputs: [data("result", "Result")], category: .math),
-        "tm_math_multiply_by_scalar":     NodeSpec(inputs: [data("a", "A"), data("number", "Number")], outputs: [data("result", "Result")], category: .math),
-        "tm_math_multiply_by_quaternion": NodeSpec(inputs: [data("a", "A"), data("quaternion", "Quaternion")], outputs: [data("result", "Result")], category: .math),
-        "tm_math_multiply_by_matrix":     NodeSpec(inputs: [data("a", "A"), data("matrix", "Matrix")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_scalar":     NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_quaternion": NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
+        "tm_math_multiply_by_matrix":     NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .math),
 
         // MARK: Math — Constant (literal)
         //

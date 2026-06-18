@@ -204,7 +204,7 @@ struct ScriptGraphNodeLibraryTests {
         let clamp = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_clamp"))
         #expect(clamp.inputs.map(\.connectorName) == ["a", "min", "max"])
         let byScalar = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_multiply_by_scalar"))
-        #expect(byScalar.inputs.map(\.connectorName) == ["a", "number"])
+        #expect(byScalar.inputs.map(\.connectorName) == ["a", "b"])
 
         // Constant (literal): no inputs; single `value` output (value in settings).
         let constant = try #require(ScriptGraphNodeLibrary.spec(for: "tm_constant"))

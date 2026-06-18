@@ -37,14 +37,13 @@ import TMFormat
 ///
 /// ## Clean-room grounding
 ///
-/// Emitted JS is grounded ONLY in the **public** `apple/realitykitscripting`
-/// surface (the documented `RealityKit` / `Math3D` modules + the lifecycle/gesture
-/// shapes in its `overview.md`) and in plain ECMAScript (`Math.*`, operators).
-/// Math3D calls are limited to names visible in that package's public surface
-/// (`add`, `multiplyByScalar`, quaternion helpers, and constructors). Vector
-/// operations whose `Math3D` names are NOT publicly documented (dot, cross,
-/// subtract, length, …) are emitted as plain-JS fallbacks with an inline `/* … */`
-/// note rather than a fabricated `Math3D.*` call.
+/// Emitted JS is grounded in the observed RealityKit Script Graph runtime surface
+/// (the `RealityKit` / `Math3D` modules + the lifecycle/gesture shapes) and in plain
+/// ECMAScript (`Math.*`, operators). Vector-math nodes lower to their observed
+/// `Math3D.<function>(args)` form: `dot`/`cross`/`reflect`/`length`/`normal` (the
+/// last being the *normalize* node, whose function is literally `normal`), and the
+/// multiply-by-scalar/quaternion/matrix family, which all emit `Math3D.multiply(a, b)`.
+/// Scalar arithmetic (`add`/`subtract`/`multiply`/`divide`) stays as bare JS operators.
 ///
 /// Node types with no faithful mapping become a `0 /* unsupported: <type> */`
 /// expression (data) or a `// unsupported node: <type>` statement (action) — an
@@ -746,14 +745,15 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("Math.min(Math.max(\(a.code), \(lo.code)), \(hi.code))")
             }
 
-            if node.type == "tm_math_multiply_by_scalar" {
+            // Multiply family (vector/quaternion/matrix * operand). All three emit the
+            // SAME `Math3D.multiply(a, b)` call — the runtime's vector-math `multiply`
+            // dispatches on the operand types. Operands are the two pins `a`/`b`; the
+            // result is a vector/quaternion (so it propagates as a vector).
+            if Self.isVectorMultiplyOp(node.type) {
+                usesMath3D = true
                 let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
-                let number = inputExpression(into: node, pinName: "number", context: context, seen: &seen)
-                if a.isVector {
-                    usesMath3D = true
-                    return Expr("Math3D.multiplyByScalar(\(a.code), \(number.code))", isVector: true)
-                }
-                return Expr("(\(a.code) * \(number.code))")
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                return Expr("Math3D.multiply(\(a.code), \(b.code))", isVector: true)
             }
 
             // Comparison nodes (scalar → bool). The library names the operands `a`/`b`
@@ -895,17 +895,18 @@ public struct CanonicalScriptGraphCompiler {
                 )
             }
 
-            // Vector ops whose Math3D names are NOT publicly documented: keep clean-room
-            // by emitting a plain-JS fallback with an honest note rather than inventing a
-            // `Math3D.*` name. The op is over vectors, so the result is typed as a vector.
-            if Self.isUndocumentedVectorOp(node.type) {
+            // Vector-math ops emitted as `Math3D.<fn>(args)` (the observed emission for
+            // these node types). `dot`/`length` return a scalar; `cross`/`normal`/`reflect`
+            // return a vector. `length`/`normal` are single-operand (`a`); the rest take
+            // `a`/`b`. (`tm_math_normal` is the NORMALIZE node — its function is `normal`.)
+            if let vectorOp = Self.vectorMathOp(for: node.type) {
+                usesMath3D = true
                 let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                if vectorOp.unary {
+                    return Expr("Math3D.\(vectorOp.function)(\(a.code))", isVector: vectorOp.resultIsVector)
+                }
                 let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
-                _ = b // referenced for completeness; fallback can't compute it portably
-                return Expr(
-                    "\(a.code) /* unsupported: \(node.type) (Math3D op name not public) */",
-                    isVector: true
-                )
+                return Expr("Math3D.\(vectorOp.function)(\(a.code), \(b.code))", isVector: vectorOp.resultIsVector)
             }
 
             // Get Component (Transform): read the entity transform property named by the
@@ -1246,12 +1247,36 @@ public struct CanonicalScriptGraphCompiler {
             }
         }
 
-        /// Vector ops whose `Math3D` function name is not in the public docs (so we
-        /// must NOT emit a `Math3D.*` call for them — clean-room).
-        static func isUndocumentedVectorOp(_ type: String) -> Bool {
+        /// A vector-math op that lowers to a `Math3D.<function>(args)` call: the JS
+        /// function name, whether it is single-operand, and whether the result is a
+        /// vector (vs a scalar).
+        struct VectorMathOp {
+            var function: String
+            var unary: Bool
+            var resultIsVector: Bool
+        }
+
+        /// The `Math3D` vector-math op for a node type, or `nil` if it is not one.
+        /// `dot`/`length` yield a scalar; `cross`/`normal`/`reflect` yield a vector.
+        /// `length`/`normal` take a single operand; `dot`/`cross`/`reflect` take two.
+        static func vectorMathOp(for type: String) -> VectorMathOp? {
             switch type {
-            case "tm_math_dot", "tm_math_cross", "tm_math_reflect",
-                 "tm_math_length", "tm_math_normal":
+            case "tm_math_dot":     return VectorMathOp(function: "dot", unary: false, resultIsVector: false)
+            case "tm_math_cross":   return VectorMathOp(function: "cross", unary: false, resultIsVector: true)
+            case "tm_math_reflect": return VectorMathOp(function: "reflect", unary: false, resultIsVector: true)
+            case "tm_math_length":  return VectorMathOp(function: "length", unary: true, resultIsVector: false)
+            case "tm_math_normal":  return VectorMathOp(function: "normal", unary: true, resultIsVector: true)
+            default:                return nil
+            }
+        }
+
+        /// The multiply family (`multiply_by_scalar`/`_by_quaternion`/`_by_matrix`), all
+        /// of which lower to `Math3D.multiply(a, b)`.
+        static func isVectorMultiplyOp(_ type: String) -> Bool {
+            switch type {
+            case "tm_math_multiply_by_scalar",
+                 "tm_math_multiply_by_quaternion",
+                 "tm_math_multiply_by_matrix":
                 return true
             default:
                 return false
