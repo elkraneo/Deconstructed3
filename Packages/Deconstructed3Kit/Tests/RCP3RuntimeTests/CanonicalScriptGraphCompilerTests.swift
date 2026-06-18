@@ -78,6 +78,27 @@ import RCP3Runtime
         #expect(!js.contains("entity.transform.translation"))
     }
 
+    @Test func componentTypeOnlySetAttachesKnownDefaultComponent() {
+        for componentName in ["BillboardComponent", "AccessibilityComponent"] {
+            let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
+            let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component", label: "Set \(componentName)")
+            let exec = RCP3ScriptGraph.Wire(id: "e", from: "a", to: "s")
+            let selector = RCP3ScriptGraph.DataLiteral(
+                id: "component",
+                toNode: "s",
+                toPin: TMHash.murmur64a("component_type"),
+                valueType: "re_scripting_graph_component_type",
+                valueHash: TMHash.murmur64a(componentName)
+            )
+
+            let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [added, set], wires: [exec], data: [selector]))
+
+            #expect(js.contains("const RealityKit = require(\"RealityKit\")"))
+            #expect(js.contains("this.entity.setComponent(new RealityKit.\(componentName)());"))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
     @Test func constantFeedingSetTranslationCompilesToMathConstant() {
         // On Update → Set Transform.translation = π (a constant node feeding the pin).
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")

@@ -113,6 +113,50 @@ import RCP3Runtime
         #expect(js.contains("this.entity.setRelativePosition(event.sceneTranslation, null);"))
     }
 
+    @Test func random2CapturedBillboardAttachPathCompiles() throws {
+        guard let url = Self.referenceBundle(named: "Random2.realitycomposerpro") else { return }
+        let bundle = try RCP3Bundle.open(url)
+        let asset = try #require(bundle.scriptGraphAssets().first { $0.name.contains("My Script Graph") })
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+        let set = try #require(graph.nodes.first { $0.label == "Set Billboard" })
+        let sourceIDs = Set(graph.wires.filter { $0.to == set.id && $0.isExec }.map(\.from))
+        let pathNodeIDs = sourceIDs.union([set.id])
+        let path = RCP3ScriptGraph(
+            nodes: graph.nodes.filter { pathNodeIDs.contains($0.id) },
+            wires: graph.wires.filter { pathNodeIDs.contains($0.from) && pathNodeIDs.contains($0.to) },
+            data: graph.data.filter { pathNodeIDs.contains($0.toNode) }
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(path)
+
+        expectNoUnsupported(js, "Random2 billboard attach path")
+        #expect(js.contains("this.entity.setComponent(new RealityKit.BillboardComponent());"))
+    }
+
+    @Test func randomCapturedAccessibilityAttachPathCompiles() throws {
+        guard let url = Self.referenceBundle(named: "Random.realitycomposerpro") else { return }
+        let bundle = try RCP3Bundle.open(url)
+        let box = try #require(
+            bundle.root["children"]?.arrayValue?
+                .compactMap(\.objectValue)
+                .first { $0.name == "box" }
+        )
+        let graph = try #require(bundle.scriptGraph(forEntity: box))
+        let set = try #require(graph.nodes.first { $0.label == "Set Accessibility" })
+        let sourceIDs = Set(graph.wires.filter { $0.to == set.id && $0.isExec }.map(\.from))
+        let pathNodeIDs = sourceIDs.union([set.id])
+        let path = RCP3ScriptGraph(
+            nodes: graph.nodes.filter { pathNodeIDs.contains($0.id) },
+            wires: graph.wires.filter { pathNodeIDs.contains($0.from) && pathNodeIDs.contains($0.to) },
+            data: graph.data.filter { pathNodeIDs.contains($0.toNode) }
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(path)
+
+        expectNoUnsupported(js, "Random accessibility attach path")
+        #expect(js.contains("this.entity.setComponent(new RealityKit.AccessibilityComponent());"))
+    }
+
     // MARK: - Runs today: per-example shape
 
     @Test func dragToMoveIsTheReferenceDragHandler() {

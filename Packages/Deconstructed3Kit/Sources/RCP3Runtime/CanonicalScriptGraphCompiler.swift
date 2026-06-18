@@ -25,7 +25,8 @@ import TMFormat
 ///    event node, in order, to its action nodes.
 /// 2. **Action nodes → statements.** A `tm_set_component` writes the entity's
 ///    transform property (`translation` → `.position`, `rotation` → `.orientation`,
-///    `scale` → `.scale`) from the *evaluated* expression feeding its pin. A
+///    `scale` → `.scale`) from the *evaluated* expression feeding its pin, or attaches
+///    a known default component when only a `component_type` selector is present. A
 ///    variable-set node becomes `this.setRemoteValue(...)`.
 /// 3. **Data inputs → expressions.** The core is a recursive `emitExpression`: given
 ///    a data wire into a pin, it finds the source node + output pin and emits a JS
@@ -55,6 +56,7 @@ public struct CanonicalScriptGraphCompiler {
     static let translationPin = TMHash.murmur64a("translation")
     static let rotationPin = TMHash.murmur64a("rotation")
     static let scalePin = TMHash.murmur64a("scale")
+    static let componentTypePin = TMHash.murmur64a("component_type")
     static let unnamedExecPin = TMHash.murmur64a("")
     static let alwaysPin = TMHash.murmur64a("always")
     static let truePin = TMHash.murmur64a("true")
@@ -523,9 +525,10 @@ public struct CanonicalScriptGraphCompiler {
             return ["\(entity).look(\(at), \(from), \(upVector), \(relativeTo), \(positiveZForward));"]
         }
 
-        /// A Set Component (Transform) action: write the entity transform property fed
-        /// by a data wire — `translation` → `.position`, `rotation` → `.orientation`,
-        /// `scale` → `.scale`. The value is the recursively-evaluated source expression.
+        /// A Set Component action: write a Transform property fed by a data wire —
+        /// `translation` → `.position`, `rotation` → `.orientation`, `scale` → `.scale`.
+        /// If the node has no property value wire but does carry a known `component_type`
+        /// selector, attach that default component via the documented `setComponent`.
         mutating func emitSetComponent(
             _ node: RCP3ScriptGraph.Node,
             context: ExprContext
@@ -555,9 +558,23 @@ public struct CanonicalScriptGraphCompiler {
             }
 
             if statements.isEmpty {
+                if let componentName = defaultConstructibleComponentName(for: node) {
+                    usesRealityKit = true
+                    statements.append("\(target).setComponent(new RealityKit.\(componentName)());")
+                    return statements
+                }
                 statements.append("// unsupported node: tm_set_component (no transform input wired)")
             }
             return statements
+        }
+
+        func defaultConstructibleComponentName(for node: RCP3ScriptGraph.Node) -> String? {
+            guard let hash = graph.data.first(where: {
+                $0.toNode == node.id && $0.toPin == CanonicalScriptGraphCompiler.componentTypePin
+            })?.valueHash else {
+                return nil
+            }
+            return Self.defaultConstructibleComponentNamesByHash[hash]
         }
 
         /// A variable-set action. A LOCAL variable (the node carries a `variableName`)
@@ -1117,6 +1134,17 @@ public struct CanonicalScriptGraphCompiler {
             default: return nil
             }
         }
+
+        /// Component types observed as `component_type`-only Set Component nodes and
+        /// known to be constructible through the public `RealityKit` JS module.
+        static let defaultConstructibleComponentNamesByHash: [UInt64: String] = {
+            let names = [
+                "AccessibilityComponent",
+                "BillboardComponent",
+                "InputTargetComponent",
+            ]
+            return Dictionary(uniqueKeysWithValues: names.map { (TMHash.murmur64a($0), $0) })
+        }()
 
         /// The operand expressions of a variadic logic node (`tm_and` / `tm_or`). The
         /// library seeds the `a`/`b` pins; on disk a node may carry more (`c`, `d`, …).
