@@ -270,6 +270,9 @@ public enum ScriptGraphNodeLibrary {
         // Logic
         "tm_and": "And",
         "tm_or": "Or",
+        "tm_equals": "Equals",
+        "tm_not_equals": "Not Equals",
+        "tm_not": "Not",
         // Math — Arithmetic & trig
         "tm_math_add": "Add",
         "tm_math_subtract": "Subtract",
@@ -523,6 +526,14 @@ public enum ScriptGraphNodeLibrary {
         // "add more inputs (+)" affordance is a deferred follow-up.
         "tm_and": NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
         "tm_or":  NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
+        // Equality / negation. Data-only (no exec); `result` is a Bool. `tm_equals` /
+        // `tm_not_equals` take two equal-typed operands `a`/`b`; `tm_not` takes a single
+        // Bool `a`. The observed node definitions register these under a "Control"
+        // category; our catalog groups them with the other boolean operators under
+        // "Logic" for palette readability (a cosmetic divergence from the source label).
+        "tm_equals":     NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
+        "tm_not_equals": NodeSpec(inputs: [data("a", "A"), data("b", "B")], outputs: [data("result", "Result")], category: .logic),
+        "tm_not":        NodeSpec(inputs: [data("a", "A")], outputs: [data("result", "Result")], category: .logic),
 
         // MARK: Math — Arithmetic & trig
         //

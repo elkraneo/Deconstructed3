@@ -949,6 +949,38 @@ import RCP3Runtime
         #expect(!orJS.contains("unsupported"))
     }
 
+    @Test func equalityNodesCompileToLooseEquality() {
+        // The observed emission is LOOSE `==` / `!=`, not strict `===` / `!==`.
+        let equalsJS = Self.opOfTwoConstantsJS(opType: "tm_equals")
+        #expect(equalsJS.contains("(Math.PI == Math.E)"))
+        #expect(!equalsJS.contains("==="))
+        #expect(!equalsJS.contains("unsupported"))
+
+        let notEqualsJS = Self.opOfTwoConstantsJS(opType: "tm_not_equals")
+        #expect(notEqualsJS.contains("(Math.PI != Math.E)"))
+        #expect(!notEqualsJS.contains("!=="))
+        #expect(!notEqualsJS.contains("unsupported"))
+    }
+
+    @Test func notNodeCompilesToInequalityWithLiteralTrue() {
+        // The observed emission negates via inequality to the literal `true` —
+        // `(a != true)` — over the single operand `a`, NOT `(!a)`.
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let not = RCP3ScriptGraph.Node(id: "m", type: "tm_not")
+        let pi = RCP3ScriptGraph.Node(id: "p", type: "tm_constant_pi")
+        let exec = RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s")
+        let wA = RCP3ScriptGraph.Wire(id: "w1", from: "p", to: "m", fromPin: TMHash.murmur64a("PI"), toPin: TMHash.murmur64a("a"))
+        let wOut = RCP3ScriptGraph.Wire(id: "w3", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation"))
+        let graph = RCP3ScriptGraph(nodes: [update, set, not, pi], wires: [exec, wA, wOut], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("(Math.PI != true)"))
+        #expect(!js.contains("(!Math.PI)"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func variadicLogicFoldsAThirdWiredInput() {
         // `tm_and` with a third operand pin `c` wired (variadic fold).
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")

@@ -115,7 +115,7 @@ struct ScriptGraphNodeLibraryTests {
             "tm_entity_set_relative_transform", "tm_entity_look_at",
             "tm_self", "tm_scene",
             // Logic
-            "tm_and", "tm_or",
+            "tm_and", "tm_or", "tm_equals", "tm_not_equals", "tm_not",
             // Math — Arithmetic & trig
             "tm_math_add", "tm_math_subtract", "tm_math_multiply", "tm_math_divide",
             "tm_math_mod", "tm_math_min", "tm_math_max", "tm_math_dot", "tm_math_cross",
@@ -186,6 +186,21 @@ struct ScriptGraphNodeLibraryTests {
         #expect(and.outputs.map(\.connectorName) == ["result"])
         #expect(and.inputs.allSatisfy { !$0.isExec })
         #expect(and.outputs.allSatisfy { !$0.isExec })
+
+        // Equality: a, b → result (data-only); negation: single a → result.
+        let equals = try #require(ScriptGraphNodeLibrary.spec(for: "tm_equals"))
+        #expect(equals.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(equals.outputs.map(\.connectorName) == ["result"])
+        #expect(equals.inputs.allSatisfy { !$0.isExec })
+        #expect(equals.outputs.allSatisfy { !$0.isExec })
+        let notEquals = try #require(ScriptGraphNodeLibrary.spec(for: "tm_not_equals"))
+        #expect(notEquals.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(notEquals.outputs.map(\.connectorName) == ["result"])
+        let not = try #require(ScriptGraphNodeLibrary.spec(for: "tm_not"))
+        #expect(not.inputs.map(\.connectorName) == ["a"])
+        #expect(not.outputs.map(\.connectorName) == ["result"])
+        #expect(not.inputs.allSatisfy { !$0.isExec })
+        #expect(not.outputs.allSatisfy { !$0.isExec })
 
         // Arithmetic binary: a, b → result.
         let add = try #require(ScriptGraphNodeLibrary.spec(for: "tm_math_add"))

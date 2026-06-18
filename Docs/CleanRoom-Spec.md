@@ -361,15 +361,38 @@ Observed JS emission for the entity nodes implemented in the canonical compiler:
 | `tm_self` | Emits `this.entity`. |
 | `tm_scene` | Emits `this.entity.scene`. |
 
-**Logic.** Each yields a single `result`. The inputs are **variadic**: the node
-presents a sequential list `a`, `b`, `c`, … and the editor's "add more inputs (+)"
-affordance grows it; the library seeds the first two (`a`, `b`) — the "+" affordance is
-deferred.
+**Logic.** Each yields a single `result` (a Bool). `tm_and` / `tm_or` are **variadic**:
+the node presents a sequential list `a`, `b`, `c`, … and the editor's "add more inputs
+(+)" affordance grows it; the library seeds the first two (`a`, `b`) — the "+" affordance
+is deferred. `tm_equals` / `tm_not_equals` take two equal-typed operands `a`/`b`; `tm_not`
+takes a single Bool operand `a`. These are data-only (no exec).
 
 | type | inputs | outputs |
 | --- | --- | --- |
 | `tm_and` | `a`, `b`, … | `result` |
 | `tm_or` | `a`, `b`, … | `result` |
+| `tm_equals` | `a`, `b` | `result` |
+| `tm_not_equals` | `a`, `b` | `result` |
+| `tm_not` | `a` | `result` |
+
+Observed JS emission for the logic nodes implemented in the canonical compiler:
+
+| type | emitted expression |
+| --- | --- |
+| `tm_and` | `(a && b && …)` |
+| `tm_or` | `(a \|\| b \|\| …)` |
+| `tm_equals` | `(a == b)` |
+| `tm_not_equals` | `(a != b)` |
+| `tm_not` | `(a != true)` |
+
+`tm_equals` / `tm_not_equals` use **loose** equality (`==` / `!=`), not strict
+(`===` / `!==`). For a string-typed operand the observed form is instead the method call
+`(a.equals(b) == true)` / `(a.equals(b) != true)`; since the graph carries no static
+operand type the compiler resolves here, it emits the primitive loose form and treats the
+string-method special-case as a follow-up. `tm_not` negates by inequality to the literal
+`true` — `(a != true)`, **not** `(!a)`. The source registers these (and `tm_and`/`tm_or`)
+under a "Control" category; our catalog groups them with the other boolean operators under
+"Logic" for palette readability (a cosmetic divergence from the source label).
 
 **Math — Arithmetic & trig.** Each yields a single `result`. The binary operators take
 a **variadic** input list (`a`, `b`, `c`, …; the library seeds `a`, `b`, with "+"

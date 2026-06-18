@@ -765,6 +765,25 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("(\(a.code) \(cmp) \(b.code))")
             }
 
+            // Equality nodes (→ bool). The observed emission uses LOOSE equality
+            // (`==`/`!=`), NOT strict (`===`/`!==`). Operands are `a`/`b`. Result scalar.
+            // NOTE: for a `tm_string`-typed operand the observed form is the method call
+            // `(a.equals(b) == true)`; since the graph carries no static operand type we
+            // can resolve here, we emit the primitive loose form — the string-method
+            // special-case is a follow-up once operand types are available.
+            if let eq = Self.equalityOperator(for: node.type) {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                return Expr("(\(a.code) \(eq) \(b.code))")
+            }
+
+            // Logical NOT (→ bool). The observed emission negates by inequality to the
+            // literal `true` — `(a != true)`, NOT `(!a)` — over the single operand `a`.
+            if node.type == "tm_not" {
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                return Expr("(\(a.code) != true)")
+            }
+
             // Within-range (scalar → bool). The library's pins are `val`/`min`/`max`.
             // Implemented as the obvious INCLUSIVE form `(val >= min && val <= max)`
             // (best-effort: the inclusive/exclusive boundary semantics are not pinned
@@ -1125,6 +1144,16 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_math_greater_equal": return ">="
             case "tm_math_less": return "<"
             case "tm_math_less_equal": return "<="
+            default: return nil
+            }
+        }
+
+        /// Equality nodes → the infix JS LOOSE-equality operator (→ boolean). The
+        /// observed emission is loose `==`/`!=`, not strict `===`/`!==`. `nil` otherwise.
+        static func equalityOperator(for type: String) -> String? {
+            switch type {
+            case "tm_equals": return "=="
+            case "tm_not_equals": return "!="
             default: return nil
             }
         }
