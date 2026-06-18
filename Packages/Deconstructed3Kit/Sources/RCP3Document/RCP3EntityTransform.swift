@@ -1,4 +1,5 @@
 import Foundation
+import Spatial
 import TMFormat
 
 /// An entity's local transform, as the inspector edits it and as it persists into a
@@ -44,50 +45,42 @@ public struct RCP3Transform: Equatable, Sendable {
 
 /// Euler-angle conversions for the stored rotation quaternion, so the inspector can
 /// present a human-readable rotation (degrees) while persisting the quaternion RCP3
-/// stores. Convention: intrinsic **XYZ** — the rotation matrix is `R = Rx·Ry·Rz`, and
-/// the two methods are exact inverses (see ``eulerDegrees`` / ``settingEulerDegrees(_:)``).
-///
-/// As with any Euler-over-quaternion editing, the displayed angles are the *principal*
-/// decomposition (X via `atan2`, Y via `asin` clamped to ±90°, Z via `atan2`): entering
-/// an out-of-range angle stores the correct orientation but the field re-displays its
-/// equivalent principal value (e.g. Y 120° → 60° with X/Z flipped). The stored
-/// quaternion is always a faithful representation of the requested rotation.
+/// stores. Implemented with Apple's **Spatial** framework (`Rotation3D` / `EulerAngles`)
+/// — the same machinery RealityKit/RCP3 use — rather than hand-rolled quaternion algebra.
+/// The Euler **order** is ``rcp3EulerOrder`` (`.xyz`, Spatial's standard), verified to
+/// reproduce RCP3's stored quaternion exactly from controlled captures (single-axis
+/// X/Y/Z=30 plus a combined X=30,Y=45,Z=0); the two methods are exact inverses (see
+/// ``eulerDegrees`` / ``settingEulerDegrees(_:)``).
 public extension RCP3Transform {
-    /// The rotation expressed as Euler angles in **degrees** `(x, y, z)`, derived from
-    /// the stored quaternion. The exact inverse of ``settingEulerDegrees(_:)``:
-    /// extracted from the quaternion's rotation matrix to match the `R = Rx·Ry·Rz`
-    /// (intrinsic XYZ) composition that builds it.
-    var eulerDegrees: (x: Double, y: Double, z: Double) {
-        let (x, y, z, w) = (rotation.x, rotation.y, rotation.z, rotation.w)
-        // Relevant rotation-matrix entries from the (assumed unit) quaternion.
-        let r00 = 1 - 2 * (y * y + z * z)
-        let r01 = 2 * (x * y - z * w)
-        let r02 = 2 * (x * z + y * w)
-        let r12 = 2 * (y * z - x * w)
-        let r22 = 1 - 2 * (x * x + y * y)
-        // For R = Rx·Ry·Rz: sin(ay) = r02; ax = atan2(-r12, r22); az = atan2(-r01, r00).
-        let ay = asin(max(-1, min(1, r02)))
-        let ax = atan2(-r12, r22)
-        let az = atan2(-r01, r00)
-        let toDegrees = 180.0 / Double.pi
-        return (x: ax * toDegrees, y: ay * toDegrees, z: az * toDegrees)
+    /// RCP3's Euler decomposition order, determined empirically from saved captures.
+    static let rcp3EulerOrder: EulerAngles.Order = .xyz
+
+    /// The stored rotation as a Spatial `Rotation3D` (quaternion `(x, y, z, w)`).
+    private var rotation3D: Rotation3D {
+        Rotation3D(quaternion: simd_quatd(ix: rotation.x, iy: rotation.y, iz: rotation.z, r: rotation.w))
     }
 
-    /// A copy with the rotation set from Euler angles in **degrees** `(x, y, z)`,
-    /// converting to the stored quaternion. Intrinsic **XYZ** composition
-    /// (`q = qx ⊗ qy ⊗ qz`), the inverse of ``eulerDegrees``.
+    /// The rotation expressed as Euler angles in **degrees** `(x, y, z)`, via Spatial's
+    /// `Rotation3D.eulerAngles(order:)` in ``rcp3EulerOrder``. Exact inverse of
+    /// ``settingEulerDegrees(_:)``.
+    var eulerDegrees: (x: Double, y: Double, z: Double) {
+        let a = rotation3D.eulerAngles(order: Self.rcp3EulerOrder).angles
+        let toDegrees = 180.0 / Double.pi
+        return (x: a.x * toDegrees, y: a.y * toDegrees, z: a.z * toDegrees)
+    }
+
+    /// A copy with the rotation set from Euler angles in **degrees** `(x, y, z)`, via
+    /// Spatial's `EulerAngles` in ``rcp3EulerOrder``. Inverse of ``eulerDegrees``.
     func settingEulerDegrees(_ degrees: (x: Double, y: Double, z: Double)) -> RCP3Transform {
-        let half = Double.pi / 180.0 / 2
-        let (cx, sx) = (cos(degrees.x * half), sin(degrees.x * half))
-        let (cy, sy) = (cos(degrees.y * half), sin(degrees.y * half))
-        let (cz, sz) = (cos(degrees.z * half), sin(degrees.z * half))
-        // q = qx ⊗ qy ⊗ qz (intrinsic XYZ): standard expansion.
-        let w = cx * cy * cz - sx * sy * sz
-        let x = sx * cy * cz + cx * sy * sz
-        let y = cx * sy * cz - sx * cy * sz
-        let z = cx * cy * sz + sx * sy * cz
+        let euler = EulerAngles(
+            x: Angle2D(degrees: degrees.x),
+            y: Angle2D(degrees: degrees.y),
+            z: Angle2D(degrees: degrees.z),
+            order: Self.rcp3EulerOrder
+        )
+        let q = Rotation3D(eulerAngles: euler).quaternion
         var copy = self
-        copy.rotation = (x: x, y: y, z: z, w: w)
+        copy.rotation = (x: q.imag.x, y: q.imag.y, z: q.imag.z, w: q.real)
         return copy
     }
 }

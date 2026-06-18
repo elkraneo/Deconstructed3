@@ -291,6 +291,36 @@ import RCP3Document
         #expect(abs(t.rotation.w - s) < 1e-9)
     }
 
+    // MARK: Euler ⇆ quaternion convention, pinned to RCP3 captures (via Spatial)
+
+    /// The inspector's degrees ⇆ quaternion conversion (Apple's Spatial `Rotation3D` /
+    /// `EulerAngles`) must match RCP3's stored rotation. Verified against controlled
+    /// captures: single-axis X/Y/Z = 30° (direct axis mapping) and the combined
+    /// X=30, Y=45, Z=0 (`Random3 (known values)`), whose stored quaternion is the
+    /// discriminator. Each typed Euler must yield RCP3's quaternion, and the inverse
+    /// must return the typed angles.
+    @Test func eulerConversionMatchesRCP3Captures() {
+        func quat(_ x: Double, _ y: Double, _ z: Double) -> (x: Double, y: Double, z: Double, w: Double) {
+            RCP3Transform.identity.settingEulerDegrees((x: x, y: y, z: z)).rotation
+        }
+        func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-5 }
+        let s = 0.25881904, c = 0.96592583 // sin/cos 15°
+
+        let qx = quat(30, 0, 0); #expect(near(qx.x, s) && near(qx.y, 0) && near(qx.z, 0) && near(qx.w, c))
+        let qy = quat(0, 30, 0); #expect(near(qy.x, 0) && near(qy.y, s) && near(qy.z, 0) && near(qy.w, c))
+        let qz = quat(0, 0, 30); #expect(near(qz.x, 0) && near(qz.y, 0) && near(qz.z, s) && near(qz.w, c))
+
+        // Combined capture: X=30, Y=45, Z=0 → the exact quaternion RCP3 wrote.
+        let qc = quat(30, 45, 0)
+        #expect(near(qc.x, 0.23911761) && near(qc.y, 0.36964384)
+            && near(qc.z, -0.09904577) && near(qc.w, 0.89239907))
+
+        // Inverse returns the typed angles.
+        var t = RCP3Transform.identity; t.rotation = qc
+        let e = t.eulerDegrees
+        #expect(near(e.x, 30) && near(e.y, 45) && near(e.z, 0))
+    }
+
     // MARK: Helpers
 
     /// The `box` child entity of the captured world root (public-API tree walk).
