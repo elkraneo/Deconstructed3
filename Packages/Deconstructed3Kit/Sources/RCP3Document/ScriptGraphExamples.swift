@@ -415,7 +415,7 @@ public enum ScriptGraphExamples {
     public static let dragMomentum = ScriptGraphExample(
         id: "example.drag-momentum",
         name: "Drag Momentum",
-        summary: "Flick the box to spin it with momentum: drag sets angularVelocity, then angle drives a Y-axis quaternion.",
+        summary: "Flick the box to spin it: drag sets angularVelocity; each frame angle += angVel and angVel *= 0.95 friction, so it coasts to a stop (inertia) after you let go.",
         graph: RCP3ScriptGraph(
             nodes: [
                 // Handler 1: a drag kick sets the angular velocity.
@@ -430,6 +430,9 @@ public enum ScriptGraphExamples {
                 .init(id: "axis", type: "tm_make_vector3", label: "Vector3", x: 640, y: 560),
                 .init(id: "rotation", type: "tm_make_rotation", label: "Rotation", x: 960, y: 440),
                 .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 1280, y: 320),
+                // Friction: each frame decay angVel toward 0 so the spin coasts to a stop.
+                .init(id: "frictionMul", type: "tm_math_multiply", label: "Multiply", x: 320, y: 760),
+                .init(id: "setVelDecay", type: "tm_set_variable_node", label: "Set $angVel", x: 640, y: 760, variableName: "angularVelocity"),
             ],
             wires: [
                 // Handler 1
@@ -443,10 +446,15 @@ public enum ScriptGraphExamples {
                 data("d5", from: "getAngle", "value", to: "rotation", "angle"),
                 data("d6", from: "axis", "vec3", to: "rotation", "axis"),
                 data("d7", from: "rotation", "new", to: "set", "rotation"),
+                // After this frame's rotation, decay angVel: angVel = angVel * friction.
+                exec("e4", from: "set", to: "setVelDecay"),
+                data("d8", from: "getVel", "value", to: "frictionMul", "a"),
+                data("d9", from: "frictionMul", "result", to: "setVelDecay", "value"),
             ],
             data: [
                 lit("lit.angularVelocity", node: "setVel", pin: "value", 0.05),
                 lit("lit.axisY", node: "axis", pin: "y", 1),
+                lit("lit.friction", node: "frictionMul", pin: "b", 0.95),
             ]
         ),
         runsToday: true
