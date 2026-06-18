@@ -457,21 +457,34 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// dirty the entity editor, so it is persisted here. The entity save (rename, …)
     /// still goes through `.saveTapped` and is untouched.
     private func save() {
-        // Only write back to a REAL on-disk asset (`openAssetGraphID`). A loaded
-        // Examples-gallery graph has no backing `.tm_script_graph`, so Save skips the
-        // graph write-back for it (the entity save below still runs).
-        if isGraphShown,
-           let model = graphModel,
-           let rootUUID = store.openAssetGraphID,
-           let bundleURL = store.editor?.bundle.url {
+        // Persist the live graph edits, choosing the write target by how the graph was
+        // opened:
+        //  - a sidebar-opened STANDALONE asset (`openAssetGraphID`) → its `.tm_script_graph`;
+        //  - otherwise the graph belongs to the SELECTED ENTITY (an instance-override graph
+        //    embedded in `world.tm_entity`'s `re_scripting_component.source.graph`) → write
+        //    back into the root entity file.
+        // A loaded Examples-gallery graph has no on-disk backing, so it matches neither and
+        // is skipped (the entity save below still runs).
+        if isGraphShown, let model = graphModel, let editor = store.editor {
             do {
-                try ScriptGraphWriteBack.write(
-                    model: model,
-                    toAssetWithRootUUID: rootUUID,
-                    in: bundleURL
-                )
-                // Edits are now on disk; allow a future re-key to rebuild from source.
-                model.markSaved()
+                if let rootUUID = store.openAssetGraphID {
+                    try ScriptGraphWriteBack.write(
+                        model: model,
+                        toAssetWithRootUUID: rootUUID,
+                        in: editor.bundle.url
+                    )
+                    model.markSaved()
+                } else if store.openScriptGraph == nil,
+                          store.selectedScriptGraph != nil,
+                          let entityID = store.selection {
+                    // Entity-attached (instance-override) graph: write into world.tm_entity.
+                    try ScriptGraphWriteBack.write(
+                        model: model,
+                        toEntityWithID: entityID,
+                        rootFileURL: editor.bundle.rootURL
+                    )
+                    model.markSaved()
+                }
             } catch {
                 // Surface nothing fancy yet; a graph write failure shouldn't block
                 // the entity save below. (Error reporting can be lifted into the

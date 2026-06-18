@@ -43,7 +43,19 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// non-variable node or a name set in-memory with no resolved table entry yet.
         public var variableRefUUID: String?
 
-        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil) {
+        /// PROVENANCE (instance-override graphs). When this node came from an entity's
+        /// embedded `re_scripting_component.source.graph` as a `nodes__instantiated`
+        /// entry — an INSTANCE of a node declared in the standalone prototype graph —
+        /// this holds that prototype node's `__prototype_uuid`. `nil` for a node ADDED on
+        /// the instance (it lives in the instance graph's `nodes`) AND for every node of a
+        /// standalone `*.tm_script_graph` asset (which has no instantiation split). So
+        /// `instanceOf == nil` ⇒ "instance-authored / standalone" and `instanceOf != nil`
+        /// ⇒ "prototype-instantiated", which is exactly the split write-back must restore
+        /// (see `ScriptGraphWriteBack.patchedEntityOverride`). Defaulting to `nil` keeps
+        /// all existing call sites and standalone-asset reads behaving as before.
+        public var instanceOf: String?
+
+        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil, instanceOf: String? = nil) {
             self.id = id
             self.type = type
             self.label = label
@@ -51,6 +63,7 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             self.y = y
             self.variableName = variableName
             self.variableRefUUID = variableRefUUID
+            self.instanceOf = instanceOf
         }
     }
 
@@ -219,7 +232,12 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 type: type,
                 label: object["label"]?.stringValue,
                 x: position?["x"]?.doubleValue,
-                y: position?["y"]?.doubleValue
+                y: position?["y"]?.doubleValue,
+                // PROVENANCE: remember this is an instance of a prototype node, keyed by
+                // the prototype's `__prototype_uuid`. Recorded even when the type couldn't
+                // be resolved (it drives write-back's nodes/nodes__instantiated split, not
+                // type recovery).
+                instanceOf: object.prototypeUUID
             ))
         }
 

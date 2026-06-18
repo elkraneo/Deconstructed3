@@ -798,13 +798,13 @@ import RCP3Document
         #expect(n2pos["y"]?.numberLexeme == "40")
     }
 
-    // MARK: - GAP 2: don't corrupt instance-override graphs on save
+    // MARK: - Instance-override graphs: faithful nodes/nodes__instantiated split
 
     /// A minimal instance-override graph root mirroring the `source.graph` embedded on
     /// an entity's `re_scripting_component`: a `nodes` array (instance-added nodes, each
     /// with a `type`) PLUS a `nodes__instantiated` array (prototype-node instances, each
-    /// with a `__prototype_uuid` and NO `type`). This is the shape `patched()` must not
-    /// flatten/corrupt.
+    /// with a `__prototype_uuid` and NO `type`). This is the shape `patched()` must split
+    /// back faithfully (never flatten).
     static func instanceOverrideAsset() throws -> TMObject {
         let text = """
         __type: "re_scripting_source_graph"
@@ -840,21 +840,26 @@ import RCP3Document
         return try #require(try TM.parse(text).objectValue)
     }
 
-    /// Patching an instance-override graph (one with `nodes__instantiated`) must NOT
-    /// corrupt it: no node uuid may appear in BOTH `nodes` and `nodes__instantiated`,
-    /// the instantiated nodes keep their `__prototype_uuid` (not flattened into a
-    /// synthesized `type`), and `nodes__instantiated` stays intact. (Full, faithful
-    /// entity-override write-back is DEFERRED — GAP 3 — so this path is a non-corrupting
-    /// no-op for now.)
-    @Test func patchingInstanceOverrideGraphDoesNotCorruptIt() throws {
+    /// Patching an instance-override graph (one with `nodes__instantiated`) splits the
+    /// flat model node list back into the two on-disk arrays by provenance — never
+    /// flattening: no uuid appears in BOTH arrays, the instances keep their
+    /// `__prototype_uuid` (no synthesized `type`), and a MOVED instance's new position
+    /// actually persists into its `nodes__instantiated` entry.
+    @Test func patchingInstanceOverrideGraphSplitsByProvenance() throws {
         let asset = try Self.instanceOverrideAsset()
         let tmGraph = try #require(asset["graph"]?.objectValue)
 
-        // The parser merges nodes + nodes__instantiated into the model's flat list.
-        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
+        // The parser merges nodes + nodes__instantiated into the model's flat list and
+        // tags each box's provenance.
+        let graph = RCP3ScriptGraph(tmGraph: tmGraph)
+        let model = ScriptGraphEditorModel(graph: graph)
         #expect(Set(model.nodes.map(\.id)) == ["added1", "inst1", "inst2"])
+        // Provenance is carried: the two instances point at their prototype nodes.
+        #expect(graph.nodes.first { $0.id == "inst1" }?.instanceOf == "proto1")
+        #expect(graph.nodes.first { $0.id == "inst2" }?.instanceOf == "proto2")
+        #expect(graph.nodes.first { $0.id == "added1" }?.instanceOf == nil)
 
-        // Even with an edit (a move), the override shape must not be corrupted.
+        // Move an instance — its new position must land in `nodes__instantiated`.
         model.moveNode("inst1", to: CGPoint(x: 999, y: 888))
 
         let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
@@ -864,19 +869,303 @@ import RCP3Document
         let nodes = (patchedGraph["nodes"]?.arrayValue ?? []).compactMap(\.objectValue)
         let instantiated = (patchedGraph["nodes__instantiated"]?.arrayValue ?? []).compactMap(\.objectValue)
 
-        // `nodes__instantiated` is still present and intact (the instances survive).
+        // The arrays are split by provenance: authored node in `nodes`, instances in
+        // `nodes__instantiated` — not flattened together.
+        #expect(Set(nodes.compactMap(\.uuid)) == ["added1"])
         #expect(Set(instantiated.compactMap(\.uuid)) == ["inst1", "inst2"])
-        // Each instantiated node keeps its `__prototype_uuid` (not flattened away).
+        // Each instantiated node keeps its `__prototype_uuid` (not flattened away) + no type.
         #expect(instantiated.allSatisfy { $0.prototypeUUID != nil })
         #expect(instantiated.allSatisfy { $0["type"] == nil })
-
-        // `nodes` does NOT swallow the instantiated uuids — no cross-array duplication.
-        let nodeUUIDs = Set(nodes.compactMap(\.uuid))
-        let instUUIDs = Set(instantiated.compactMap(\.uuid))
-        #expect(nodeUUIDs.isDisjoint(with: instUUIDs), "instantiated uuid leaked into nodes[]")
-
-        // Globally: every node uuid is unique across both arrays (no corruption).
+        // No cross-array duplication; every uuid unique across both arrays.
         let allUUIDs = nodes.compactMap(\.uuid) + instantiated.compactMap(\.uuid)
-        #expect(allUUIDs.count == Set(allUUIDs).count, "duplicate node uuid across nodes + nodes__instantiated")
+        #expect(allUUIDs.count == Set(allUUIDs).count, "duplicate node uuid across arrays")
+
+        // The MOVE persisted into inst1's instantiated entry (identity preserved).
+        let inst1 = try #require(instantiated.first { $0.uuid == "inst1" })
+        #expect(inst1.prototypeUUID == "proto1")
+        let inst1pos = try #require(inst1["position"]?.objectValue)
+        #expect(inst1pos["x"]?.doubleValue == 999)
+        #expect(inst1pos["y"]?.doubleValue == 888)
+        #expect(inst1pos.uuid == "pi1") // position object identity preserved
+
+        // inst2 (an inherited, coordinate-less position) was NOT moved → it stays
+        // coordinate-less (we don't fabricate a 0/0 override the fixture never showed).
+        let inst2 = try #require(instantiated.first { $0.uuid == "inst2" })
+        let inst2pos = try #require(inst2["position"]?.objectValue)
+        #expect(inst2pos["x"] == nil)
+        #expect(inst2pos["y"] == nil)
+        #expect(inst2pos.prototypeUUID == "pproto2") // inherited identity preserved
+    }
+
+    /// A NO-EDIT round-trip of the hand-built instance-override graph reproduces both
+    /// arrays structurally (uuids, prototype refs, the authored node's type) and keeps
+    /// the high-precision instance position lexeme byte-identical.
+    @Test func noEditRoundTripOfInstanceOverrideReproducesBothArrays() throws {
+        let asset = try Self.instanceOverrideAsset()
+        let tmGraph = try #require(asset["graph"]?.objectValue)
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let patchedGraph = try #require(reparsed["graph"]?.objectValue)
+
+        let nodes = (patchedGraph["nodes"]?.arrayValue ?? []).compactMap(\.objectValue)
+        let instantiated = (patchedGraph["nodes__instantiated"]?.arrayValue ?? []).compactMap(\.objectValue)
+
+        // Authored node reproduced with its type + label-less shape.
+        let added1 = try #require(nodes.first { $0.uuid == "added1" })
+        #expect(added1["type"]?.stringValue == "tm_set_component")
+        // Instances reproduced with prototype refs, no type.
+        #expect(Set(instantiated.compactMap(\.uuid)) == ["inst1", "inst2"])
+        #expect(instantiated.first { $0.uuid == "inst1" }?.prototypeUUID == "proto1")
+        #expect(instantiated.first { $0.uuid == "inst1" }?.prototypeType == "tm_graph_node")
+
+        // The 17-sig-fig instance position lexeme survives byte-identical (no drift).
+        let inst1pos = try #require(instantiated.first { $0.uuid == "inst1" }?["position"]?.objectValue)
+        #expect(inst1pos["x"]?.numberLexeme == "-246.33290100097656")
+        #expect(inst1pos["y"]?.numberLexeme == "-190.22328186035156")
+    }
+
+    // MARK: - THE PROOF: round-trip the real entity-attached graph (Random capture)
+
+    /// The parsed root `world.tm_entity` of the `Random` capture, if present. Captures
+    /// live outside the OSS package (`../../references/`), so these tests no-op cleanly
+    /// when the capture is absent.
+    static func randomRoot() throws -> TMObject? {
+        guard let url = randomBundleURL else { return nil }
+        let text = try String(contentsOf: url.appending(path: "world.tm_entity"), encoding: .utf8)
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    /// The box entity's `re_scripting_component.source.graph` object inside `root`.
+    static func boxSourceGraph(in root: TMObject) throws -> TMObject {
+        let box = try #require(ScriptGraphWriteBack.findEntity(id: "box", in: root))
+        let component = try #require(
+            (box["components"]?.arrayValue ?? []).compactMap(\.objectValue)
+                .first { ($0.type ?? $0.prototypeType) == "re_scripting_component" }
+        )
+        let source = try #require(component["source"]?.objectValue)
+        return try #require(source["graph"]?.objectValue)
+    }
+
+    /// A `[nodeUUID: __prototype_uuid]` map over a `nodes__instantiated` array.
+    static func instantiatedPrototypeRefs(_ graph: TMObject) -> [String: String?] {
+        var out: [String: String?] = [:]
+        for value in graph["nodes__instantiated"]?.arrayValue ?? [] {
+            guard let node = value.objectValue, let id = node.uuid else { continue }
+            out[id] = node.prototypeUUID
+        }
+        return out
+    }
+
+    /// THE PROOF — resolve the box entity's instance-override graph, write it back with
+    /// NO semantic edits, and assert the re-serialized `world.tm_entity` reproduces the
+    /// original's `re_scripting_component.source.graph` STRUCTURALLY: the same `nodes` +
+    /// `nodes__instantiated` uuids/types/prototype-refs (no duplication/flattening), and
+    /// the connections + data intact.
+    @Test func entityOverrideNoEditRoundTripReproducesSourceGraphStructurally() throws {
+        guard let root = try Self.randomRoot() else { return } // capture absent
+        let original = try Self.boxSourceGraph(in: root)
+
+        // Resolve the box's MERGED instance-override graph the way the loader does, so the
+        // model carries the nodes/nodes__instantiated provenance.
+        guard let url = Self.randomBundleURL else { return }
+        let bundle = try RCP3Bundle.open(url)
+        let graph = try #require(bundle.scriptGraph(forEntityID: "box"))
+        #expect(graph.nodes.count == 6) // 4 authored + 2 instantiated
+        let model = ScriptGraphEditorModel(graph: graph)
+
+        // Write back with NO edits, targeting the box entity in the tree.
+        let patchedRoot = try #require(
+            ScriptGraphWriteBack.patchedRoot(root, entityID: "box", with: model)
+        )
+        // Re-serialize + re-parse the whole entity file, then read the box's source graph.
+        let reparsedRoot = try #require(try TM.parse(patchedRoot.tmText()).objectValue)
+        let after = try Self.boxSourceGraph(in: reparsedRoot)
+
+        // `nodes`: same set of uuids + types (4 authored nodes, none flattened).
+        let originalAuthored = (original["nodes"]?.arrayValue ?? []).compactMap(\.objectValue)
+        let afterAuthored = (after["nodes"]?.arrayValue ?? []).compactMap(\.objectValue)
+        #expect(Set(afterAuthored.compactMap(\.uuid)) == Set(originalAuthored.compactMap(\.uuid)))
+        func typesByID(_ objects: [TMObject]) -> [String: String?] {
+            Dictionary(uniqueKeysWithValues: objects.compactMap { o in o.uuid.map { ($0, o["type"]?.stringValue) } })
+        }
+        #expect(typesByID(afterAuthored) == typesByID(originalAuthored))
+        // The 4 authored uuids are exactly the fixture's instance additions.
+        #expect(Set(afterAuthored.compactMap(\.uuid)) == [
+            "fc35fd00-122d-1f7e-b99f-5c56bb4ca58e", // tm_set_component "Set Accessibility"
+            "506454b0-3315-e6c2-4864-3c67a0769062", // tm_get_component
+            "4fa769df-e410-ad6f-3308-779bbbcae264", // tm_entity_look_at
+            "74f66281-a4ab-7b14-fe9c-3f643ced6ff1", // tm_did_add
+        ])
+
+        // `nodes__instantiated`: same uuids + same `__prototype_uuid` refs, NO `type`.
+        #expect(Self.instantiatedPrototypeRefs(after) == Self.instantiatedPrototypeRefs(original))
+        let afterInstantiated = (after["nodes__instantiated"]?.arrayValue ?? []).compactMap(\.objectValue)
+        #expect(afterInstantiated.allSatisfy { $0["type"] == nil })
+        #expect(afterInstantiated.allSatisfy { $0.prototypeType == "tm_graph_node" })
+        #expect(Set(afterInstantiated.compactMap(\.prototypeUUID)) == [
+            "9a09b843-d3dd-8754-4167-4ed28d962bd4",
+            "ab95034e-fc77-a6c1-d60a-a7184c7e90d4",
+        ])
+
+        // No duplication/flattening: no uuid in both arrays; all node uuids unique.
+        let allNodeUUIDs = afterAuthored.compactMap(\.uuid) + afterInstantiated.compactMap(\.uuid)
+        #expect(allNodeUUIDs.count == Set(allNodeUUIDs).count)
+        #expect(Set(afterAuthored.compactMap(\.uuid)).isDisjoint(with: Set(afterInstantiated.compactMap(\.uuid))))
+
+        // Connections intact: same set of `__uuid`s + from/to endpoints.
+        func conns(_ g: TMObject) -> Set<String> {
+            Set((g["connections"]?.arrayValue ?? []).compactMap(\.objectValue).compactMap { c in
+                guard let id = c.uuid, let from = c["from_node"]?.stringValue, let to = c["to_node"]?.stringValue
+                else { return nil }
+                return "\(id)|\(from)->\(to)"
+            })
+        }
+        #expect(conns(after) == conns(original))
+
+        // Data intact: the `component_type` literal survives (uuid + bound pin + value hash).
+        let originalData = (original["data"]?.arrayValue ?? []).compactMap(\.objectValue)
+        let afterData = (after["data"]?.arrayValue ?? []).compactMap(\.objectValue)
+        #expect(afterData.count == originalData.count)
+        let originalLiteral = try #require(originalData.first)
+        let afterLiteral = try #require(afterData.first { $0.uuid == originalLiteral.uuid })
+        #expect(afterLiteral["to_node"]?.stringValue == originalLiteral["to_node"]?.stringValue)
+        #expect(afterLiteral["to_connector_hash"]?.stringValue == originalLiteral["to_connector_hash"]?.stringValue)
+        #expect(afterLiteral["data"]?.objectValue?.type == "re_scripting_graph_component_type")
+        #expect(afterLiteral["data"]?.objectValue?["type"]?.stringValue
+            == originalLiteral["data"]?.objectValue?["type"]?.stringValue)
+
+        // The source identity + sibling `interface` / `validation_settings` are preserved.
+        #expect(after.uuid == original.uuid)
+        #expect(after.prototypeUUID == original.prototypeUUID) // graph's own __prototype_uuid
+        #expect(after["interface"]?.objectValue?.uuid == original["interface"]?.objectValue?.uuid)
+
+        // Position lexemes of every node (both arrays) are byte-identical (no drift).
+        func positionLexemes(_ g: TMObject) -> [String: (x: String?, y: String?)] {
+            var out: [String: (String?, String?)] = [:]
+            for key in ["nodes", "nodes__instantiated"] {
+                for value in g[key]?.arrayValue ?? [] {
+                    guard let node = value.objectValue, let id = node.uuid else { continue }
+                    let p = node["position"]?.objectValue
+                    out[id] = (p?["x"]?.numberLexeme, p?["y"]?.numberLexeme)
+                }
+            }
+            return out
+        }
+        let beforePos = positionLexemes(original)
+        let afterPos = positionLexemes(after)
+        for (id, lex) in beforePos {
+            #expect(afterPos[id]?.x == lex.x, "x lexeme drifted for node \(id)")
+            #expect(afterPos[id]?.y == lex.y, "y lexeme drifted for node \(id)")
+        }
+    }
+
+    /// An ACTUAL edit to the entity-attached graph persists and re-reads: move an
+    /// authored node + an instantiated node, set a scalar literal — write back into the
+    /// entity tree — and a fresh load of the patched root reflects all three.
+    @Test func entityOverrideEditPersistsAndReReads() throws {
+        guard let root = try Self.randomRoot() else { return } // capture absent
+        guard let url = Self.randomBundleURL else { return }
+        let bundle = try RCP3Bundle.open(url)
+        let graph = try #require(bundle.scriptGraph(forEntityID: "box"))
+        let model = ScriptGraphEditorModel(graph: graph)
+
+        // Move an AUTHORED node (tm_did_add) and an INSTANTIATED node (the drag node).
+        let authoredID = "74f66281-a4ab-7b14-fe9c-3f643ced6ff1"   // tm_did_add (in `nodes`)
+        let instantiatedID = "ba3614d0-9e16-c46a-d324-a8284e2026d7" // drag (in `nodes__instantiated`)
+        model.moveNode(authoredID, to: CGPoint(x: 111, y: 222))
+        model.moveNode(instantiatedID, to: CGPoint(x: 333, y: 444))
+
+        // Author a scalar literal on the look_at node's `x` pin (an unwired numeric pin).
+        let lookAtID = "4fa769df-e410-ad6f-3308-779bbbcae264"
+        let xPin = TMHash.murmur64a("x")
+        model.setLiteral(nodeID: lookAtID, pinConnectorHash: xPin, value: 9.5)
+
+        // Write back into the box entity in the tree, re-serialize, re-parse, re-load.
+        let patchedRoot = try #require(
+            ScriptGraphWriteBack.patchedRoot(root, entityID: "box", with: model)
+        )
+        let reparsedRoot = try #require(try TM.parse(patchedRoot.tmText()).objectValue)
+        let after = try Self.boxSourceGraph(in: reparsedRoot)
+
+        // Authored move persisted in `nodes`.
+        let authoredNode = try #require(
+            (after["nodes"]?.arrayValue ?? []).compactMap(\.objectValue).first { $0.uuid == authoredID }
+        )
+        #expect(authoredNode["position"]?.objectValue?["x"]?.doubleValue == 111)
+        #expect(authoredNode["position"]?.objectValue?["y"]?.doubleValue == 222)
+
+        // Instantiated move persisted in `nodes__instantiated` (prototype ref intact).
+        let instNode = try #require(
+            (after["nodes__instantiated"]?.arrayValue ?? []).compactMap(\.objectValue).first { $0.uuid == instantiatedID }
+        )
+        #expect(instNode["position"]?.objectValue?["x"]?.doubleValue == 333)
+        #expect(instNode["position"]?.objectValue?["y"]?.doubleValue == 444)
+        #expect(instNode.prototypeUUID == "9a09b843-d3dd-8754-4167-4ed28d962bd4")
+        #expect(instNode["type"] == nil)
+
+        // The scalar literal persisted into data[] and re-reads (a fresh display parse).
+        let afterGraph = RCP3ScriptGraph(tmGraph: after)
+        #expect(afterGraph.scalarLiteral(node: lookAtID, pin: xPin) == 9.5)
+
+        // The structure is still intact: 4 authored + 2 instantiated, no flattening.
+        #expect((after["nodes"]?.arrayValue ?? []).count == 4)
+        #expect((after["nodes__instantiated"]?.arrayValue ?? []).count == 2)
+
+        // The full editor reload sees the moved authored node at its new position.
+        let reloaded = ScriptGraphEditorModel(graph: afterGraph)
+        #expect(reloaded.node(authoredID)?.position == CGPoint(x: 111, y: 222))
+        #expect(reloaded.node(instantiatedID)?.position == CGPoint(x: 333, y: 444))
+        #expect(reloaded.node(instantiatedID)?.instanceOf == "9a09b843-d3dd-8754-4167-4ed28d962bd4")
+    }
+
+    /// The full file-write entry point round-trips: `write(model:toEntityWithID:rootFileURL:)`
+    /// writes into a COPY of the capture's `world.tm_entity` and a re-open reflects the edit
+    /// (the source capture is never mutated). No-ops when the capture is absent.
+    @Test func entityOverrideFileWriteRoundTrips() throws {
+        guard let url = Self.randomBundleURL else { return } // capture absent
+
+        // Copy the whole bundle to a temp dir so we never mutate the reference capture.
+        let tmp = FileManager.default.temporaryDirectory
+            .appending(path: "wb-entity-\(UUID().uuidString).realitycomposerpro")
+        try FileManager.default.copyItem(at: url, to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let bundle = try RCP3Bundle.open(tmp)
+        let graph = try #require(bundle.scriptGraph(forEntityID: "box"))
+        let model = ScriptGraphEditorModel(graph: graph)
+        let authoredID = "74f66281-a4ab-7b14-fe9c-3f643ced6ff1"
+        model.moveNode(authoredID, to: CGPoint(x: 1357, y: 2468))
+
+        try ScriptGraphWriteBack.write(model: model, toEntityWithID: "box", rootFileURL: bundle.rootURL)
+
+        // Re-open the (now-edited) copy and confirm the move landed + structure intact.
+        let reopened = try RCP3Bundle.open(tmp)
+        let reloaded = try #require(reopened.scriptGraph(forEntityID: "box"))
+        #expect(reloaded.nodes.count == 6)
+        let moved = try #require(reloaded.nodes.first { $0.id == authoredID })
+        #expect(moved.x == 1357)
+        #expect(moved.y == 2468)
+    }
+
+    /// Writing to a non-existent entity throws `entityGraphNotFound`.
+    @Test func entityWriteThrowsWhenEntityAbsent() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appending(path: "wb-entity-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        // A root entity file with no scripting component anywhere.
+        let rootURL = tmp.appending(path: "world.tm_entity")
+        try """
+        __type: "tm_entity"
+        __uuid: "world-uuid"
+        name: "world"
+        """.write(to: rootURL, atomically: true, encoding: .utf8)
+
+        let model = try Self.model(for: Self.handBuiltAsset())
+        #expect(throws: ScriptGraphWriteBack.WriteError.entityGraphNotFound(entityID: "nope")) {
+            try ScriptGraphWriteBack.write(model: model, toEntityWithID: "nope", rootFileURL: rootURL)
+        }
     }
 }

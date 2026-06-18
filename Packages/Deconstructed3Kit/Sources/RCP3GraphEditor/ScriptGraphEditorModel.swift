@@ -60,10 +60,36 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
     public var position: CGPoint
     public var payload: ScriptGraphNodePayload
 
-    public init(id: String, position: CGPoint, payload: ScriptGraphNodePayload) {
+    /// PROVENANCE for an instance-override graph (mirrors ``RCP3ScriptGraph/Node/instanceOf``):
+    /// the `__prototype_uuid` of the prototype node this box INSTANCES, when it came from the
+    /// entity graph's `nodes__instantiated`. `nil` for an instance-authored node, a node ADDED
+    /// in the editor, and every node of a standalone asset. Carried so write-back can split the
+    /// node list back into `nodes` (authored) vs `nodes__instantiated` (prototype instances).
+    public var instanceOf: String?
+
+    /// Whether the on-disk node stated explicit `position.x` / `position.y` coordinates.
+    /// An instantiated node may carry an INHERITED, coordinate-less position (only a
+    /// `__uuid`/`__prototype_*`); the loader then seeds `position` to a fallback lane. These
+    /// flags let write-back tell that fallback apart from a real coordinate, so a no-edit
+    /// round-trip preserves a coordinate-less position instead of materializing a fabricated
+    /// override. `true`/`true` for an authored node (always has both) and a freshly added one.
+    public var authoredX: Bool
+    public var authoredY: Bool
+
+    public init(
+        id: String,
+        position: CGPoint,
+        payload: ScriptGraphNodePayload,
+        instanceOf: String? = nil,
+        authoredX: Bool = true,
+        authoredY: Bool = true
+    ) {
         self.id = id
         self.position = position
         self.payload = payload
+        self.instanceOf = instanceOf
+        self.authoredX = authoredX
+        self.authoredY = authoredY
     }
 }
 
@@ -169,7 +195,19 @@ public final class ScriptGraphEditorModel {
                 x: node.x ?? Double(index) * Self.fallbackLaneSpacing,
                 y: node.y ?? 0
             )
-            boxes.append(GraphNodeBox(id: node.id, position: position, payload: payload))
+            // Carry the node's instance-override provenance through so write-back can
+            // restore the nodes/nodes__instantiated split (nil for authored/standalone),
+            // plus whether each coordinate was authored on disk (a coordinate-less,
+            // inherited instantiated position seeds a fallback lane that write-back must
+            // NOT mistake for a real override).
+            boxes.append(GraphNodeBox(
+                id: node.id,
+                position: position,
+                payload: payload,
+                instanceOf: node.instanceOf,
+                authoredX: node.x != nil,
+                authoredY: node.y != nil
+            ))
         }
         nodes = boxes
 
@@ -414,6 +452,11 @@ public final class ScriptGraphEditorModel {
     public func moveNode(_ id: String, to position: CGPoint) {
         guard let index = nodes.firstIndex(where: { $0.id == id }) else { return }
         nodes[index].position = position
+        // A move gives the node an explicit position: an instantiated node whose on-disk
+        // position was INHERITED (coordinate-less) now carries a genuine override, so
+        // write-back must emit the coordinates rather than preserve the inherited shape.
+        nodes[index].authoredX = true
+        nodes[index].authoredY = true
         markDirty()
     }
 
