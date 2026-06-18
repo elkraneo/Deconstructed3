@@ -174,6 +174,9 @@ public final class ScriptGraphEditorModel {
         nodes = boxes
 
         let ids = Set(boxes.map(\.id))
+        let pinIDsByNode = Dictionary(uniqueKeysWithValues: boxes.map { box in
+            (box.id, Set(box.payload.pins.map(\.id)))
+        })
         var conns: [GraphConnection] = []
         for wire in graph.wires where ids.contains(wire.from) && ids.contains(wire.to) {
             if wire.isExec {
@@ -185,6 +188,19 @@ public final class ScriptGraphEditorModel {
                     label: "exec"
                 ))
             } else if let fromPin = wire.fromPin, let toPin = wire.toPin {
+                let execFromID = ScriptGraphPinResolver.execOutputHandleID(forHash: fromPin)
+                let execToID = ScriptGraphPinResolver.execInputHandleID(forHash: toPin)
+                if pinIDsByNode[wire.from]?.contains(execFromID) == true,
+                   pinIDsByNode[wire.to]?.contains(execToID) == true {
+                    conns.append(GraphConnection(
+                        id: wire.id,
+                        from: GraphPortRef(nodeID: wire.from, pinID: execFromID),
+                        to: GraphPortRef(nodeID: wire.to, pinID: execToID),
+                        isExec: true,
+                        label: RCP3ScriptGraph.label(forHash: fromPin)
+                    ))
+                    continue
+                }
                 conns.append(GraphConnection(
                     id: wire.id,
                     from: GraphPortRef(nodeID: wire.from, pinID: "out." + TMHash.hex(fromPin)),

@@ -55,6 +55,15 @@ public struct CanonicalScriptGraphCompiler {
     static let translationPin = TMHash.murmur64a("translation")
     static let rotationPin = TMHash.murmur64a("rotation")
     static let scalePin = TMHash.murmur64a("scale")
+    static let unnamedExecPin = TMHash.murmur64a("")
+    static let alwaysPin = TMHash.murmur64a("always")
+    static let truePin = TMHash.murmur64a("true")
+    static let falsePin = TMHash.murmur64a("false")
+    static let stepPin = TMHash.murmur64a("step")
+    static let endPin = TMHash.murmur64a("end")
+    static let oncePin = TMHash.murmur64a("once")
+    static let indexPin = TMHash.murmur64a("index")
+    static let cancelIDPin = TMHash.murmur64a("cancelID")
 
     /// The stable per-script instance-property slot for a LOCAL variable referenced by
     /// `name`: `variable_<MurmurHash64A(lowercase(name), seed 0)>` with the hash
@@ -259,16 +268,19 @@ public struct CanonicalScriptGraphCompiler {
         /// per action node reached.
         mutating func emitActionBody(
             after node: RCP3ScriptGraph.Node,
-            context: ExprContext
+            context: ExprContext,
+            outputPin: UInt64? = nil
         ) -> [String] {
             var statements: [String] = []
-            for wire in graph.wires where wire.isExec && wire.from == node.id {
+            for wire in execWires(from: node, outputPin: outputPin) {
                 guard let action = graph.node(id: wire.to) else { continue }
                 if handledNodeIDs.contains(action.id) { continue }
                 handledNodeIDs.insert(action.id)
                 statements.append(contentsOf: emitActionStatements(for: action, context: context))
                 // Chain any exec wires out of the action node (a linear action chain).
-                statements.append(contentsOf: emitActionBody(after: action, context: context))
+                if !Self.handlesOwnControlFlow(action.type) {
+                    statements.append(contentsOf: emitActionBody(after: action, context: context))
+                }
             }
             return statements
         }
@@ -285,9 +297,193 @@ public struct CanonicalScriptGraphCompiler {
                 return emitSetVariable(node, context: context)
             case "tm_clear_variable_node", "tm_clear_remote_variable_node":
                 return emitClearVariable(node)
+            case "tm_sequence":
+                return emitSequence(node, context: context)
+            case "tm_if":
+                return emitIf(node, context: context)
+            case "tm_switch":
+                return emitSwitch(node, context: context)
+            case "tm_loop":
+                return emitLoop(node, context: context)
+            case "tm_delay":
+                return emitDelay(node, context: context)
+            case "tm_cancel_delay":
+                return emitCancelDelay(node, context: context)
+            case "tm_do_once":
+                return emitDoOnce(node, context: context)
             default:
                 return ["// unsupported node: \(node.type)"]
             }
+        }
+
+        static func handlesOwnControlFlow(_ type: String) -> Bool {
+            switch type {
+            case "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay", "tm_do_once":
+                return true
+            default:
+                return false
+            }
+        }
+
+        func execWires(from node: RCP3ScriptGraph.Node, outputPin: UInt64? = nil) -> [RCP3ScriptGraph.Wire] {
+            graph.wires
+                .filter { wire in
+                    guard wire.from == node.id, isExecWire(wire, from: node) else { return false }
+                    guard let outputPin else { return true }
+                    return wire.fromPin == outputPin || (wire.fromPin == nil && outputPin == CanonicalScriptGraphCompiler.unnamedExecPin)
+                }
+                .sorted { lhs, rhs in
+                    let left = lhs.fromPin ?? 0
+                    let right = rhs.fromPin ?? 0
+                    if left == right { return lhs.id < rhs.id }
+                    return left < right
+                }
+        }
+
+        func isExecWire(_ wire: RCP3ScriptGraph.Wire, from node: RCP3ScriptGraph.Node) -> Bool {
+            if wire.isExec { return true }
+            switch node.type {
+            case "tm_sequence", "tm_switch":
+                return wire.fromPin != nil
+            case "tm_if":
+                return [CanonicalScriptGraphCompiler.alwaysPin, CanonicalScriptGraphCompiler.truePin, CanonicalScriptGraphCompiler.falsePin].contains(wire.fromPin)
+            case "tm_loop":
+                return [CanonicalScriptGraphCompiler.stepPin, CanonicalScriptGraphCompiler.endPin].contains(wire.fromPin)
+            case "tm_delay":
+                return [CanonicalScriptGraphCompiler.alwaysPin, CanonicalScriptGraphCompiler.oncePin].contains(wire.fromPin)
+            case "tm_do_once":
+                return [CanonicalScriptGraphCompiler.alwaysPin, CanonicalScriptGraphCompiler.oncePin].contains(wire.fromPin)
+            case "tm_cancel_delay":
+                return wire.fromPin == CanonicalScriptGraphCompiler.unnamedExecPin
+            default:
+                return wire.fromPin == nil
+            }
+        }
+
+        mutating func emitSequence(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var statements: [String] = []
+            for wire in execWires(from: node) {
+                guard let action = graph.node(id: wire.to), !handledNodeIDs.contains(action.id) else { continue }
+                handledNodeIDs.insert(action.id)
+                statements.append(contentsOf: emitActionStatements(for: action, context: context))
+                if !Self.handlesOwnControlFlow(action.type) {
+                    statements.append(contentsOf: emitActionBody(after: action, context: context))
+                }
+            }
+            return statements
+        }
+
+        mutating func emitIf(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let condition = inputExpression(into: node, pinName: "condition", context: context, seen: &seen).code
+            var statements = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.alwaysPin)
+            let trueBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.truePin)
+            let falseBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.falsePin)
+            statements.append("if (\(condition)) {")
+            statements.append(contentsOf: Self.indent(trueBody.isEmpty ? ["// no-op"] : trueBody))
+            statements.append("} else {")
+            statements.append(contentsOf: Self.indent(falseBody.isEmpty ? ["// no-op"] : falseBody))
+            statements.append("}")
+            return statements
+        }
+
+        mutating func emitSwitch(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let condition = inputExpression(into: node, pinName: "condition", context: context, seen: &seen).code
+            let first = inputExpression(into: node, pinName: "first", context: context, seen: &seen).code
+            let outputs = execWires(from: node)
+            guard !outputs.isEmpty else { return ["switch (\(condition)) {", "}"] }
+            var statements = ["switch (\(condition)) {"]
+            for (offset, wire) in outputs.dropLast().enumerated() {
+                let body = emitSwitchBody(for: wire, context: context)
+                statements.append("case (\(first) + \(offset)):")
+                statements.append(contentsOf: Self.indent(body.isEmpty ? ["break;"] : body.map { $0 == "break;" ? $0 : $0 }))
+                if body.last != "break;" { statements.append("    break;") }
+            }
+            if let fallback = outputs.last {
+                let body = emitSwitchBody(for: fallback, context: context)
+                statements.append("default:")
+                statements.append(contentsOf: Self.indent(body.isEmpty ? ["break;"] : body))
+                if body.last != "break;" { statements.append("    break;") }
+            }
+            statements.append("}")
+            return statements
+        }
+
+        mutating func emitSwitchBody(for wire: RCP3ScriptGraph.Wire, context: ExprContext) -> [String] {
+            guard let action = graph.node(id: wire.to), !handledNodeIDs.contains(action.id) else { return [] }
+            handledNodeIDs.insert(action.id)
+            var body = emitActionStatements(for: action, context: context)
+            if !Self.handlesOwnControlFlow(action.type) {
+                body.append(contentsOf: emitActionBody(after: action, context: context))
+            }
+            return body
+        }
+
+        mutating func emitLoop(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let begin = inputExpression(into: node, pinName: "begin", context: context, seen: &seen).code
+            let end = inputExpression(into: node, pinName: "end", context: context, seen: &seen).code
+            let step = inputExpression(into: node, pinName: "step", context: context, seen: &seen, defaultValue: Expr("1")).code
+            let inclusive = inputExpression(into: node, pinName: "inclusive", context: context, seen: &seen).code
+            let index = Self.loopIndexName(for: node)
+            let stepBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.stepPin)
+            let condition = "((\(step)) >= 0 ? (\(inclusive) ? \(index) <= (\(end)) : \(index) < (\(end))) : (\(inclusive) ? \(index) >= (\(end)) : \(index) > (\(end))))"
+            var statements = [
+                "for (let \(index) = \(begin); \(condition); \(index) += (\(step))) {"
+            ]
+            statements.append(contentsOf: Self.indent(stepBody.isEmpty ? ["// no-op"] : stepBody))
+            statements.append("}")
+            statements.append(contentsOf: emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.endPin))
+            return statements
+        }
+
+        mutating func emitDelay(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let seconds = inputExpression(into: node, pinName: "seconds", context: context, seen: &seen).code
+            let unique = inputExpression(into: node, pinName: "is unique", context: context, seen: &seen).code
+            let helper = "__d3_delay_\(Self.sanitize(node.id))"
+            let slot = Self.delayCancelSlot(for: node)
+            let onceBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.oncePin)
+            let alwaysBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.alwaysPin)
+            var statements = ["const \(helper) = (s, unique) => {"]
+            statements.append("    if (unique && this.\(slot)) { this.clearTimeout(this.\(slot)); }")
+            statements.append("    this.\(slot) = this.setTimeout(() => {")
+            statements.append(contentsOf: Self.indent(onceBody.isEmpty ? ["// no-op"] : onceBody, by: "        "))
+            statements.append("    }, s * 1000);")
+            statements.append(contentsOf: Self.indent(alwaysBody, by: "    "))
+            statements.append("};")
+            statements.append("\(helper)(\(seconds), \(unique));")
+            return statements
+        }
+
+        mutating func emitCancelDelay(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let cancelID = inputExpression(into: node, pinName: "cancelID", context: context, seen: &seen).code
+            return ["this.clearTimeout(\(cancelID));"]
+        }
+
+        mutating func emitDoOnce(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            let slot = "__d3_once_\(Self.sanitize(node.id))"
+            var statements = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.alwaysPin)
+            let onceBody = emitActionBody(after: node, context: context, outputPin: CanonicalScriptGraphCompiler.oncePin)
+            statements.append("if (!this.\(slot)) {")
+            statements.append(contentsOf: Self.indent(onceBody.isEmpty ? ["// no-op"] : onceBody))
+            statements.append("    this.\(slot) = true;")
+            statements.append("}")
+            return statements
+        }
+
+        static func indent(_ lines: [String], by prefix: String = "    ") -> [String] {
+            lines.map { prefix + $0 }
+        }
+
+        static func loopIndexName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_index_\(sanitize(node.id))"
+        }
+
+        static func delayCancelSlot(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_cancel_\(sanitize(node.id))"
         }
 
         /// A Set Component (Transform) action: write the entity transform property fed
@@ -444,6 +640,14 @@ public struct CanonicalScriptGraphCompiler {
             // Gesture event outputs read off `event.<pinName>` inside a gesture handler.
             if Self.eventKind(for: node.type) != nil {
                 return gestureOutputExpression(node, outputPin: outputPin, context: context)
+            }
+
+            if node.type == "tm_loop", outputPin == CanonicalScriptGraphCompiler.indexPin {
+                return Expr(Self.loopIndexName(for: node))
+            }
+
+            if node.type == "tm_delay", outputPin == CanonicalScriptGraphCompiler.cancelIDPin {
+                return Expr("this.\(Self.delayCancelSlot(for: node))")
             }
 
             // Math constants are scalars.

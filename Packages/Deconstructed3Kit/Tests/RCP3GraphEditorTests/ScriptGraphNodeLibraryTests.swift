@@ -108,6 +108,9 @@ struct ScriptGraphNodeLibraryTests {
             "tm_string_has_prefix", "tm_string_has_suffix", "tm_string_contains",
             "tm_string_length", "tm_string_prefix", "tm_string_suffix",
             "tm_string_substring",
+            // Control Flow
+            "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay",
+            "tm_cancel_delay", "tm_do_once",
             // Logic
             "tm_and", "tm_or",
             // Math — Arithmetic & trig
@@ -234,13 +237,34 @@ struct ScriptGraphNodeLibraryTests {
         #expect(setRemote.outputs.contains { $0.isExec })
     }
 
+    @Test("Control-flow specs declare named event outputs")
+    func controlFlowNodeSpecs() throws {
+        let branch = try #require(ScriptGraphNodeLibrary.spec(for: "tm_if"))
+        #expect(branch.inputs.map(\.connectorName) == ["", "condition"])
+        #expect(branch.outputs.map(\.connectorName) == ["always", "true", "false"])
+        #expect(branch.outputs.allSatisfy { $0.isExec })
+
+        let loop = try #require(ScriptGraphNodeLibrary.spec(for: "tm_loop"))
+        #expect(loop.inputs.map(\.connectorName) == ["", "begin", "end", "step", "inclusive"])
+        #expect(loop.outputs.map(\.connectorName) == ["step", "end", "index"])
+        #expect(loop.outputs.filter(\.isExec).map(\.connectorName) == ["step", "end"])
+
+        let delay = try #require(ScriptGraphNodeLibrary.spec(for: "tm_delay"))
+        #expect(delay.inputs.map(\.connectorName) == ["", "seconds", "is unique"])
+        #expect(delay.outputs.map(\.connectorName) == ["always", "once", "cancelID"])
+
+        let cancel = try #require(ScriptGraphNodeLibrary.spec(for: "tm_cancel_delay"))
+        #expect(cancel.inputs.map(\.connectorName) == ["", "cancelID"])
+        #expect(cancel.outputs.map(\.connectorName) == [""])
+    }
+
     @Test("Palette sections group the library by category in display order")
     func paletteSections() throws {
         let sections = ScriptGraphNodeLibrary.paletteSections
 
-        // Sections appear in Category.order: Events, Logic, Math, Make, String,
-        // Components, Variables.
-        #expect(sections.map(\.category) == [.events, .logic, .math, .make, .string, .components, .variables])
+        // Sections appear in Category.order: Events, Control Flow, Logic, Math,
+        // Make, String, Components, Variables.
+        #expect(sections.map(\.category) == [.events, .controlFlow, .logic, .math, .make, .string, .components, .variables])
 
         let byCategory = Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0) })
 

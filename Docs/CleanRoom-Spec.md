@@ -256,6 +256,32 @@ Observed JS emission for the rotation nodes implemented in the canonical compile
 | `tm_string_suffix` | `string`, `length` | `result` |
 | `tm_string_substring` | `string`, `index`, `length` | `result` |
 
+**Control Flow.** The unnamed event connector is represented by the empty string
+connector name. `tm_sequence` and `tm_switch` grow dynamic event outputs; the library
+does not invent fixed case/output connector names for those dynamic outputs.
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_sequence` | `""` | dynamic event outputs |
+| `tm_if` | `""`, `condition` | `always`, `true`, `false` |
+| `tm_switch` | `""`, `condition`, `continuous`, `first`, `count` | dynamic case outputs plus final default output |
+| `tm_loop` | `""`, `begin`, `end`, `step`, `inclusive` | `step`, `end`, `index` |
+| `tm_delay` | `""`, `seconds`, `is unique` | `always`, `once`, `cancelID` |
+| `tm_cancel_delay` | `""`, `cancelID` | `""` |
+| `tm_do_once` | `""` | `always`, `once` |
+
+Observed JS emission for the control-flow nodes implemented in the canonical compiler:
+
+| type | emitted behavior |
+| --- | --- |
+| `tm_sequence` | Calls each connected output event in connector order. |
+| `tm_if` | Emits `always` first when connected, then `if (condition) { true } else { false }`. |
+| `tm_switch` | Emits `switch (condition)` with cases derived from `first` and connected dynamic outputs; the last connected output is the default. |
+| `tm_loop` | Emits a direction-aware `for` loop from `begin` to `end` by `step`, using `inclusive` to choose inclusive/exclusive bounds, then emits `end`. |
+| `tm_delay` | Defines a delay helper, uses `this.setTimeout(..., seconds * 1000)`, stores `cancelID`, emits `always` after scheduling, and emits `once` when the timer fires. |
+| `tm_cancel_delay` | Emits `this.clearTimeout(cancelID)`. |
+| `tm_do_once` | Emits `always`, then a per-node guard that emits `once` only once. |
+
 **Logic.** Each yields a single `result`. The inputs are **variadic**: the node
 presents a sequential list `a`, `b`, `c`, … and the editor's "add more inputs (+)"
 affordance grows it; the library seeds the first two (`a`, `b`) — the "+" affordance is

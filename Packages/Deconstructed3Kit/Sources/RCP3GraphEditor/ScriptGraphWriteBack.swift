@@ -353,30 +353,28 @@ public enum ScriptGraphWriteBack {
     // MARK: - Connection serialization
 
     /// A `{ __uuid, from_node, to_node [, from_connector_hash, to_connector_hash] }`
-    /// object for `connection`. Exec wires omit the hashes; data wires carry the hex
-    /// parsed from the pin ids (`out.<hex>` / `in.<hex>`).
+    /// object for `connection`. Legacy unnamed exec wires omit hashes; named exec and
+    /// data wires carry the hash suffix parsed from their pin ids.
     private static func connectionObject(for connection: GraphConnection) -> TMObject {
         var object = TMObject()
         object.set(.string(connection.id), forKey: "__uuid")
         object.set(.string(connection.from.nodeID), forKey: "from_node")
         object.set(.string(connection.to.nodeID), forKey: "to_node")
-        if !connection.isExec {
-            if let fromHex = hexComponent(of: connection.from.pinID) {
-                object.set(.string(fromHex), forKey: "from_connector_hash")
-            }
-            if let toHex = hexComponent(of: connection.to.pinID) {
-                object.set(.string(toHex), forKey: "to_connector_hash")
-            }
+        if let fromHex = hashHexComponent(of: connection.from.pinID) {
+            object.set(.string(fromHex), forKey: "from_connector_hash")
+        }
+        if let toHex = hashHexComponent(of: connection.to.pinID) {
+            object.set(.string(toHex), forKey: "to_connector_hash")
         }
         return object
     }
 
-    /// The `<hex>` part of a data pin id (`out.<hex>` / `in.<hex>`): the substring
-    /// after the first dot, or `nil` when the pin id has no hex component.
-    private static func hexComponent(of pinID: String) -> String? {
-        guard let dot = pinID.firstIndex(of: ".") else { return nil }
-        let hex = pinID[pinID.index(after: dot)...]
-        return hex.isEmpty ? nil : String(hex)
+    /// The final `<hex>` component of a data or named-exec pin id.
+    private static func hashHexComponent(of pinID: String) -> String? {
+        guard let component = pinID.split(separator: ".").last, UInt64(component, radix: 16) != nil else {
+            return nil
+        }
+        return String(component)
     }
 
     /// A numeric lexeme for `value`, written to match how RCP stores positions.

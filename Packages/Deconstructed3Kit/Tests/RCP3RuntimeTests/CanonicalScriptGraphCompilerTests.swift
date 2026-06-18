@@ -910,4 +910,175 @@ import RCP3Runtime
         #expect(js.contains("this.entity.position = new Math3D.Vector4("))
         #expect(!js.contains("unsupported"))
     }
+
+    @Test func ifCompilesAlwaysThenTrueFalseBranches() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let branch = RCP3ScriptGraph.Node(id: "if", type: "tm_if")
+        let always = RCP3ScriptGraph.Node(id: "a", type: "tm_set_variable_node", variableName: "always")
+        let truthy = RCP3ScriptGraph.Node(id: "t", type: "tm_set_variable_node", variableName: "truthy")
+        let falsy = RCP3ScriptGraph.Node(id: "f", type: "tm_set_variable_node", variableName: "falsy")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "if"),
+            RCP3ScriptGraph.Wire(id: "ea", from: "if", to: "a", fromPin: TMHash.murmur64a("always"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "et", from: "if", to: "t", fromPin: TMHash.murmur64a("true"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "ef", from: "if", to: "f", fromPin: TMHash.murmur64a("false"), toPin: TMHash.murmur64a("")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "c", toNode: "if", toPin: TMHash.murmur64a("condition"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "la", toNode: "a", toPin: TMHash.murmur64a("value"), scalarValue: 10),
+            RCP3ScriptGraph.DataLiteral(id: "lt", toNode: "t", toPin: TMHash.murmur64a("value"), scalarValue: 20),
+            RCP3ScriptGraph.DataLiteral(id: "lf", toNode: "f", toPin: TMHash.murmur64a("value"), scalarValue: 30),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, branch, always, truthy, falsy], wires: wires, data: data))
+
+        #expect(js.contains("this.variable_8744360917969063771 = 10;"))
+        #expect(js.contains("if (1) {"))
+        #expect(js.contains("this.variable_5875689825633950935 = 20;"))
+        #expect(js.contains("} else {"))
+        #expect(js.contains("this.variable_10036592113519658831 = 30;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func sequenceCompilesConnectedOutputsInConnectorOrder() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let sequence = RCP3ScriptGraph.Node(id: "seq", type: "tm_sequence")
+        let first = RCP3ScriptGraph.Node(id: "first", type: "tm_set_variable_node", variableName: "first")
+        let second = RCP3ScriptGraph.Node(id: "second", type: "tm_set_variable_node", variableName: "second")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "seq"),
+            RCP3ScriptGraph.Wire(id: "e2", from: "seq", to: "second", fromPin: 2, toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "e1", from: "seq", to: "first", fromPin: 1, toPin: TMHash.murmur64a("")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "l1", toNode: "first", toPin: TMHash.murmur64a("value"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "l2", toNode: "second", toPin: TMHash.murmur64a("value"), scalarValue: 2),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, sequence, first, second], wires: wires, data: data))
+
+        let firstWrite = " = 1;"
+        let secondWrite = " = 2;"
+        #expect(js.range(of: firstWrite) != nil)
+        #expect(js.range(of: secondWrite) != nil)
+        #expect(js.range(of: firstWrite)!.lowerBound < js.range(of: secondWrite)!.lowerBound)
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func switchCompilesCasesPlusDefaultFromDynamicOutputs() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let switchNode = RCP3ScriptGraph.Node(id: "sw", type: "tm_switch")
+        let case0 = RCP3ScriptGraph.Node(id: "c0", type: "tm_set_variable_node", variableName: "case0")
+        let case1 = RCP3ScriptGraph.Node(id: "c1", type: "tm_set_variable_node", variableName: "case1")
+        let fallback = RCP3ScriptGraph.Node(id: "d", type: "tm_set_variable_node", variableName: "fallback")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "sw"),
+            RCP3ScriptGraph.Wire(id: "o0", from: "sw", to: "c0", fromPin: 1, toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "o1", from: "sw", to: "c1", fromPin: 2, toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "od", from: "sw", to: "d", fromPin: 3, toPin: TMHash.murmur64a("")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "cond", toNode: "sw", toPin: TMHash.murmur64a("condition"), scalarValue: 6),
+            RCP3ScriptGraph.DataLiteral(id: "first", toNode: "sw", toPin: TMHash.murmur64a("first"), scalarValue: 5),
+            RCP3ScriptGraph.DataLiteral(id: "v0", toNode: "c0", toPin: TMHash.murmur64a("value"), scalarValue: 10),
+            RCP3ScriptGraph.DataLiteral(id: "v1", toNode: "c1", toPin: TMHash.murmur64a("value"), scalarValue: 11),
+            RCP3ScriptGraph.DataLiteral(id: "vd", toNode: "d", toPin: TMHash.murmur64a("value"), scalarValue: 12),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, switchNode, case0, case1, fallback], wires: wires, data: data))
+
+        #expect(js.contains("switch (6) {"))
+        #expect(js.contains("case (5 + 0):"))
+        #expect(js.contains("case (5 + 1):"))
+        #expect(js.contains("default:"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func loopCompilesDirectionAwareForWithIndexOutput() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let loop = RCP3ScriptGraph.Node(id: "loop", type: "tm_loop")
+        let setIndex = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "index")
+        let done = RCP3ScriptGraph.Node(id: "done", type: "tm_set_variable_node", variableName: "done")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "loop"),
+            RCP3ScriptGraph.Wire(id: "step", from: "loop", to: "set", fromPin: TMHash.murmur64a("step"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "end", from: "loop", to: "done", fromPin: TMHash.murmur64a("end"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "idx", from: "loop", to: "set", fromPin: TMHash.murmur64a("index"), toPin: TMHash.murmur64a("value")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "b", toNode: "loop", toPin: TMHash.murmur64a("begin"), scalarValue: 0),
+            RCP3ScriptGraph.DataLiteral(id: "e", toNode: "loop", toPin: TMHash.murmur64a("end"), scalarValue: 3),
+            RCP3ScriptGraph.DataLiteral(id: "s", toNode: "loop", toPin: TMHash.murmur64a("step"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "i", toNode: "loop", toPin: TMHash.murmur64a("inclusive"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "d", toNode: "done", toPin: TMHash.murmur64a("value"), scalarValue: 99),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, loop, setIndex, done], wires: wires, data: data))
+
+        #expect(js.contains("for (let __d3_index_loop = 0;"))
+        #expect(js.contains("__d3_index_loop += (1)"))
+        #expect(js.contains("this.variable_12698897294825761860 = __d3_index_loop;"))
+        #expect(js.contains("this.variable_10296494685231209730 = 99;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func delayCompilesTimeoutAndCancelIDOutput() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let delay = RCP3ScriptGraph.Node(id: "delay", type: "tm_delay")
+        let setCancel = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "cancel")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "delay"),
+            RCP3ScriptGraph.Wire(id: "always", from: "delay", to: "set", fromPin: TMHash.murmur64a("always"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "cancel", from: "delay", to: "set", fromPin: TMHash.murmur64a("cancelID"), toPin: TMHash.murmur64a("value")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "seconds", toNode: "delay", toPin: TMHash.murmur64a("seconds"), scalarValue: 0.25),
+            RCP3ScriptGraph.DataLiteral(id: "unique", toNode: "delay", toPin: TMHash.murmur64a("is unique"), scalarValue: 1),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, delay, setCancel], wires: wires, data: data))
+
+        #expect(js.contains("const __d3_delay_delay = (s, unique) => {"))
+        #expect(js.contains("this.__d3_cancel_delay = this.setTimeout(() => {"))
+        #expect(js.contains("}, s * 1000);"))
+        #expect(js.contains("__d3_delay_delay(0.25, 1);"))
+        #expect(js.contains("this.variable_16273870164193684844 = this.__d3_cancel_delay;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func cancelDelayCompilesClearTimeout() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let cancel = RCP3ScriptGraph.Node(id: "cancel", type: "tm_cancel_delay")
+        let exec = RCP3ScriptGraph.Wire(id: "e", from: "u", to: "cancel")
+        let literal = RCP3ScriptGraph.DataLiteral(id: "id", toNode: "cancel", toPin: TMHash.murmur64a("cancelID"), scalarValue: 123)
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, cancel], wires: [exec], data: [literal]))
+
+        #expect(js.contains("this.clearTimeout(123);"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func doOnceCompilesAlwaysThenGuardedOnce() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let once = RCP3ScriptGraph.Node(id: "once", type: "tm_do_once")
+        let always = RCP3ScriptGraph.Node(id: "always", type: "tm_set_variable_node", variableName: "alwaysOnce")
+        let gated = RCP3ScriptGraph.Node(id: "gated", type: "tm_set_variable_node", variableName: "gatedOnce")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "once"),
+            RCP3ScriptGraph.Wire(id: "always", from: "once", to: "always", fromPin: TMHash.murmur64a("always"), toPin: TMHash.murmur64a("")),
+            RCP3ScriptGraph.Wire(id: "once", from: "once", to: "gated", fromPin: TMHash.murmur64a("once"), toPin: TMHash.murmur64a("")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "a", toNode: "always", toPin: TMHash.murmur64a("value"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "g", toNode: "gated", toPin: TMHash.murmur64a("value"), scalarValue: 2),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, once, always, gated], wires: wires, data: data))
+
+        #expect(js.contains("this.variable_12640727383939188824 = 1;"))
+        #expect(js.contains("if (!this.__d3_once_once) {"))
+        #expect(js.contains("this.variable_6127020334959562039 = 2;"))
+        #expect(js.contains("this.__d3_once_once = true;"))
+        #expect(!js.contains("unsupported"))
+    }
 }

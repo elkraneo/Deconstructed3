@@ -75,6 +75,7 @@ public enum ScriptGraphNodeLibrary {
     /// readable, ordered sections; the `order` drives section ordering in the UI.
     public enum Category: String, Sendable, Hashable, CaseIterable {
         case events = "Events"
+        case controlFlow = "Control Flow"
         case logic = "Logic"
         case components = "Components"
         case math = "Math"
@@ -86,12 +87,13 @@ public enum ScriptGraphNodeLibrary {
         public var order: Int {
             switch self {
             case .events:     return 0
-            case .logic:      return 1
-            case .math:       return 2
-            case .make:       return 3
-            case .string:     return 4
-            case .components: return 5
-            case .variables:  return 6
+            case .controlFlow: return 1
+            case .logic:      return 2
+            case .math:       return 3
+            case .make:       return 4
+            case .string:     return 5
+            case .components: return 6
+            case .variables:  return 7
             }
         }
 
@@ -204,6 +206,14 @@ public enum ScriptGraphNodeLibrary {
         "tm_will_remove": "Will Remove",
         "tm_will_deactivate": "Will Deactivate",
         "tm_script_changed": "Script Changed",
+        // Control Flow
+        "tm_sequence": "Sequence",
+        "tm_if": "If",
+        "tm_switch": "Switch",
+        "tm_loop": "Loop",
+        "tm_delay": "Delay",
+        "tm_cancel_delay": "Cancel Delay",
+        "tm_do_once": "Do Once",
         // Components
         "tm_set_component": "Set Component",
         "tm_get_component": "Get Component",
@@ -306,11 +316,16 @@ public enum ScriptGraphNodeLibrary {
     /// bridge then derives pins from the wired connectors instead).
     public static func spec(for type: String) -> NodeSpec? { specsByType[type] }
 
-    private static let exec = PinSpec(connectorName: "exec", displayName: "exec", isExec: true)
+    private static let exec = PinSpec(connectorName: "", displayName: "exec", isExec: true)
 
     /// A data pin, named by its camelCase connector and Title Case display name.
     private static func data(_ connector: String, _ display: String) -> PinSpec {
         PinSpec(connectorName: connector, displayName: display, isExec: false)
+    }
+
+    /// A named control-flow pin. The unnamed event connector is `exec` above.
+    private static func event(_ connector: String, _ display: String) -> PinSpec {
+        PinSpec(connectorName: connector, displayName: display, isExec: true)
     }
 
     private static let specsByType: [String: NodeSpec] = [
@@ -370,6 +385,32 @@ public enum ScriptGraphNodeLibrary {
         "tm_will_remove":     NodeSpec(inputs: [], outputs: [exec], category: .events),
         "tm_will_deactivate": NodeSpec(inputs: [], outputs: [exec], category: .events),
         "tm_script_changed":  NodeSpec(inputs: [], outputs: [exec], category: .events),
+
+        // MARK: Control Flow
+        "tm_sequence": NodeSpec(inputs: [exec], outputs: [], category: .controlFlow),
+        "tm_if": NodeSpec(
+            inputs: [exec, data("condition", "Condition")],
+            outputs: [event("always", "Always"), event("true", "True"), event("false", "False")],
+            category: .controlFlow
+        ),
+        "tm_switch": NodeSpec(
+            inputs: [exec, data("condition", "Condition"), data("continuous", "Continuous"), data("first", "First"), data("count", "Count")],
+            outputs: [],
+            category: .controlFlow
+        ),
+        "tm_loop": NodeSpec(
+            inputs: [exec, data("begin", "Begin"), data("end", "End"), data("step", "Step"), data("inclusive", "Inclusive")],
+            outputs: [event("step", "Step"), event("end", "End"), data("index", "Index")],
+            category: .controlFlow
+        ),
+        "tm_delay": NodeSpec(
+            inputs: [exec, data("seconds", "Seconds"), data("is unique", "Is Unique")],
+            outputs: [event("always", "Always"), event("once", "Once"), data("cancelID", "Cancel ID")],
+            category: .controlFlow
+        ),
+        "tm_cancel_delay": NodeSpec(inputs: [exec, data("cancelID", "Cancel ID")], outputs: [exec], category: .controlFlow),
+        "tm_do_once": NodeSpec(inputs: [exec], outputs: [event("always", "Always"), event("once", "Once")], category: .controlFlow),
+
         // Get Component — mirror of Set Component, but the component's properties are
         // OUTPUTS (you read them). Its `source`/`component_type` connector names mirror
         // the verified `tm_set_component` names, so this node is faithful. The chosen

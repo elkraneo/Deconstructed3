@@ -42,6 +42,16 @@ public enum ScriptGraphPinResolver {
     /// The handle id for a node's exec (control-flow) output pin.
     static let execOutHandleID = "exec.out"
 
+    static func execInputHandleID(forHash hash: UInt64?) -> String {
+        guard let hash, hash != TMHash.murmur64a("") else { return execInHandleID }
+        return "exec.in." + TMHash.hex(hash)
+    }
+
+    static func execOutputHandleID(forHash hash: UInt64?) -> String {
+        guard let hash, hash != TMHash.murmur64a("") else { return execOutHandleID }
+        return "exec.out." + TMHash.hex(hash)
+    }
+
     /// The handle id for a data *input* pin keyed by `connector_hash`.
     static func inputHandleID(forHash hash: UInt64) -> String {
         "in." + hex(hash)
@@ -138,7 +148,9 @@ public enum ScriptGraphPinResolver {
     ) -> ScriptGraphNodePayload.Pin {
         let id: String
         if spec.isExec {
-            id = isInput ? execInHandleID : execOutHandleID
+            id = isInput
+                ? execInputHandleID(forHash: spec.connectorHash)
+                : execOutputHandleID(forHash: spec.connectorHash)
         } else if isInput {
             id = inputHandleID(forHash: spec.connectorHash)
         } else {
@@ -197,6 +209,22 @@ public enum ScriptGraphPinResolver {
         }
         if hasExecIn {
             pins.append(.init(id: execInHandleID, label: "exec", isInput: true, isExec: true))
+        }
+        if node.type == "tm_sequence" || node.type == "tm_switch" {
+            for hash in distinctSorted(graph.wires.compactMap { wire -> UInt64? in
+                guard !wire.isExec, wire.from == node.id else { return nil }
+                return wire.fromPin
+            }) {
+                let id = execOutputHandleID(forHash: hash)
+                if id != execOutHandleID {
+                    pins.append(.init(
+                        id: id,
+                        label: RCP3ScriptGraph.label(forHash: hash),
+                        isInput: false,
+                        isExec: true
+                    ))
+                }
+            }
         }
 
         // Data outputs: distinct `fromPin` hashes among data wires leaving this node.
