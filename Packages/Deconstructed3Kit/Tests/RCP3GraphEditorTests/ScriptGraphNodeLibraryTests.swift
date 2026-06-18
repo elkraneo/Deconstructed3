@@ -111,6 +111,9 @@ struct ScriptGraphNodeLibraryTests {
             // Control Flow
             "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay",
             "tm_cancel_delay", "tm_do_once",
+            // Entity
+            "tm_entity_set_relative_transform", "tm_entity_look_at",
+            "tm_self", "tm_scene",
             // Logic
             "tm_and", "tm_or",
             // Math — Arithmetic & trig
@@ -258,13 +261,32 @@ struct ScriptGraphNodeLibraryTests {
         #expect(cancel.outputs.map(\.connectorName) == [""])
     }
 
+    @Test("Entity specs declare exact pins")
+    func entityNodeSpecs() throws {
+        let relative = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_set_relative_transform"))
+        #expect(relative.inputs.map(\.connectorName) == ["", "entity", "scale", "orientation", "position", "matrix", "relativeTo"])
+        #expect(relative.outputs.map(\.connectorName) == [""])
+
+        let look = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_look_at"))
+        #expect(look.inputs.map(\.connectorName) == ["", "entity", "at", "from", "upVector", "relativeTo", "positiveZForward"])
+        #expect(look.outputs.map(\.connectorName) == [""])
+
+        let selfNode = try #require(ScriptGraphNodeLibrary.spec(for: "tm_self"))
+        #expect(selfNode.inputs.isEmpty)
+        #expect(selfNode.outputs.map(\.connectorName) == ["entity"])
+
+        let scene = try #require(ScriptGraphNodeLibrary.spec(for: "tm_scene"))
+        #expect(scene.inputs.isEmpty)
+        #expect(scene.outputs.map(\.connectorName) == ["scene"])
+    }
+
     @Test("Palette sections group the library by category in display order")
     func paletteSections() throws {
         let sections = ScriptGraphNodeLibrary.paletteSections
 
-        // Sections appear in Category.order: Events, Control Flow, Logic, Math,
+        // Sections appear in Category.order: Events, Control Flow, Logic, Entity, Math,
         // Make, String, Components, Variables.
-        #expect(sections.map(\.category) == [.events, .controlFlow, .logic, .math, .make, .string, .components, .variables])
+        #expect(sections.map(\.category) == [.events, .controlFlow, .logic, .entity, .math, .make, .string, .components, .variables])
 
         let byCategory = Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0) })
 

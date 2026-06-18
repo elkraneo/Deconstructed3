@@ -77,6 +77,7 @@ public enum ScriptGraphNodeLibrary {
         case events = "Events"
         case controlFlow = "Control Flow"
         case logic = "Logic"
+        case entity = "Entity"
         case components = "Components"
         case math = "Math"
         case make = "Make"
@@ -89,11 +90,12 @@ public enum ScriptGraphNodeLibrary {
             case .events:     return 0
             case .controlFlow: return 1
             case .logic:      return 2
-            case .math:       return 3
-            case .make:       return 4
-            case .string:     return 5
-            case .components: return 6
-            case .variables:  return 7
+            case .entity:     return 3
+            case .math:       return 4
+            case .make:       return 5
+            case .string:     return 6
+            case .components: return 7
+            case .variables:  return 8
             }
         }
 
@@ -214,6 +216,11 @@ public enum ScriptGraphNodeLibrary {
         "tm_delay": "Delay",
         "tm_cancel_delay": "Cancel Delay",
         "tm_do_once": "Do Once",
+        // Entity
+        "tm_entity_set_relative_transform": "Set Relative Transform",
+        "tm_entity_look_at": "Look At",
+        "tm_self": "Self",
+        "tm_scene": "Scene",
         // Components
         "tm_set_component": "Set Component",
         "tm_get_component": "Get Component",
@@ -410,6 +417,36 @@ public enum ScriptGraphNodeLibrary {
         ),
         "tm_cancel_delay": NodeSpec(inputs: [exec, data("cancelID", "Cancel ID")], outputs: [exec], category: .controlFlow),
         "tm_do_once": NodeSpec(inputs: [exec], outputs: [event("always", "Always"), event("once", "Once")], category: .controlFlow),
+
+        // MARK: Entity
+        "tm_entity_set_relative_transform": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("scale", "Scale"),
+                data("orientation", "Orientation"),
+                data("position", "Position"),
+                data("matrix", "Matrix"),
+                data("relativeTo", "Relative To"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_entity_look_at": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("at", "At"),
+                data("from", "From"),
+                data("upVector", "Up Vector"),
+                data("relativeTo", "Relative To"),
+                data("positiveZForward", "Positive Z Forward"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_self": NodeSpec(inputs: [], outputs: [data("entity", "Entity")], category: .entity),
+        "tm_scene": NodeSpec(inputs: [], outputs: [data("scene", "Scene")], category: .entity),
 
         // Get Component — mirror of Set Component, but the component's properties are
         // OUTPUTS (you read them). Its `source`/`component_type` connector names mirror

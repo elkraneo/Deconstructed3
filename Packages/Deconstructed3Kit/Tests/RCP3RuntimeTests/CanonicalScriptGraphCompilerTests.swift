@@ -1081,4 +1081,81 @@ import RCP3Runtime
         #expect(js.contains("this.__d3_once_once = true;"))
         #expect(!js.contains("unsupported"))
     }
+
+    @Test func entitySetRelativeTransformCompilesOptionalRelativeWrites() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let action = RCP3ScriptGraph.Node(id: "rel", type: "tm_entity_set_relative_transform")
+        let selfNode = RCP3ScriptGraph.Node(id: "self", type: "tm_self")
+        let position = RCP3ScriptGraph.Node(id: "pos", type: "tm_make_vector3")
+        let rotation = RCP3ScriptGraph.Node(id: "rot", type: "tm_make_rotation")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "rel"),
+            RCP3ScriptGraph.Wire(id: "entity", from: "self", to: "rel", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("entity")),
+            RCP3ScriptGraph.Wire(id: "relative", from: "self", to: "rel", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("relativeTo")),
+            RCP3ScriptGraph.Wire(id: "position", from: "pos", to: "rel", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("position")),
+            RCP3ScriptGraph.Wire(id: "orientation", from: "rot", to: "rel", fromPin: TMHash.murmur64a("new"), toPin: TMHash.murmur64a("orientation")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "x", toNode: "pos", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "y", toNode: "pos", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "z", toNode: "pos", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+            RCP3ScriptGraph.DataLiteral(id: "angle", toNode: "rot", toPin: TMHash.murmur64a("angle"), scalarValue: 0.5),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, action, selfNode, position, rotation], wires: wires, data: data))
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("if (new Math3D.Quaternion(0.5, new Math3D.Vector3(0, 1, 0)) != null) this.entity.setRelativeOrientation(new Math3D.Quaternion(0.5, new Math3D.Vector3(0, 1, 0)), this.entity);"))
+        #expect(js.contains("if (new Math3D.Vector3(1, 2, 3) != null) this.entity.setRelativePosition(new Math3D.Vector3(1, 2, 3), this.entity);"))
+        #expect(js.contains("if (null != null) this.entity.setRelativeScale(null, this.entity);"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func entityLookAtCompilesLookCall() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let look = RCP3ScriptGraph.Node(id: "look", type: "tm_entity_look_at")
+        let selfNode = RCP3ScriptGraph.Node(id: "self", type: "tm_self")
+        let at = RCP3ScriptGraph.Node(id: "at", type: "tm_make_vector3")
+        let from = RCP3ScriptGraph.Node(id: "from", type: "tm_make_vector3")
+        let up = RCP3ScriptGraph.Node(id: "up", type: "tm_make_vector3")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "look"),
+            RCP3ScriptGraph.Wire(id: "entity", from: "self", to: "look", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("entity")),
+            RCP3ScriptGraph.Wire(id: "relative", from: "self", to: "look", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("relativeTo")),
+            RCP3ScriptGraph.Wire(id: "at", from: "at", to: "look", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("at")),
+            RCP3ScriptGraph.Wire(id: "from", from: "from", to: "look", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("from")),
+            RCP3ScriptGraph.Wire(id: "up", from: "up", to: "look", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("upVector")),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "atX", toNode: "at", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "fromY", toNode: "from", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "upY", toNode: "up", toPin: TMHash.murmur64a("y"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "forward", toNode: "look", toPin: TMHash.murmur64a("positiveZForward"), scalarValue: 1),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, look, selfNode, at, from, up], wires: wires, data: data))
+
+        #expect(js.contains("this.entity.look(new Math3D.Vector3(1, 0 /* y unwired */, 0 /* z unwired */), new Math3D.Vector3(0 /* x unwired */, 2, 0 /* z unwired */), new Math3D.Vector3(0 /* x unwired */, 1, 0 /* z unwired */), this.entity, 1);"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func selfAndSceneCompileToEntityExpressions() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setSelf = RCP3ScriptGraph.Node(id: "setSelf", type: "tm_set_variable_node", variableName: "self")
+        let setScene = RCP3ScriptGraph.Node(id: "setScene", type: "tm_set_variable_node", variableName: "scene")
+        let selfNode = RCP3ScriptGraph.Node(id: "self", type: "tm_self")
+        let sceneNode = RCP3ScriptGraph.Node(id: "scene", type: "tm_scene")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "setSelf"),
+            RCP3ScriptGraph.Wire(id: "e2", from: "setSelf", to: "setScene"),
+            RCP3ScriptGraph.Wire(id: "selfValue", from: "self", to: "setSelf", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("value")),
+            RCP3ScriptGraph.Wire(id: "sceneValue", from: "scene", to: "setScene", fromPin: TMHash.murmur64a("scene"), toPin: TMHash.murmur64a("value")),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, setSelf, setScene, selfNode, sceneNode], wires: wires, data: []))
+
+        #expect(js.contains("= this.entity;"))
+        #expect(js.contains("= this.entity.scene;"))
+        #expect(!js.contains("unsupported"))
+    }
 }

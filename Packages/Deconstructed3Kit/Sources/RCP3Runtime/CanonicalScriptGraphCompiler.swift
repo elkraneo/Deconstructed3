@@ -311,6 +311,10 @@ public struct CanonicalScriptGraphCompiler {
                 return emitCancelDelay(node, context: context)
             case "tm_do_once":
                 return emitDoOnce(node, context: context)
+            case "tm_entity_set_relative_transform":
+                return emitSetRelativeTransform(node, context: context)
+            case "tm_entity_look_at":
+                return emitEntityLookAt(node, context: context)
             default:
                 return ["// unsupported node: \(node.type)"]
             }
@@ -486,6 +490,39 @@ public struct CanonicalScriptGraphCompiler {
             "__d3_cancel_\(sanitize(node.id))"
         }
 
+        mutating func emitSetRelativeTransform(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let relativeTo = inputExpression(into: node, pinName: "relativeTo", context: context, seen: &seen, defaultValue: Expr("null")).code
+            let scale = inputExpression(into: node, pinName: "scale", context: context, seen: &seen, defaultValue: Expr("null")).code
+            let orientation = inputExpression(into: node, pinName: "orientation", context: context, seen: &seen, defaultValue: Expr("null")).code
+            let position = inputExpression(into: node, pinName: "position", context: context, seen: &seen, defaultValue: Expr("null")).code
+            let matrix = inputExpression(into: node, pinName: "matrix", context: context, seen: &seen, defaultValue: Expr("null")).code
+            return [
+                "if (\(scale) != null) \(entity).setRelativeScale(\(scale), \(relativeTo));",
+                "if (\(orientation) != null) \(entity).setRelativeOrientation(\(orientation), \(relativeTo));",
+                "if (\(position) != null) \(entity).setRelativePosition(\(position), \(relativeTo));",
+                "if (\(matrix) != null) \(entity).setRelativeTransformMatrix(\(matrix), \(relativeTo));",
+            ]
+        }
+
+        mutating func emitEntityLookAt(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let at = inputExpression(into: node, pinName: "at", context: context, seen: &seen).code
+            let from = inputExpression(into: node, pinName: "from", context: context, seen: &seen).code
+            let upVector = inputExpression(into: node, pinName: "upVector", context: context, seen: &seen).code
+            let relativeTo = inputExpression(into: node, pinName: "relativeTo", context: context, seen: &seen, defaultValue: Expr("null")).code
+            let positiveZForward = inputExpression(into: node, pinName: "positiveZForward", context: context, seen: &seen).code
+            return ["\(entity).look(\(at), \(from), \(upVector), \(relativeTo), \(positiveZForward));"]
+        }
+
         /// A Set Component (Transform) action: write the entity transform property fed
         /// by a data wire — `translation` → `.position`, `rotation` → `.orientation`,
         /// `scale` → `.scale`. The value is the recursively-evaluated source expression.
@@ -648,6 +685,14 @@ public struct CanonicalScriptGraphCompiler {
 
             if node.type == "tm_delay", outputPin == CanonicalScriptGraphCompiler.cancelIDPin {
                 return Expr("this.\(Self.delayCancelSlot(for: node))")
+            }
+
+            if node.type == "tm_self" {
+                return Expr("this.entity")
+            }
+
+            if node.type == "tm_scene" {
+                return Expr("this.entity.scene")
             }
 
             // Math constants are scalars.

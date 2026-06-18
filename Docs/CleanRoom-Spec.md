@@ -282,6 +282,24 @@ Observed JS emission for the control-flow nodes implemented in the canonical com
 | `tm_cancel_delay` | Emits `this.clearTimeout(cancelID)`. |
 | `tm_do_once` | Emits `always`, then a per-node guard that emits `once` only once. |
 
+**Entity.**
+
+| type | inputs | outputs |
+| --- | --- | --- |
+| `tm_entity_set_relative_transform` | `""`, `entity`, `scale`, `orientation`, `position`, `matrix`, `relativeTo` | `""` |
+| `tm_entity_look_at` | `""`, `entity`, `at`, `from`, `upVector`, `relativeTo`, `positiveZForward` | `""` |
+| `tm_self` | — | `entity` |
+| `tm_scene` | — | `scene` |
+
+Observed JS emission for the entity nodes implemented in the canonical compiler:
+
+| type | emitted behavior |
+| --- | --- |
+| `tm_entity_set_relative_transform` | If supplied, calls `entity.setRelativeScale(scale, relativeTo)`, `entity.setRelativeOrientation(orientation, relativeTo)`, `entity.setRelativePosition(position, relativeTo)`, and `entity.setRelativeTransformMatrix(matrix, relativeTo)`. |
+| `tm_entity_look_at` | Emits `entity.look(at, from, upVector, relativeTo, positiveZForward)`. |
+| `tm_self` | Emits `this.entity`. |
+| `tm_scene` | Emits `this.entity.scene`. |
+
 **Logic.** Each yields a single `result`. The inputs are **variadic**: the node
 presents a sequential list `a`, `b`, `c`, … and the editor's "add more inputs (+)"
 affordance grows it; the library seeds the first two (`a`, `b`) — the "+" affordance is
