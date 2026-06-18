@@ -733,10 +733,10 @@ public struct CanonicalScriptGraphCompiler {
             // must lower an add to the documented `Math3D.add(a, b)`, and keep the result
             // typed as a vector so it propagates up the expression tree.
             if let op = Self.binaryScalarOperator(for: node.type) {
-                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
-                let bName = node.type == "tm_math_pow" ? "exponent" : "b"
-                let b = inputExpression(into: node, pinName: bName, context: context, seen: &seen)
-                return emitBinaryMath(node.type, op: op, a: a, b: b)
+                let operands = mathOperands(of: node, context: context, seen: &seen)
+                return operands.dropFirst().reduce(operands[0]) { partial, next in
+                    emitBinaryMath(node.type, op: op, a: partial, b: next)
+                }
             }
 
             if node.type == "tm_math_clamp" {
@@ -796,9 +796,8 @@ public struct CanonicalScriptGraphCompiler {
 
             // Bitwise binary (scalar). Operands `a`/`b`, infix bitwise operator.
             if let bit = Self.bitwiseBinaryOperator(for: node.type) {
-                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
-                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
-                return Expr("(\(a.code) \(bit) \(b.code))")
+                let operands = variadicOperands(of: node, context: context, seen: &seen).map(\.code)
+                return Expr(operands.dropFirst().reduce(operands[0]) { "(\($0) \(bit) \($1))" })
             }
 
             // Bitwise NOT (unary, scalar). Operand `a`.
@@ -1170,18 +1169,42 @@ public struct CanonicalScriptGraphCompiler {
             context: ExprContext,
             seen: inout Set<String>
         ) -> [String] {
-            var operands: [String] = [
-                inputExpression(into: node, pinName: "a", context: context, seen: &seen).code,
-                inputExpression(into: node, pinName: "b", context: context, seen: &seen).code,
+            variadicOperands(of: node, context: context, seen: &seen).map(\.code)
+        }
+
+        /// The operand expressions of a variadic arithmetic or bitwise node. Most math
+        /// nodes use `a`/`b` plus optional `c`, `d`, ... pins; `pow` is the exception and
+        /// names its second input `exponent`.
+        mutating func mathOperands(
+            of node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> [Expr] {
+            if node.type == "tm_math_pow" {
+                return [
+                    inputExpression(into: node, pinName: "a", context: context, seen: &seen),
+                    inputExpression(into: node, pinName: "exponent", context: context, seen: &seen),
+                ]
+            }
+            return variadicOperands(of: node, context: context, seen: &seen)
+        }
+
+        mutating func variadicOperands(
+            of node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> [Expr] {
+            var operands: [Expr] = [
+                inputExpression(into: node, pinName: "a", context: context, seen: &seen),
+                inputExpression(into: node, pinName: "b", context: context, seen: &seen),
             ]
-            // Fold any additional connected operand pins (c, d, …) present in the graph.
             for letter in "cdefghijklmnopqrstuvwxyz" {
                 let name = String(letter)
                 let pin = TMHash.murmur64a(name)
                 let hasWire = dataWire(into: node.id, pin: pin) != nil
                 let hasLiteral = graph.scalarLiteral(node: node.id, pin: pin) != nil
                 guard hasWire || hasLiteral else { continue }
-                operands.append(inputExpression(into: node, pinName: name, context: context, seen: &seen).code)
+                operands.append(inputExpression(into: node, pinName: name, context: context, seen: &seen))
             }
             return operands
         }

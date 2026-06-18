@@ -162,6 +162,30 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func variadicMathFoldsAThirdScalarInput() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_variable_node", variableName: "sum")
+        let add = RCP3ScriptGraph.Node(id: "m", type: "tm_math_add")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(
+                id: "out", from: "m", to: "s",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "a", toNode: "m", toPin: TMHash.murmur64a("a"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "b", toNode: "m", toPin: TMHash.murmur64a("b"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "c", toNode: "m", toPin: TMHash.murmur64a("c"), scalarValue: 3),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, add], wires: wires, data: data))
+
+        #expect(js.contains("this.variable_") && js.contains(" = ((1 + 2) + 3);"))
+        #expect(!js.contains("const Math3D = require"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func mathAddOfTwoVectorsCompilesToMath3DAdd() {
         // On Added → Set Transform.translation = (v1 + v2), where both inputs to the add
         // are `tm_make_vector3` constructors. JS `+` is NOT vector addition (it coerces to
@@ -196,6 +220,46 @@ import RCP3Runtime
         #expect(js.contains("const Math3D = require(\"Math3D\")"))
         #expect(js.contains("this.entity.position = Math3D.add(new Math3D.Vector3("))
         // It must NOT keep the broken scalar `+` between the two vectors.
+        #expect(!js.contains(") + new Math3D.Vector3("))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func variadicVectorAddFoldsAThirdVectorInput() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let add = RCP3ScriptGraph.Node(id: "m", type: "tm_math_add")
+        let v1 = RCP3ScriptGraph.Node(id: "v1", type: "tm_make_vector3")
+        let v2 = RCP3ScriptGraph.Node(id: "v2", type: "tm_make_vector3")
+        let v3 = RCP3ScriptGraph.Node(id: "v3", type: "tm_make_vector3")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(
+                id: "a", from: "v1", to: "m",
+                fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "b", from: "v2", to: "m",
+                fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "c", from: "v3", to: "m",
+                fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("c")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "out", from: "m", to: "s",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "x1", toNode: "v1", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "x2", toNode: "v2", toPin: TMHash.murmur64a("x"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "x3", toNode: "v3", toPin: TMHash.murmur64a("x"), scalarValue: 3),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, add, v1, v2, v3], wires: wires, data: data))
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains("this.entity.position = Math3D.add(Math3D.add(new Math3D.Vector3(1,"))
         #expect(!js.contains(") + new Math3D.Vector3("))
         #expect(!js.contains("unsupported"))
     }
@@ -873,6 +937,29 @@ import RCP3Runtime
             #expect(js.contains("(Math.PI \(op) Math.E)"))
             #expect(!js.contains("unsupported"))
         }
+    }
+
+    @Test func variadicBitwiseFoldsAThirdInput() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_variable_node", variableName: "mask")
+        let or = RCP3ScriptGraph.Node(id: "m", type: "tm_math_bitwise_or")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(
+                id: "out", from: "m", to: "s",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(id: "a", toNode: "m", toPin: TMHash.murmur64a("a"), scalarValue: 1),
+            RCP3ScriptGraph.DataLiteral(id: "b", toNode: "m", toPin: TMHash.murmur64a("b"), scalarValue: 2),
+            RCP3ScriptGraph.DataLiteral(id: "c", toNode: "m", toPin: TMHash.murmur64a("c"), scalarValue: 4),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, or], wires: wires, data: data))
+
+        #expect(js.contains("this.variable_") && js.contains(" = ((1 | 2) | 4);"))
+        #expect(!js.contains("unsupported"))
     }
 
     @Test func bitwiseNotCompilesToTildeUnary() {
