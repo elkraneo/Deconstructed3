@@ -131,6 +131,10 @@ public struct DocumentFeature: Sendable {
         /// The inspector's transform fields edited the selected entity's local
         /// transform. Mutates the live `tm_transform_component` and marks dirty.
         case transformEdited(RCP3Transform)
+        /// User duplicated the selected entity beside the original.
+        case duplicateSelectedEntity
+        /// User deleted the selected entity from its parent.
+        case deleteSelectedEntity
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -207,6 +211,24 @@ public struct DocumentFeature: Sendable {
             case let .transformEdited(transform):
                 guard let id = state.selection else { return .none }
                 state.editor?.setTransform(transform, forEntityID: id)
+                return .none
+
+            case .duplicateSelectedEntity:
+                guard let id = state.selection else { return .none }
+                if let duplicatedID = state.editor?.duplicateEntity(id: id) {
+                    state.selection = duplicatedID
+                    state.loadedExample = nil
+                    state.loadedExampleID = nil
+                }
+                return .none
+
+            case .deleteSelectedEntity:
+                guard let id = state.selection else { return .none }
+                if state.editor?.deleteEntity(id: id) == true {
+                    state.selection = state.editor?.entity.id
+                    state.loadedExample = nil
+                    state.loadedExampleID = nil
+                }
                 return .none
 
             case .saveTapped:

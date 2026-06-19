@@ -162,6 +162,49 @@ import Testing
         )
     }
 
+    @Test func deleteSelectedEntitySelectsRootAndSaves() async throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        } withDependencies: {
+            $0.documentClient = .live
+        }
+
+        let opened = try RCP3Editor.open(dir)
+        await store.send(.openTapped(dir))
+        await store.receive(\.opened.success) {
+            $0.editor = opened
+            $0.selection = opened.entity.id
+        }
+
+        let boxID = try #require(opened.entity.children.first?.id)
+        await store.send(.selected(boxID)) {
+            $0.selection = boxID
+        }
+
+        var deletedEditor = opened
+        let deleted = deletedEditor.deleteEntity(id: boxID)
+        #expect(deleted)
+        await store.send(.deleteSelectedEntity) {
+            $0.editor = deletedEditor
+            $0.selection = deletedEditor.entity.id
+        }
+        #expect(store.state.hasUnsavedChanges)
+        #expect(store.state.rootEntity?.children.isEmpty == true)
+
+        var savedEditor = deletedEditor
+        try savedEditor.save()
+        await store.send(.saveTapped)
+        await store.receive(\.saved.success) {
+            $0.editor = savedEditor
+        }
+
+        let reopened = try RCP3Editor.open(dir)
+        #expect(reopened.entity.children.isEmpty)
+    }
+
     // MARK: open → select → transformEdited → saveTapped → reopen
 
     /// A minimal world whose box carries an inherited (identity) transform component,

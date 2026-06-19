@@ -561,6 +561,18 @@ struct EntityInspectorView: View {
             if let graph = store.selectedScriptGraph {
                 ScriptGraphSection(graph: graph)
             }
+
+            Section {
+                Button("Duplicate", systemImage: "plus.square.on.square") {
+                    store.send(.duplicateSelectedEntity)
+                }
+                .disabled(entity.id == store.rootEntity?.id)
+
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    store.send(.deleteSelectedEntity)
+                }
+                .disabled(entity.id == store.rootEntity?.id)
+            }
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
