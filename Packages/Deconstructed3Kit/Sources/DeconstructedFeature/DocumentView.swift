@@ -49,6 +49,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// Expanded entity ids in the RCP-style scene outline. Components are display-only
     /// child rows, so expansion is keyed only by entity identity.
     @State private var expandedEntityIDs: Set<RCP3Entity.ID> = []
+    /// Component-row selection in the outliner. The viewport/entity selection remains
+    /// `store.selection`; this only decides which inspector surface is shown.
+    @State private var selectedOutlinerComponent: EntityOutlinerComponentSelection?
 
     // MARK: Play mode (canonical, inline)
 
@@ -147,6 +150,10 @@ public struct DocumentView<CanonicalPlay: View>: View {
            let nodeID = model.selectedNodeID,
            model.node(nodeID) != nil {
             NodeInspectorView(model: model, nodeID: nodeID)
+        } else if let selection = selectedOutlinerComponent,
+                  selection.entityID == store.selection,
+                  let entity = store.selectedEntity {
+            ComponentInspectorView(store: store, entity: entity, component: selection.component)
         } else if let entity = store.selectedEntity {
             EntityInspectorView(store: store, entity: entity)
         } else {
@@ -165,7 +172,8 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     entity: root,
                     rootID: root.id,
                     depth: 0,
-                    expandedEntityIDs: $expandedEntityIDs
+                    expandedEntityIDs: $expandedEntityIDs,
+                    selectedComponent: $selectedOutlinerComponent
                 )
 
                 // Script graphs as first-class, browsable assets: open the editor
@@ -189,6 +197,12 @@ public struct DocumentView<CanonicalPlay: View>: View {
             .listStyle(.sidebar)
             .onAppear { expandRootIfNeeded(root) }
             .onChange(of: root.id) { _, _ in expandRootIfNeeded(root) }
+            .onChange(of: store.selection) { _, entityID in
+                guard selectedOutlinerComponent?.entityID == entityID else {
+                    selectedOutlinerComponent = nil
+                    return
+                }
+            }
         } else {
             ContentUnavailableView {
                 Label("No project open", systemImage: "shippingbox")
@@ -524,29 +538,33 @@ public struct DocumentView<CanonicalPlay: View>: View {
 
 // MARK: - RCP-style entity outliner
 
+private struct EntityOutlinerComponentSelection: Equatable {
+    var entityID: RCP3Entity.ID
+    var component: EntityOutlinerComponent
+}
+
 private struct EntityOutlinerRow: View {
     @Bindable var store: StoreOf<DocumentFeature>
     let entity: RCP3Entity
     let rootID: RCP3Entity.ID
     let depth: Int
     @Binding var expandedEntityIDs: Set<RCP3Entity.ID>
+    @Binding var selectedComponent: EntityOutlinerComponentSelection?
 
     private var isExpanded: Bool { expandedEntityIDs.contains(entity.id) }
-    private var isSelected: Bool { store.selection == entity.id }
+    private var isEntitySelected: Bool {
+        store.selection == entity.id && selectedComponent?.entityID != entity.id
+    }
     private var components: [EntityOutlinerComponent] { entity.outlinerComponents }
     private var hasChildren: Bool { !components.isEmpty || !entity.children.isEmpty }
 
     var body: some View {
-        Section {
+        Group {
             entityRow
-                .listRowInsets(.init(top: 1, leading: 8, bottom: 1, trailing: 8))
-                .listRowSeparator(.hidden)
 
             if isExpanded {
                 ForEach(components) { component in
                     componentRow(component)
-                        .listRowInsets(.init(top: 1, leading: 8, bottom: 1, trailing: 8))
-                        .listRowSeparator(.hidden)
                 }
                 ForEach(entity.children) { child in
                     EntityOutlinerRow(
@@ -554,7 +572,8 @@ private struct EntityOutlinerRow: View {
                         entity: child,
                         rootID: rootID,
                         depth: depth + 1,
-                        expandedEntityIDs: $expandedEntityIDs
+                        expandedEntityIDs: $expandedEntityIDs,
+                        selectedComponent: $selectedComponent
                     )
                 }
             }
@@ -569,9 +588,9 @@ private struct EntityOutlinerRow: View {
                 .frame(width: 16)
             Text(entity.displayName)
                 .lineLimit(1)
-                .fontWeight(isSelected ? .semibold : .regular)
+                .fontWeight(isEntitySelected ? .semibold : .regular)
             Spacer(minLength: 8)
-            if isSelected {
+            if isEntitySelected {
                 Image(systemName: "lock.open")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -585,12 +604,17 @@ private struct EntityOutlinerRow: View {
         .padding(.horizontal, 6)
         .background {
             RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.accentColor : Color.clear)
+                .fill(isEntitySelected ? Color.accentColor : Color.clear)
         }
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .foregroundStyle(isEntitySelected ? Color.white : Color.primary)
         .contentShape(Rectangle())
-        .onTapGesture { store.send(.selected(entity.id)) }
+        .onTapGesture {
+            selectedComponent = nil
+            store.send(.selected(entity.id))
+        }
         .contextMenu { entityContextMenu }
+        .listRowInsets(.init(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .listRowSeparator(.hidden)
     }
 
     private var disclosure: some View {
@@ -607,22 +631,32 @@ private struct EntityOutlinerRow: View {
     }
 
     private func componentRow(_ component: EntityOutlinerComponent) -> some View {
-        HStack(spacing: 6) {
+        let isSelected = selectedComponent == .init(entityID: entity.id, component: component)
+        return HStack(spacing: 6) {
             Color.clear.frame(width: 12, height: 16)
             Image(systemName: component.symbolName)
-                .foregroundStyle(component.tint)
+                .foregroundStyle(isSelected ? Color.white : component.tint)
                 .frame(width: 16)
             Text(component.displayName)
                 .lineLimit(1)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isSelected ? Color.white : Color.secondary)
                 .fontWeight(component.kind == .transform ? .semibold : .regular)
             Spacer(minLength: 8)
         }
         .padding(.leading, CGFloat(depth + 1) * 16)
-        .padding(.vertical, 3)
+        .padding(.vertical, 4)
         .padding(.horizontal, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor : Color.clear)
+        }
         .contentShape(Rectangle())
-        .onTapGesture { store.send(.selected(entity.id)) }
+        .onTapGesture {
+            selectedComponent = .init(entityID: entity.id, component: component)
+            store.send(.selected(entity.id))
+        }
+        .listRowInsets(.init(top: 0, leading: 8, bottom: 0, trailing: 8))
+        .listRowSeparator(.hidden)
     }
 
     @ViewBuilder
@@ -734,6 +768,42 @@ public extension DocumentView where CanonicalPlay == EmptyView {
     /// a concrete canonical view via the designated `@ViewBuilder` init.
     init(store: StoreOf<DocumentFeature>) {
         self.init(store: store) { _ in EmptyView() }
+    }
+}
+
+// MARK: - Component inspectors
+
+private struct ComponentInspectorView: View {
+    @Bindable var store: StoreOf<DocumentFeature>
+    let entity: RCP3Entity
+    let component: EntityOutlinerComponent
+
+    var body: some View {
+        switch component.kind {
+        case .transform:
+            Form {
+                TransformSection(store: store)
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Transform Component")
+
+        case .model:
+            Form {
+                Section {
+                    LabeledContent("Type", value: entity.displayName.prototypeBaseName.capitalized)
+                    LabeledContent("Material", value: "default_material")
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Model Component")
+
+        case let .other(type):
+            Form {
+                LabeledContent("Type", value: type)
+            }
+            .formStyle(.grouped)
+            .navigationTitle(component.displayName)
+        }
     }
 }
 
