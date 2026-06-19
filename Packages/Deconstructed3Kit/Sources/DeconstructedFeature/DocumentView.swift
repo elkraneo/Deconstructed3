@@ -46,6 +46,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
 
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
+    /// Expanded entity ids in the RCP-style scene outline. Components are display-only
+    /// child rows, so expansion is keyed only by entity identity.
+    @State private var expandedEntityIDs: Set<RCP3Entity.ID> = []
 
     // MARK: Play mode (canonical, inline)
 
@@ -156,11 +159,14 @@ public struct DocumentView<CanonicalPlay: View>: View {
     @ViewBuilder
     private var sidebar: some View {
         if let root = store.rootEntity {
-            List(selection: $store.selection.sending(\.selected)) {
-                OutlineGroup(root, children: \.optionalChildren) { entity in
-                    Label(entity.displayName, systemImage: entity.symbolName)
-                        .tag(entity.id)
-                }
+            List {
+                EntityOutlinerRow(
+                    store: store,
+                    entity: root,
+                    rootID: root.id,
+                    depth: 0,
+                    expandedEntityIDs: $expandedEntityIDs
+                )
 
                 // Script graphs as first-class, browsable assets: open the editor
                 // directly here instead of hunting for which entity references one.
@@ -180,6 +186,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     }
                 }
             }
+            .listStyle(.sidebar)
+            .onAppear { expandRootIfNeeded(root) }
+            .onChange(of: root.id) { _, _ in expandRootIfNeeded(root) }
         } else {
             ContentUnavailableView {
                 Label("No project open", systemImage: "shippingbox")
@@ -189,6 +198,11 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 Button("Open…") { presentOpenPanel() }
             }
         }
+    }
+
+    private func expandRootIfNeeded(_ root: RCP3Entity) {
+        guard expandedEntityIDs.isEmpty || !expandedEntityIDs.contains(root.id) else { return }
+        expandedEntityIDs.insert(root.id)
     }
 
     // MARK: Center column (viewport ⇄ script-graph canvas ⇄ canonical Play)
@@ -508,6 +522,209 @@ public struct DocumentView<CanonicalPlay: View>: View {
     }
 }
 
+// MARK: - RCP-style entity outliner
+
+private struct EntityOutlinerRow: View {
+    @Bindable var store: StoreOf<DocumentFeature>
+    let entity: RCP3Entity
+    let rootID: RCP3Entity.ID
+    let depth: Int
+    @Binding var expandedEntityIDs: Set<RCP3Entity.ID>
+
+    private var isExpanded: Bool { expandedEntityIDs.contains(entity.id) }
+    private var isSelected: Bool { store.selection == entity.id }
+    private var components: [EntityOutlinerComponent] { entity.outlinerComponents }
+    private var hasChildren: Bool { !components.isEmpty || !entity.children.isEmpty }
+
+    var body: some View {
+        Section {
+            entityRow
+                .listRowInsets(.init(top: 1, leading: 8, bottom: 1, trailing: 8))
+                .listRowSeparator(.hidden)
+
+            if isExpanded {
+                ForEach(components) { component in
+                    componentRow(component)
+                        .listRowInsets(.init(top: 1, leading: 8, bottom: 1, trailing: 8))
+                        .listRowSeparator(.hidden)
+                }
+                ForEach(entity.children) { child in
+                    EntityOutlinerRow(
+                        store: store,
+                        entity: child,
+                        rootID: rootID,
+                        depth: depth + 1,
+                        expandedEntityIDs: $expandedEntityIDs
+                    )
+                }
+            }
+        }
+    }
+
+    private var entityRow: some View {
+        HStack(spacing: 6) {
+            disclosure
+            Image(systemName: entity.outlinerSymbolName)
+                .foregroundStyle(entity.outlinerSymbolStyle)
+                .frame(width: 16)
+            Text(entity.displayName)
+                .lineLimit(1)
+                .fontWeight(isSelected ? .semibold : .regular)
+            Spacer(minLength: 8)
+            if isSelected {
+                Image(systemName: "lock.open")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Image(systemName: "eye")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, CGFloat(depth) * 16)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? Color.accentColor : Color.clear)
+        }
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .contentShape(Rectangle())
+        .onTapGesture { store.send(.selected(entity.id)) }
+        .contextMenu { entityContextMenu }
+    }
+
+    private var disclosure: some View {
+        Button {
+            toggleExpanded()
+        } label: {
+            Image(systemName: hasChildren ? (isExpanded ? "chevron.down" : "chevron.right") : "")
+                .font(.caption)
+                .frame(width: 12, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasChildren)
+    }
+
+    private func componentRow(_ component: EntityOutlinerComponent) -> some View {
+        HStack(spacing: 6) {
+            Color.clear.frame(width: 12, height: 16)
+            Image(systemName: component.symbolName)
+                .foregroundStyle(component.tint)
+                .frame(width: 16)
+            Text(component.displayName)
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+                .fontWeight(component.kind == .transform ? .semibold : .regular)
+            Spacer(minLength: 8)
+        }
+        .padding(.leading, CGFloat(depth + 1) * 16)
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { store.send(.selected(entity.id)) }
+    }
+
+    @ViewBuilder
+    private var entityContextMenu: some View {
+        Button("Deactivate") {}
+            .disabled(true)
+
+        Menu("Add Child Entity") {
+            Button("Empty") {}
+                .disabled(true)
+            Button("From Asset...") {}
+                .disabled(true)
+            Divider()
+            Button("Add Portal Hierarchy") {}
+                .disabled(true)
+            Menu("Geometry") {
+                Button("plane") { add(.plane) }
+                Button("sphere") { add(.sphere) }
+                Button("box") { add(.box) }
+            }
+        }
+
+        Button("Add Component...") {}
+            .disabled(true)
+        Button("Frame Selection") {}
+            .disabled(true)
+        Button("Replace With Asset...") {}
+            .disabled(true)
+
+        Divider()
+        Button("Rename") {}
+            .disabled(true)
+        Button("Copy") {}
+            .disabled(true)
+        Button("Duplicate") {
+            store.send(.selected(entity.id))
+            store.send(.duplicateSelectedEntity)
+        }
+        .disabled(entity.id == rootID)
+        Button("Delete", role: .destructive) {
+            store.send(.selected(entity.id))
+            store.send(.deleteSelectedEntity)
+        }
+        .disabled(entity.id == rootID)
+    }
+
+    private func toggleExpanded() {
+        if isExpanded {
+            expandedEntityIDs.remove(entity.id)
+        } else {
+            expandedEntityIDs.insert(entity.id)
+        }
+    }
+
+    private func add(_ kind: RCP3PrimitiveKind) {
+        store.send(.selected(entity.id))
+        store.send(.addPrimitive(kind))
+        expandedEntityIDs.insert(entity.id)
+    }
+}
+
+private struct EntityOutlinerComponent: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case transform
+        case model
+        case other(String)
+    }
+
+    var kind: Kind
+    var id: String {
+        switch kind {
+        case .transform: return "transform"
+        case .model: return "model"
+        case let .other(type): return type
+        }
+    }
+
+    var displayName: String {
+        switch kind {
+        case .transform: return "Transform"
+        case .model: return "Model"
+        case let .other(type): return type.outlinerComponentDisplayName
+        }
+    }
+
+    var symbolName: String {
+        switch kind {
+        case .transform: return "arrow.triangle.2.circlepath"
+        case .model: return "puzzlepiece.extension"
+        case .other: return "puzzlepiece.extension"
+        }
+    }
+
+    var tint: Color {
+        switch kind {
+        case .transform: return .purple
+        case .model: return .purple
+        case .other: return .secondary
+        }
+    }
+}
+
 // MARK: - Canonical-play default (EmptyView)
 
 public extension DocumentView where CanonicalPlay == EmptyView {
@@ -550,10 +767,12 @@ struct EntityInspectorView: View {
                 TransformSection(store: store)
             }
 
-            if !entity.componentTypes.isEmpty {
+            let secondaryComponents = entity.inspectorSecondaryComponents
+            if !secondaryComponents.isEmpty {
                 Section("Components") {
-                    ForEach(Array(entity.componentTypes.enumerated()), id: \.offset) { _, type in
-                        Text(type).font(.callout.monospaced())
+                    ForEach(secondaryComponents) { component in
+                        Label(component.displayName, systemImage: component.symbolName)
+                            .foregroundStyle(component.tint)
                     }
                 }
             }
@@ -612,7 +831,7 @@ struct TransformSection: View {
     }
 
     var body: some View {
-        Section("Transform") {
+        Section("Transform Component") {
             transformRow(
                 "Position",
                 x: positionBinding(\.translation.x) { $0.translation.x = $1 },
@@ -926,11 +1145,86 @@ extension DocumentFeature.State {
 }
 
 private extension RCP3Entity {
-    var optionalChildren: [RCP3Entity]? { children.isEmpty ? nil : children }
     var displayName: String { name.isEmpty ? "(unnamed)" : name }
     var symbolName: String {
         if name == "world" { return "globe" }
         if prototypeUUID != nil { return "cube.fill" }
         return "cube"
+    }
+    var outlinerSymbolName: String {
+        if name == "world" { return "cube" }
+        if isGeometryPrototypeInstance { return "shippingbox" }
+        return prototypeUUID == nil ? "cube" : "shippingbox"
+    }
+    var outlinerSymbolStyle: Color {
+        isGeometryPrototypeInstance ? .purple : .secondary
+    }
+
+    var outlinerComponents: [EntityOutlinerComponent] {
+        var components: [EntityOutlinerComponent] = [.init(kind: .transform)]
+        if hasModelComponent {
+            components.append(.init(kind: .model))
+        }
+        for type in componentTypes {
+            guard !type.isTransformComponentType, !type.isModelComponentType else { continue }
+            components.append(.init(kind: .other(type)))
+        }
+        return components
+    }
+
+    var inspectorSecondaryComponents: [EntityOutlinerComponent] {
+        outlinerComponents.filter { $0.kind != .transform }
+    }
+
+    private var hasModelComponent: Bool {
+        componentTypes.contains { $0.isModelComponentType } || isGeometryPrototypeInstance
+    }
+
+    private var isGeometryPrototypeInstance: Bool {
+        guard prototypeUUID != nil else { return false }
+        return ["box", "sphere", "plane"].contains(name.prototypeBaseName)
+    }
+}
+
+private extension String {
+    var prototypeBaseName: String {
+        guard hasSuffix(")") else { return self }
+        guard let open = lastIndex(of: "("),
+              open > startIndex,
+              self[index(before: open)] == " "
+        else { return self }
+        let numberStart = index(after: open)
+        let numberEnd = index(before: endIndex)
+        guard Int(self[numberStart..<numberEnd]) != nil else { return self }
+        return String(self[..<index(before: open)])
+    }
+
+    var isTransformComponentType: Bool {
+        self == "tm_transform_component"
+    }
+
+    var isModelComponentType: Bool {
+        self == "tm_model_component"
+            || self == "re_model_component"
+            || self == "ModelComponent"
+    }
+
+    var outlinerComponentDisplayName: String {
+        var name = self
+        for prefix in ["tm_", "re_"] where name.hasPrefix(prefix) {
+            name.removeFirst(prefix.count)
+        }
+        if name.hasSuffix("_component") {
+            name.removeLast("_component".count)
+        } else if name.hasSuffix("Component") {
+            name.removeLast("Component".count)
+        }
+        return name
+            .split(separator: "_")
+            .map { word in
+                guard let first = word.first else { return "" }
+                return first.uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
     }
 }
