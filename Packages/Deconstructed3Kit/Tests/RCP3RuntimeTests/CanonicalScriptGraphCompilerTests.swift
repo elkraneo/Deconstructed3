@@ -1564,8 +1564,113 @@ import RCP3Runtime
             let js = CanonicalScriptGraphCompiler().compile(graph)
 
             #expect(js.contains(expected))
+            if type == "tm_remove_from_parent" {
+                #expect(js.contains("this.entity.isEnabled = false;"))
+            }
             #expect(!js.contains("unsupported"))
         }
+    }
+
+    @Test func entityEnableActionCompilesToIsEnabledAssignment() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let enable = RCP3ScriptGraph.Node(id: "enable", type: "tm_set_entity_enable")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, enable],
+            wires: [RCP3ScriptGraph.Wire(id: "e", from: "u", to: "enable")],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "enabled", toNode: "enable", toPin: TMHash.murmur64a("isEnabled"), scalarValue: 1),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.entity.isEnabled = 1;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func entityFindNodesCompileToEntityLookupCalls() {
+        for (type, expected) in [
+            ("tm_find_entity", ".findEntity(7, 1)"),
+            ("tm_find_parent_entity", ".findParent(7)"),
+            ("tm_find_entity_with_component", ".findEntityWithComponent(7)"),
+        ] {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "found")
+            let find = RCP3ScriptGraph.Node(id: "find", type: type)
+            var data = [
+                RCP3ScriptGraph.DataLiteral(
+                    id: "arg",
+                    toNode: "find",
+                    toPin: TMHash.murmur64a(type == "tm_find_entity_with_component" ? "component_type" : "name"),
+                    scalarValue: 7
+                ),
+            ]
+            if type == "tm_find_entity" {
+                data.append(RCP3ScriptGraph.DataLiteral(id: "recursive", toNode: "find", toPin: TMHash.murmur64a("recursive"), scalarValue: 1))
+            }
+            let graph = RCP3ScriptGraph(
+                nodes: [update, set, find],
+                wires: [
+                    RCP3ScriptGraph.Wire(id: "e", from: "u", to: "set"),
+                    RCP3ScriptGraph.Wire(id: "value", from: "find", to: "set", fromPin: TMHash.murmur64a("entity"), toPin: TMHash.murmur64a("value")),
+                ],
+                data: data
+            )
+
+            let js = CanonicalScriptGraphCompiler().compile(graph)
+
+            #expect(js.contains(expected))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
+    @Test func hasComponentCompilesToHasComponentCall() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "hasComponent")
+        let has = RCP3ScriptGraph.Node(id: "has", type: "tm_has_component")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, set, has],
+            wires: [
+                RCP3ScriptGraph.Wire(id: "e", from: "u", to: "set"),
+                RCP3ScriptGraph.Wire(id: "value", from: "has", to: "set", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")),
+            ],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "component", toNode: "has", toPin: TMHash.murmur64a("component_type"), scalarValue: 7),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("= this.entity.hasComponent(7);"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func entityWorldTransformNodesCompile() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setVariable = RCP3ScriptGraph.Node(id: "setVar", type: "tm_set_variable_node", variableName: "worldPosition")
+        let getWorld = RCP3ScriptGraph.Node(id: "getWorld", type: "tm_entity_get_world_transform")
+        let setWorld = RCP3ScriptGraph.Node(id: "setWorld", type: "tm_entity_set_world_transform")
+        let vector = RCP3ScriptGraph.Node(id: "vec", type: "tm_make_vector3")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, setVariable, getWorld, setWorld, vector],
+            wires: [
+                RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "setVar"),
+                RCP3ScriptGraph.Wire(id: "e1", from: "setVar", to: "setWorld"),
+                RCP3ScriptGraph.Wire(id: "read", from: "getWorld", to: "setVar", fromPin: TMHash.murmur64a("position"), toPin: TMHash.murmur64a("value")),
+                RCP3ScriptGraph.Wire(id: "write", from: "vec", to: "setWorld", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("position")),
+            ],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "x", toNode: "vec", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+                RCP3ScriptGraph.DataLiteral(id: "y", toNode: "vec", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+                RCP3ScriptGraph.DataLiteral(id: "z", toNode: "vec", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("= this.entity.worldPosition;"))
+        #expect(js.contains("this.entity.worldPosition = new Math3D.Vector3(1, 2, 3);"))
+        #expect(!js.contains("unsupported"))
     }
 
     @Test func selfAndSceneCompileToEntityExpressions() {

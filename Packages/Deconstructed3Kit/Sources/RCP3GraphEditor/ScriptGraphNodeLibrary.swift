@@ -228,7 +228,14 @@ public enum ScriptGraphNodeLibrary {
         "tm_do_once": "Do Once",
         // Entity
         "tm_entity_set_relative_transform": "Set Relative Transform",
+        "tm_entity_get_world_transform": "Get World Transform",
+        "tm_entity_set_world_transform": "Set World Transform",
         "tm_entity_look_at": "Look At",
+        "tm_set_entity_enable": "Set Enabled",
+        "tm_find_entity": "Find Entity",
+        "tm_find_parent_entity": "Find Parent Entity",
+        "tm_find_entity_with_component": "Find Entity With Component",
+        "tm_has_component": "Has Component",
         "tm_get_parent": "Get Parent",
         "tm_get_children": "Get Children",
         "tm_set_parent": "Set Parent",
@@ -504,6 +511,28 @@ public enum ScriptGraphNodeLibrary {
             outputs: [exec],
             category: .entity
         ),
+        "tm_entity_get_world_transform": NodeSpec(
+            inputs: [data("entity", "Entity")],
+            outputs: [
+                data("scale", "Scale"),
+                data("orientation", "Orientation"),
+                data("position", "Position"),
+                data("matrix", "Matrix"),
+            ],
+            category: .entity
+        ),
+        "tm_entity_set_world_transform": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("scale", "Scale"),
+                data("orientation", "Orientation"),
+                data("position", "Position"),
+                data("matrix", "Matrix"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
         "tm_entity_look_at": NodeSpec(
             inputs: [
                 exec,
@@ -515,6 +544,48 @@ public enum ScriptGraphNodeLibrary {
                 data("positiveZForward", "Positive Z Forward"),
             ],
             outputs: [exec],
+            category: .entity
+        ),
+        "tm_set_entity_enable": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("isEnabled", "Is Enabled"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_find_entity": NodeSpec(
+            inputs: [
+                data("entity", "Entity"),
+                data("name", "Name"),
+                data("recursive", "Recursive"),
+            ],
+            outputs: [data("entity", "Entity")],
+            category: .entity
+        ),
+        "tm_find_parent_entity": NodeSpec(
+            inputs: [
+                data("entity", "Entity"),
+                data("name", "Name"),
+            ],
+            outputs: [data("entity", "Entity")],
+            category: .entity
+        ),
+        "tm_find_entity_with_component": NodeSpec(
+            inputs: [
+                data("entity", "Entity"),
+                data("component_type", "Component Type"),
+            ],
+            outputs: [data("entity", "Entity")],
+            category: .entity
+        ),
+        "tm_has_component": NodeSpec(
+            inputs: [
+                data("source", "Source"),
+                data("component_type", "Component Type"),
+            ],
+            outputs: [data("result", "Result")],
             category: .entity
         ),
         "tm_get_parent": NodeSpec(

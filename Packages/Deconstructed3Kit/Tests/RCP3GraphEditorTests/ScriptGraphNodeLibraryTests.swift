@@ -117,8 +117,10 @@ struct ScriptGraphNodeLibraryTests {
             "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay",
             "tm_cancel_delay", "tm_do_once",
             // Entity
-            "tm_entity_set_relative_transform", "tm_entity_look_at",
-            "tm_get_parent", "tm_get_children", "tm_set_parent", "tm_add_child",
+            "tm_entity_set_relative_transform", "tm_entity_get_world_transform",
+            "tm_entity_set_world_transform", "tm_entity_look_at", "tm_set_entity_enable",
+            "tm_find_entity", "tm_find_parent_entity", "tm_find_entity_with_component",
+            "tm_has_component", "tm_get_parent", "tm_get_children", "tm_set_parent", "tm_add_child",
             "tm_remove_child", "tm_remove_from_parent", "tm_self", "tm_scene",
             // Logic
             "tm_and", "tm_or", "tm_equals", "tm_not_equals", "tm_not",

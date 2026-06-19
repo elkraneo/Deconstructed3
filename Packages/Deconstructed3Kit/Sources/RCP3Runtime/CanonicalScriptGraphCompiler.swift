@@ -331,6 +331,10 @@ public struct CanonicalScriptGraphCompiler {
                 return emitSetRelativeTransform(node, context: context)
             case "tm_entity_look_at":
                 return emitEntityLookAt(node, context: context)
+            case "tm_set_entity_enable":
+                return emitSetEntityEnable(node, context: context)
+            case "tm_entity_set_world_transform":
+                return emitSetWorldTransform(node, context: context)
             case "tm_set_parent":
                 return emitSetParent(node, context: context)
             case "tm_add_child":
@@ -547,6 +551,29 @@ public struct CanonicalScriptGraphCompiler {
             return ["\(entity).look(\(at), \(from), \(upVector), \(relativeTo), \(positiveZForward));"]
         }
 
+        mutating func emitSetEntityEnable(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let isEnabled = inputExpression(into: node, pinName: "isEnabled", context: context, seen: &seen).code
+            return ["\(entity).isEnabled = \(isEnabled);"]
+        }
+
+        mutating func emitSetWorldTransform(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let assignments = [
+                ("scale", "worldScale"),
+                ("orientation", "worldOrientation"),
+                ("position", "worldPosition"),
+                ("matrix", "worldTransformMatrix"),
+            ]
+            return assignments.compactMap { pinName, property in
+                guard hasDataInput(into: node, pinName: pinName) else { return nil }
+                let value = inputExpression(into: node, pinName: pinName, context: context, seen: &seen).code
+                return "\(entity).\(property) = \(value);"
+            }
+        }
+
         mutating func emitSetParent(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
             var seen: Set<String> = []
             let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
@@ -575,7 +602,10 @@ public struct CanonicalScriptGraphCompiler {
             var seen: Set<String> = []
             let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
             let preserving = inputExpression(into: node, pinName: "preservingWorldTransform", context: context, seen: &seen).code
-            return ["\(entity).removeFromParent(\(preserving));"]
+            return [
+                "\(entity).isEnabled = false;",
+                "\(entity).removeFromParent(\(preserving));",
+            ]
         }
 
         /// A Set Component action: write a Transform property fed by a data wire —
@@ -708,6 +738,11 @@ public struct CanonicalScriptGraphCompiler {
             graph.wires.first { !$0.isExec && $0.to == nodeID && $0.toPin == pin }
         }
 
+        func hasDataInput(into node: RCP3ScriptGraph.Node, pinName: String) -> Bool {
+            let pin = TMHash.murmur64a(pinName)
+            return dataWire(into: node.id, pin: pin) != nil || graph.scalarLiteral(node: node.id, pin: pin) != nil
+        }
+
         /// Emits a JS expression for the value carried by a data `wire` — i.e. the
         /// output `wire.fromPin` of the source node `wire.from`, recursively resolving
         /// that node's own inputs. `seen` guards against cycles.
@@ -768,6 +803,34 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("this.entity.scene")
             }
 
+            if node.type == "tm_find_entity" {
+                let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                let name = inputExpression(into: node, pinName: "name", context: context, seen: &seen)
+                if hasDataInput(into: node, pinName: "recursive") {
+                    let recursive = inputExpression(into: node, pinName: "recursive", context: context, seen: &seen).code
+                    return Expr("\(source.code).findEntity(\(name.code), \(recursive))")
+                }
+                return Expr("\(source.code).findEntity(\(name.code))")
+            }
+
+            if node.type == "tm_find_parent_entity" {
+                let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                let name = inputExpression(into: node, pinName: "name", context: context, seen: &seen)
+                return Expr("\(source.code).findParent(\(name.code))")
+            }
+
+            if node.type == "tm_find_entity_with_component" {
+                let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                let component = inputExpression(into: node, pinName: "component_type", context: context, seen: &seen)
+                return Expr("\(source.code).findEntityWithComponent(\(component.code))")
+            }
+
+            if node.type == "tm_has_component" {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                let component = inputExpression(into: node, pinName: "component_type", context: context, seen: &seen)
+                return Expr("\(source.code).hasComponent(\(component.code))")
+            }
+
             if node.type == "tm_get_parent" {
                 let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen, defaultValue: Expr("this.entity"))
                 return Expr("\(source.code).parent")
@@ -776,6 +839,20 @@ public struct CanonicalScriptGraphCompiler {
             if node.type == "tm_get_children" {
                 let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen, defaultValue: Expr("this.entity"))
                 return Expr("\(source.code).children")
+            }
+
+            if node.type == "tm_entity_get_world_transform" {
+                let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                let output = outputPin.flatMap(Self.gestureOutputName(forHash:)) ?? "matrix"
+                let property: String
+                switch output {
+                case "scale": property = "worldScale"
+                case "orientation": property = "worldOrientation"
+                case "position": property = "worldPosition"
+                case "matrix": property = "worldTransformMatrix"
+                default: property = "worldTransformMatrix"
+                }
+                return Expr("\(entity.code).\(property)", isVector: ["scale", "position"].contains(output))
             }
 
             // Math constants are scalars.
@@ -1380,6 +1457,7 @@ public struct CanonicalScriptGraphCompiler {
             "otherEntity", "position", "impulse", "impulseDirection",
             "penetrationDistance", "contacts", "simulationRootEntity",
             "playbackController",
+            "scale", "orientation", "matrix",
         ]
 
         /// Gesture output pins whose value is a `Math3D.Vector3` (a 2D/3D point or
