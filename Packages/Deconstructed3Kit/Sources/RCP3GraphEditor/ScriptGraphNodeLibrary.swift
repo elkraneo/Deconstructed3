@@ -202,6 +202,16 @@ public enum ScriptGraphNodeLibrary {
         // Events
         "tm_gesture_event_drag": "On Drag",
         "tm_gesture_event_tap": "On Tap",
+        "tm_collision_event_began": "On Collision Began",
+        "tm_collision_event_ended": "On Collision Ended",
+        "tm_collision_event_updated": "On Collision Updated",
+        "tm_physics_event_will_simulate": "On Physics Will Simulate",
+        "tm_physics_event_did_simulate": "On Physics Did Simulate",
+        "tm_animation_event_playback_started": "On Animation Started",
+        "tm_animation_event_playback_completed": "On Animation Completed",
+        "tm_animation_event_playback_looped": "On Animation Looped",
+        "tm_animation_event_playback_terminated": "On Animation Terminated",
+        "tm_audio_event_playback_completed": "On Audio Ended",
         "tm_update": "On Update",
         "tm_did_add": "On Added",
         "tm_did_activate": "On Activated",
@@ -219,6 +229,12 @@ public enum ScriptGraphNodeLibrary {
         // Entity
         "tm_entity_set_relative_transform": "Set Relative Transform",
         "tm_entity_look_at": "Look At",
+        "tm_get_parent": "Get Parent",
+        "tm_get_children": "Get Children",
+        "tm_set_parent": "Set Parent",
+        "tm_add_child": "Add Child",
+        "tm_remove_child": "Remove Child",
+        "tm_remove_from_parent": "Remove From Parent",
         "tm_self": "Self",
         "tm_scene": "Scene",
         // Components
@@ -338,6 +354,41 @@ public enum ScriptGraphNodeLibrary {
         PinSpec(connectorName: connector, displayName: display, isExec: true)
     }
 
+    private static func collisionEventNode(outputsContacts: Bool) -> NodeSpec {
+        var outputs = [
+            exec,
+            data("entity", "Entity"),
+            data("otherEntity", "Other Entity"),
+            data("position", "Position"),
+            data("impulse", "Impulse"),
+            data("impulseDirection", "Impulse Direction"),
+            data("penetrationDistance", "Penetration Distance"),
+        ]
+        if outputsContacts {
+            outputs.append(data("contacts", "Contacts"))
+        }
+        return NodeSpec(inputs: [], outputs: outputs, category: .events)
+    }
+
+    private static let physicsSimulateEventNode = NodeSpec(
+        inputs: [],
+        outputs: [
+            exec,
+            data("deltaTime", "Delta Time"),
+            data("simulationRootEntity", "Simulation Root Entity"),
+        ],
+        category: .events
+    )
+
+    private static let playbackEventNode = NodeSpec(
+        inputs: [],
+        outputs: [
+            exec,
+            data("playbackController", "Playback Controller"),
+        ],
+        category: .events
+    )
+
     private static let specsByType: [String: NodeSpec] = [
         // Drag gesture — an event *source*: no inputs, an exec output plus the full
         // set of drag readouts RCP shows on the node.
@@ -368,6 +419,24 @@ public enum ScriptGraphNodeLibrary {
             ],
             category: .events
         ),
+        "tm_collision_event_began": collisionEventNode(outputsContacts: true),
+        "tm_collision_event_updated": collisionEventNode(outputsContacts: true),
+        "tm_collision_event_ended": NodeSpec(
+            inputs: [],
+            outputs: [
+                exec,
+                data("entity", "Entity"),
+                data("otherEntity", "Other Entity"),
+            ],
+            category: .events
+        ),
+        "tm_physics_event_will_simulate": physicsSimulateEventNode,
+        "tm_physics_event_did_simulate": physicsSimulateEventNode,
+        "tm_animation_event_playback_started": playbackEventNode,
+        "tm_animation_event_playback_completed": playbackEventNode,
+        "tm_animation_event_playback_looped": playbackEventNode,
+        "tm_animation_event_playback_terminated": playbackEventNode,
+        "tm_audio_event_playback_completed": playbackEventNode,
         // Set Component — a passthrough action: exec in/out, a `source` target and a
         // `component_type` selector. The chosen component type's property pins are
         // added *dynamically* by the bridge (see `componentProperties(forComponentTypeHash:)`).
@@ -444,6 +513,55 @@ public enum ScriptGraphNodeLibrary {
                 data("upVector", "Up Vector"),
                 data("relativeTo", "Relative To"),
                 data("positiveZForward", "Positive Z Forward"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_get_parent": NodeSpec(
+            inputs: [data("source", "Source")],
+            outputs: [data("parent", "Parent")],
+            category: .entity
+        ),
+        "tm_get_children": NodeSpec(
+            inputs: [data("source", "Source")],
+            outputs: [data("children", "Children")],
+            category: .entity
+        ),
+        "tm_set_parent": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("parent", "Parent"),
+                data("preservingWorldTransform", "Preserving World Transform"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_add_child": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("child", "Child"),
+                data("preservingWorldTransform", "Preserving World Transform"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_remove_child": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("child", "Child"),
+                data("preservingWorldTransform", "Preserving World Transform"),
+            ],
+            outputs: [exec],
+            category: .entity
+        ),
+        "tm_remove_from_parent": NodeSpec(
+            inputs: [
+                exec,
+                data("entity", "Entity"),
+                data("preservingWorldTransform", "Preserving World Transform"),
             ],
             outputs: [exec],
             category: .entity

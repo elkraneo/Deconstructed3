@@ -86,6 +86,11 @@ struct ScriptGraphNodeLibraryTests {
             "tm_gesture_event_drag", "tm_gesture_event_tap", "tm_update",
             "tm_did_add", "tm_did_activate", "tm_will_remove",
             "tm_will_deactivate", "tm_script_changed",
+            "tm_collision_event_began", "tm_collision_event_ended",
+            "tm_collision_event_updated", "tm_physics_event_will_simulate",
+            "tm_physics_event_did_simulate", "tm_animation_event_playback_started",
+            "tm_animation_event_playback_completed", "tm_animation_event_playback_looped",
+            "tm_animation_event_playback_terminated", "tm_audio_event_playback_completed",
             // Components
             "tm_set_component", "tm_get_component",
             // Math — Comparison
@@ -113,7 +118,8 @@ struct ScriptGraphNodeLibraryTests {
             "tm_cancel_delay", "tm_do_once",
             // Entity
             "tm_entity_set_relative_transform", "tm_entity_look_at",
-            "tm_self", "tm_scene",
+            "tm_get_parent", "tm_get_children", "tm_set_parent", "tm_add_child",
+            "tm_remove_child", "tm_remove_from_parent", "tm_self", "tm_scene",
             // Logic
             "tm_and", "tm_or", "tm_equals", "tm_not_equals", "tm_not",
             // Math — Arithmetic & trig

@@ -144,6 +144,8 @@ public struct CanonicalScriptGraphCompiler {
             case update
             /// A `this.<name> = function(){…}` lifecycle hook (didAdd, …).
             case lifecycle(String)
+            /// A `this.<name> = function(event){…}` runtime event hook.
+            case runtime(String)
         }
 
         static func eventKind(for type: String) -> EventKind? {
@@ -156,6 +158,16 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_will_remove": return .lifecycle("willRemove")
             case "tm_will_deactivate": return .lifecycle("willDeactivate")
             case "tm_script_changed": return .lifecycle("scriptChanged")
+            case "tm_collision_event_began": return .runtime("collisionBegan")
+            case "tm_collision_event_updated": return .runtime("collisionUpdated")
+            case "tm_collision_event_ended": return .runtime("collisionEnded")
+            case "tm_physics_event_will_simulate": return .runtime("physicsWillSimulate")
+            case "tm_physics_event_did_simulate": return .runtime("physicsDidSimulate")
+            case "tm_animation_event_playback_started": return .runtime("animationPlaybackStarted")
+            case "tm_animation_event_playback_completed": return .runtime("animationPlaybackCompleted")
+            case "tm_animation_event_playback_looped": return .runtime("animationPlaybackLooped")
+            case "tm_animation_event_playback_terminated": return .runtime("animationPlaybackTerminated")
+            case "tm_audio_event_playback_completed": return .runtime("audioPlaybackCompleted")
             default: return nil
             }
         }
@@ -179,6 +191,9 @@ public struct CanonicalScriptGraphCompiler {
             case .lifecycle(let name):
                 let body = emitActionBody(after: node, context: .lifecycle)
                 return emitFunctionHandler(name: name, params: "", body: body, logEvent: name)
+            case .runtime(let name):
+                let body = emitActionBody(after: node, context: .event)
+                return emitFunctionHandler(name: name, params: "event", body: body, logEvent: name)
             }
         }
 
@@ -316,6 +331,14 @@ public struct CanonicalScriptGraphCompiler {
                 return emitSetRelativeTransform(node, context: context)
             case "tm_entity_look_at":
                 return emitEntityLookAt(node, context: context)
+            case "tm_set_parent":
+                return emitSetParent(node, context: context)
+            case "tm_add_child":
+                return emitAddChild(node, context: context)
+            case "tm_remove_child":
+                return emitRemoveChild(node, context: context)
+            case "tm_remove_from_parent":
+                return emitRemoveFromParent(node, context: context)
             default:
                 return ["// unsupported node: \(node.type)"]
             }
@@ -524,6 +547,37 @@ public struct CanonicalScriptGraphCompiler {
             return ["\(entity).look(\(at), \(from), \(upVector), \(relativeTo), \(positiveZForward));"]
         }
 
+        mutating func emitSetParent(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let parent = inputExpression(into: node, pinName: "parent", context: context, seen: &seen).code
+            let preserving = inputExpression(into: node, pinName: "preservingWorldTransform", context: context, seen: &seen).code
+            return ["\(entity).setParent(\(parent), \(preserving));"]
+        }
+
+        mutating func emitAddChild(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let child = inputExpression(into: node, pinName: "child", context: context, seen: &seen).code
+            let preserving = inputExpression(into: node, pinName: "preservingWorldTransform", context: context, seen: &seen).code
+            return ["\(entity).addChild(\(child), \(preserving));"]
+        }
+
+        mutating func emitRemoveChild(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let child = inputExpression(into: node, pinName: "child", context: context, seen: &seen).code
+            let preserving = inputExpression(into: node, pinName: "preservingWorldTransform", context: context, seen: &seen).code
+            return ["\(entity).removeChild(\(child), \(preserving));"]
+        }
+
+        mutating func emitRemoveFromParent(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let preserving = inputExpression(into: node, pinName: "preservingWorldTransform", context: context, seen: &seen).code
+            return ["\(entity).removeFromParent(\(preserving));"]
+        }
+
         /// A Set Component action: write a Transform property fed by a data wire —
         /// `translation` → `.position`, `rotation` → `.orientation`, `scale` → `.scale`.
         /// If the node has no property value wire but does carry a known `component_type`
@@ -640,6 +694,9 @@ public struct CanonicalScriptGraphCompiler {
         enum ExprContext {
             /// Inside a gesture handler: gesture outputs are `event.<pin>`.
             case gesture
+            /// Inside a non-gesture event hook: outputs are `event.<pin>`, but the
+            /// default action target remains `this.entity`.
+            case event
             /// Inside `this.update(deltaTime)`: `deltaTime` is in scope.
             case update
             /// Inside a plain lifecycle hook: no gesture/update locals in scope.
@@ -709,6 +766,16 @@ public struct CanonicalScriptGraphCompiler {
 
             if node.type == "tm_scene" {
                 return Expr("this.entity.scene")
+            }
+
+            if node.type == "tm_get_parent" {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                return Expr("\(source.code).parent")
+            }
+
+            if node.type == "tm_get_children" {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen, defaultValue: Expr("this.entity"))
+                return Expr("\(source.code).children")
             }
 
             // Math constants are scalars.
@@ -994,7 +1061,7 @@ public struct CanonicalScriptGraphCompiler {
             let name = Self.gestureOutputName(forHash: pin) ?? TMHash.hex(pin)
             let isVector = Self.vectorGestureOutputNames.contains(name)
             switch context {
-            case .gesture:
+            case .gesture, .event:
                 return Expr("event.\(name)", isVector: isVector)
             case .update where name == "deltaTime":
                 return Expr("deltaTime")
@@ -1310,6 +1377,9 @@ public struct CanonicalScriptGraphCompiler {
             "entity", "location", "startLocation", "translation",
             "sceneLocation", "sceneStartLocation", "sceneTranslation",
             "sceneInputDeviceRotation", "didEnd", "deltaTime", "scene",
+            "otherEntity", "position", "impulse", "impulseDirection",
+            "penetrationDistance", "contacts", "simulationRootEntity",
+            "playbackController",
         ]
 
         /// Gesture output pins whose value is a `Math3D.Vector3` (a 2D/3D point or
@@ -1319,6 +1389,7 @@ public struct CanonicalScriptGraphCompiler {
         static let vectorGestureOutputNames: Set<String> = [
             "location", "startLocation", "translation",
             "sceneLocation", "sceneStartLocation", "sceneTranslation",
+            "position", "impulseDirection",
         ]
 
         static let gestureOutputNamesByHash: [UInt64: String] = {

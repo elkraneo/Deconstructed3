@@ -327,6 +327,9 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         "translation", "rotation", "scale", "transform",
         "component_type", "component", "position", "orientation",
         "input", "output", "result", "delta", "location", "phase", "state",
+        "otherEntity", "impulse", "impulseDirection", "penetrationDistance",
+        "contacts", "deltaTime", "simulationRootEntity", "playbackController",
+        "source", "parent", "child", "children", "preservingWorldTransform",
     ]
 
     /// `[hash: name]` built from `knownPinNames`.

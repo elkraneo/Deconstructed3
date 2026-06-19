@@ -78,6 +78,81 @@ import RCP3Runtime
         #expect(!js.contains("entity.transform.translation"))
     }
 
+    @Test func collisionEventBeganCompilesToRuntimeEventHook() {
+        let collision = RCP3ScriptGraph.Node(id: "c", type: "tm_collision_event_began")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let exec = RCP3ScriptGraph.Wire(id: "e", from: "c", to: "s")
+        let position = RCP3ScriptGraph.Wire(
+            id: "p",
+            from: "c",
+            to: "s",
+            fromPin: TMHash.murmur64a("position"),
+            toPin: TMHash.murmur64a("translation")
+        )
+        let graph = RCP3ScriptGraph(nodes: [collision, set], wires: [exec, position], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.collisionBegan = function(event)"))
+        #expect(js.contains("this.entity.position = event.position;"))
+        #expect(!js.contains("RealityKit.Collision"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func physicsEventDidSimulateExposesDeltaTimeAndRootEntity() {
+        let event = RCP3ScriptGraph.Node(id: "p", type: "tm_physics_event_did_simulate")
+        let set = RCP3ScriptGraph.Node(id: "v", type: "tm_set_variable_node", variableName: "dt")
+        let exec = RCP3ScriptGraph.Wire(id: "e", from: "p", to: "v")
+        let value = RCP3ScriptGraph.Wire(
+            id: "d",
+            from: "p",
+            to: "v",
+            fromPin: TMHash.murmur64a("deltaTime"),
+            toPin: TMHash.murmur64a("value")
+        )
+        let graph = RCP3ScriptGraph(nodes: [event, set], wires: [exec, value], data: [])
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.physicsDidSimulate = function(event)"))
+        #expect(js.contains("this.variable_"))
+        #expect(js.contains("= event.deltaTime;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func playbackEventsExposePlaybackController() {
+        for (type, hook) in [
+            ("tm_animation_event_playback_started", "animationPlaybackStarted"),
+            ("tm_animation_event_playback_completed", "animationPlaybackCompleted"),
+            ("tm_animation_event_playback_looped", "animationPlaybackLooped"),
+            ("tm_animation_event_playback_terminated", "animationPlaybackTerminated"),
+            ("tm_audio_event_playback_completed", "audioPlaybackCompleted"),
+        ] {
+            let event = RCP3ScriptGraph.Node(id: "event", type: type)
+            let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "controller")
+            let graph = RCP3ScriptGraph(
+                nodes: [event, set],
+                wires: [
+                    RCP3ScriptGraph.Wire(id: "e", from: "event", to: "set"),
+                    RCP3ScriptGraph.Wire(
+                        id: "d",
+                        from: "event",
+                        to: "set",
+                        fromPin: TMHash.murmur64a("playbackController"),
+                        toPin: TMHash.murmur64a("value")
+                    ),
+                ],
+                data: []
+            )
+
+            let js = CanonicalScriptGraphCompiler().compile(graph)
+
+            #expect(js.contains("this.\(hook) = function(event)"))
+            #expect(js.contains("= event.playbackController;"))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
     @Test func componentTypeOnlySetAttachesKnownDefaultComponent() {
         for componentName in ["BillboardComponent", "AccessibilityComponent"] {
             let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
@@ -1449,6 +1524,48 @@ import RCP3Runtime
 
         #expect(js.contains("this.entity.look(new Math3D.Vector3(1, 0 /* y unwired */, 0 /* z unwired */), new Math3D.Vector3(0 /* x unwired */, 2, 0 /* z unwired */), new Math3D.Vector3(0 /* x unwired */, 1, 0 /* z unwired */), this.entity, 1);"))
         #expect(!js.contains("unsupported"))
+    }
+
+    @Test func entityParentAndChildrenNodesCompile() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setParent = RCP3ScriptGraph.Node(id: "setParent", type: "tm_set_variable_node", variableName: "parent")
+        let setChildren = RCP3ScriptGraph.Node(id: "setChildren", type: "tm_set_variable_node", variableName: "children")
+        let parent = RCP3ScriptGraph.Node(id: "parent", type: "tm_get_parent")
+        let children = RCP3ScriptGraph.Node(id: "children", type: "tm_get_children")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e0", from: "u", to: "setParent"),
+            RCP3ScriptGraph.Wire(id: "e1", from: "setParent", to: "setChildren"),
+            RCP3ScriptGraph.Wire(id: "p", from: "parent", to: "setParent", fromPin: TMHash.murmur64a("parent"), toPin: TMHash.murmur64a("value")),
+            RCP3ScriptGraph.Wire(id: "c", from: "children", to: "setChildren", fromPin: TMHash.murmur64a("children"), toPin: TMHash.murmur64a("value")),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, setParent, setChildren, parent, children], wires: wires, data: []))
+
+        #expect(js.contains("= this.entity.parent;"))
+        #expect(js.contains("= this.entity.children;"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func entityParentChildActionsCompile() {
+        for (type, expected) in [
+            ("tm_set_parent", ".setParent("),
+            ("tm_add_child", ".addChild("),
+            ("tm_remove_child", ".removeChild("),
+            ("tm_remove_from_parent", ".removeFromParent("),
+        ] {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let action = RCP3ScriptGraph.Node(id: "action", type: type)
+            let graph = RCP3ScriptGraph(
+                nodes: [update, action],
+                wires: [RCP3ScriptGraph.Wire(id: "e", from: "u", to: "action")],
+                data: []
+            )
+
+            let js = CanonicalScriptGraphCompiler().compile(graph)
+
+            #expect(js.contains(expected))
+            #expect(!js.contains("unsupported"))
+        }
     }
 
     @Test func selfAndSceneCompileToEntityExpressions() {
