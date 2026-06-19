@@ -958,9 +958,8 @@ public struct CanonicalScriptGraphCompiler {
         /// Lowers a binary math node from its already-evaluated operands. The result type
         /// is VECTOR iff either operand is a vector (else scalar). For an `add` over
         /// vectors we emit the publicly-documented `Math3D.add(a, b)` (JS `+` is not vector
-        /// addition); for `subtract`/`multiply` over a vector, the `Math3D.*` name is NOT
-        /// publicly documented, so we keep clean-room by leaving the operator and appending
-        /// an honest TODO rather than fabricating a name. Scalar ops are unchanged.
+        /// addition); subtract/multiply stay as the same bare JS operators for scalar and
+        /// vector operands. Scalar ops are unchanged.
         mutating func emitBinaryMath(
             _ type: String,
             op: BinaryScalar,
@@ -972,17 +971,6 @@ public struct CanonicalScriptGraphCompiler {
             if isVector, type == "tm_math_add" {
                 usesMath3D = true
                 return Expr("Math3D.add(\(a.code), \(b.code))", isVector: true)
-            }
-
-            if isVector, type == "tm_math_subtract" || type == "tm_math_multiply" {
-                // Math3D.subtract / Math3D.multiply are not in the public docs; don't
-                // fabricate them. Keep the operator but flag it honestly. (These appear
-                // only in non-running examples today.)
-                let code = op.render(a.code, b.code)
-                return Expr(
-                    "\(code) /* TODO: vector op — Math3D name unverified */",
-                    isVector: true
-                )
             }
 
             // Scalar (or a vector op with no vector-specific lowering, e.g. divide/mod/

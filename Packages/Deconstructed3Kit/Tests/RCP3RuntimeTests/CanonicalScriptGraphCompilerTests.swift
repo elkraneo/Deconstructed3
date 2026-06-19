@@ -264,6 +264,38 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func vectorSubtractAndMultiplyStayBareOperatorsWithoutFallbackNote() {
+        for (type, op) in [("tm_math_subtract", "-"), ("tm_math_multiply", "*")] {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+            let math = RCP3ScriptGraph.Node(id: "m", type: type)
+            let v1 = RCP3ScriptGraph.Node(id: "v1", type: "tm_make_vector3")
+            let v2 = RCP3ScriptGraph.Node(id: "v2", type: "tm_make_vector3")
+            let wires = [
+                RCP3ScriptGraph.Wire(id: "e", from: "u", to: "s"),
+                RCP3ScriptGraph.Wire(
+                    id: "a", from: "v1", to: "m",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "b", from: "v2", to: "m",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "out", from: "m", to: "s",
+                    fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")
+                ),
+            ]
+
+            let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(nodes: [update, set, math, v1, v2], wires: wires, data: []))
+
+            #expect(js.contains("this.entity.position = (new Math3D.Vector3("))
+            #expect(js.contains(") \(op) new Math3D.Vector3("))
+            #expect(!js.contains("TODO: vector op"))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
     @Test func clampCompilesToNestedMathMinMax() {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_variable_node", variableName: "clamped")
