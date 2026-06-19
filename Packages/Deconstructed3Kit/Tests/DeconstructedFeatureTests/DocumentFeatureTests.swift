@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Dependencies
 import Foundation
 import RCP3Document
 import RCP3GraphEditor
@@ -52,6 +53,21 @@ import Testing
     __asset_uuid: "5512ba55-a43b-8e72-7c89-2650f503b325"
     """
 
+    static let spherePrototype = """
+    __type: "tm_entity"
+    __uuid: "d1108c05-1ed8-1a44-93cd-defa729ff68e"
+    name: ""
+    components: [
+      {
+        __type: "tm_transform_component"
+        __uuid: "7e2aeb1b-c039-f2f7-8282-87ec72d2e8a0"
+        local_position_double: { __uuid: "44a1318a-19d7-3cc1-d079-e7f9a262e2be" }
+        local_rotation: { __uuid: "53906ae7-b1fe-1861-7af9-8904c6c30519" }
+        local_scale: { __uuid: "e466cfe3-91e0-1d92-3280-905589bee431" }
+      }
+    ]
+    """
+
     /// A self-contained minimal bundle dir in the temp directory.
     static func makeTempBundle(world source: String) throws -> URL {
         let dir = FileManager.default.temporaryDirectory
@@ -59,6 +75,9 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: dir.appending(path: "project.rcp").path, contents: Data())
         try source.write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
+        let geometry = dir.appending(path: "core.lib/geometry")
+        try FileManager.default.createDirectory(at: geometry, withIntermediateDirectories: true)
+        try Self.spherePrototype.write(to: geometry.appending(path: "sphere.tm_entity"), atomically: true, encoding: .utf8)
         return dir
     }
 
@@ -82,6 +101,7 @@ import Testing
         } withDependencies: {
             $0.documentClient = .live
         }
+        store.exhaustivity = .off
 
         let opened = try RCP3Editor.open(dir)
         await store.send(.openTapped(dir))
@@ -170,6 +190,7 @@ import Testing
             DocumentFeature()
         } withDependencies: {
             $0.documentClient = .live
+            $0.uuid = .incrementing
         }
 
         let opened = try RCP3Editor.open(dir)
@@ -203,6 +224,39 @@ import Testing
 
         let reopened = try RCP3Editor.open(dir)
         #expect(reopened.entity.children.isEmpty)
+    }
+
+    @Test func addPrimitiveAddsUnderSelectionAndSelectsNewEntity() async throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        } withDependencies: {
+            $0.documentClient = .live
+            $0.uuid = .incrementing
+        }
+
+        let opened = try RCP3Editor.open(dir)
+        await store.send(.openTapped(dir))
+        await store.receive(\.opened.success) {
+            $0.editor = opened
+            $0.selection = opened.entity.id
+        }
+
+        let expectedUUID = UUIDGenerator.incrementing
+        let makeUUID = { expectedUUID().uuidString.lowercased() }
+        var addedEditor = opened
+        let maybeAddedID = addedEditor.addPrimitive(.sphere, parentID: opened.entity.id, makeUUID: makeUUID)
+        let addedID = try #require(maybeAddedID)
+        await store.send(.addPrimitive(.sphere)) {
+            $0.editor = addedEditor
+            $0.selection = addedID
+        }
+
+        #expect(store.state.rootEntity?.children.map(\.name) == ["box", "sphere"])
+        #expect(store.state.selectedEntity?.name == "sphere")
+        #expect(store.state.hasUnsavedChanges)
     }
 
     // MARK: open → select → transformEdited → saveTapped → reopen

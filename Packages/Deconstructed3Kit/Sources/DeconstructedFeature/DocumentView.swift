@@ -563,6 +563,18 @@ struct EntityInspectorView: View {
             }
 
             Section {
+                Menu("Add", systemImage: "plus") {
+                    Button("Box", systemImage: "cube") {
+                        store.send(.addPrimitive(.box))
+                    }
+                    Button("Sphere", systemImage: "circle") {
+                        store.send(.addPrimitive(.sphere))
+                    }
+                    Button("Plane", systemImage: "square") {
+                        store.send(.addPrimitive(.plane))
+                    }
+                }
+
                 Button("Duplicate", systemImage: "plus.square.on.square") {
                     store.send(.duplicateSelectedEntity)
                 }

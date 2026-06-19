@@ -135,6 +135,8 @@ public struct DocumentFeature: Sendable {
         case duplicateSelectedEntity
         /// User deleted the selected entity from its parent.
         case deleteSelectedEntity
+        /// User added a built-in primitive under the selected entity.
+        case addPrimitive(RCP3PrimitiveKind)
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -215,7 +217,9 @@ public struct DocumentFeature: Sendable {
 
             case .duplicateSelectedEntity:
                 guard let id = state.selection else { return .none }
-                if let duplicatedID = state.editor?.duplicateEntity(id: id) {
+                @Dependency(\.uuid) var uuid
+                let makeUUID = { uuid().uuidString.lowercased() }
+                if let duplicatedID = state.editor?.duplicateEntity(id: id, makeUUID: makeUUID) {
                     state.selection = duplicatedID
                     state.loadedExample = nil
                     state.loadedExampleID = nil
@@ -224,8 +228,21 @@ public struct DocumentFeature: Sendable {
 
             case .deleteSelectedEntity:
                 guard let id = state.selection else { return .none }
-                if state.editor?.deleteEntity(id: id) == true {
+                @Dependency(\.uuid) var uuid
+                let makeUUID = { uuid().uuidString.lowercased() }
+                if state.editor?.deleteEntity(id: id, makeUUID: makeUUID) == true {
                     state.selection = state.editor?.entity.id
+                    state.loadedExample = nil
+                    state.loadedExampleID = nil
+                }
+                return .none
+
+            case let .addPrimitive(kind):
+                guard let parentID = state.selection else { return .none }
+                @Dependency(\.uuid) var uuid
+                let makeUUID = { uuid().uuidString.lowercased() }
+                if let addedID = state.editor?.addPrimitive(kind, parentID: parentID, makeUUID: makeUUID) {
+                    state.selection = addedID
                     state.loadedExample = nil
                     state.loadedExampleID = nil
                 }
