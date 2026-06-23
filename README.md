@@ -42,8 +42,29 @@ flows into this repository. See [`AGENTS.md`](./AGENTS.md).
 
 ## Status
 
-Scaffolding. First milestone: **open + display + round-trip** an RCP 3
-`.realitycomposerpro` package.
+Early but well past scaffolding. The first milestone — **open + display +
+round-trip** an RCP 3 `.realitycomposerpro` bundle — is met for the format
+surface covered so far, and scene + script-graph editing are functional. The
+library (`Deconstructed3Kit`) is ~11.5k lines across eight modules with ~270
+tests. Built from the behavioral spec in [`Docs/CleanRoom-Spec.md`](./Docs/CleanRoom-Spec.md).
+
+### What works today
+
+| Area | State |
+|--|--|
+| **`.tm_*` text object-database** | Parse + write the tab-indented grammar; faithful round-trip (`TMFormat`). |
+| **Open + display** | Load an RCP 3 bundle, show the entity/component/prototype tree and a RealityKit viewport (via StageView's `RealityKitStageView`). |
+| **Scene editing** | Transform edit, entity duplicate / delete, primitive insertion — all with faithful save back to the bundle. |
+| **Script graphs (visual)** | A node editor on a custom SwiftUI `Canvas` with per-pin connection points; pin-literal and variable authoring; round-trip save of entity-attached and asset graphs. |
+| **Script graphs (execution)** | Compile `tm_graph` → JavaScript and run it two ways: a JavaScriptCore host, and Apple's canonical `RealityKitScripting` runtime (macOS 27). Node coverage spans math / Math3D, comparison / logic / string / bitwise, control-flow, entity, and event nodes. |
+| **Examples gallery** | Loadable, playable script-graph examples. |
+| **`rcp3-dump`** | A CLI that opens a bundle and prints its scene tree. |
+
+### Not yet
+
+- Full coverage of the 926-type RCP 3 schema — only a working subset is authored.
+- High-fidelity display of the USD **import lane** (`Scene.import/` geometry/materials).
+- Authoring beyond the currently covered node / component set.
 
 ## License
 
