@@ -167,14 +167,22 @@ public struct DocumentView<CanonicalPlay: View>: View {
     private var sidebar: some View {
         if let root = store.rootEntity {
             List {
-                EntityOutlinerRow(
-                    store: store,
-                    entity: root,
-                    rootID: root.id,
-                    depth: 0,
-                    expandedEntityIDs: $expandedEntityIDs,
-                    selectedComponent: $selectedOutlinerComponent
-                )
+                // The entire entity tree is pre-flattened into one identified row
+                // list and rendered by a SINGLE `ForEach`. This is the fix for the
+                // "selecting one row highlights several" bug: a recursively-nested
+                // `Group` + conditional `ForEach` view tree gives `List` ambiguous
+                // row identity, so its row reuse can paint the selection highlight on
+                // the wrong (or extra) rows. A flat `ForEach` over rows with unique,
+                // path-stable ids removes that ambiguity entirely.
+                ForEach(OutlinerRow.flatten(root: root, expanded: expandedEntityIDs)) { row in
+                    OutlinerRowView(
+                        store: store,
+                        row: row,
+                        rootID: root.id,
+                        expandedEntityIDs: $expandedEntityIDs,
+                        selectedComponent: $selectedOutlinerComponent
+                    )
+                }
 
                 // Script graphs as first-class, browsable assets: open the editor
                 // directly here instead of hunting for which entity references one.
@@ -543,40 +551,103 @@ private struct EntityOutlinerComponentSelection: Equatable {
     var component: EntityOutlinerComponent
 }
 
-private struct EntityOutlinerRow: View {
-    @Bindable var store: StoreOf<DocumentFeature>
+/// One visible line in the outliner: an entity, or one of that entity's component
+/// rows. Carries a unique, path-stable `id` so the whole tree can be rendered by a
+/// single `ForEach` — see `OutlinerRow.flatten`. Internal (not private) so the pure
+/// `flatten` can be unit-tested for unique ids.
+struct OutlinerRow: Identifiable {
+    enum Kind: Equatable {
+        case entity
+        case component(EntityOutlinerComponent)
+    }
+
+    /// Globally-unique, stable identity: the slash-joined ancestor *index* path plus
+    /// each entity's `id` (and, for component rows, the component id). Index-keyed so
+    /// it stays unique even if two entities ever shared a content id.
+    let id: String
     let entity: RCP3Entity
-    let rootID: RCP3Entity.ID
+    /// The row's own indentation depth (component rows sit one level under their entity).
     let depth: Int
+    let kind: Kind
+    /// Entity rows only: whether a disclosure triangle is shown / the row is expanded.
+    let hasChildren: Bool
+    let isExpanded: Bool
+
+    /// Pre-flattens the entity tree (honoring `expanded`) into the ordered rows the
+    /// outliner draws. A pure function — unit-tested for unique ids — so the view can
+    /// render one flat, unambiguously-identified `ForEach` instead of a recursively
+    /// nested `Group`/`ForEach` whose identity `List` mis-assigns.
+    static func flatten(
+        root: RCP3Entity,
+        expanded: Set<RCP3Entity.ID>
+    ) -> [OutlinerRow] {
+        var rows: [OutlinerRow] = []
+
+        func visit(_ entity: RCP3Entity, depth: Int, pathPrefix: String) {
+            let path = "\(pathPrefix)/\(entity.id)"
+            let components = entity.outlinerComponents
+            let isExpanded = expanded.contains(entity.id)
+            let hasChildren = !components.isEmpty || !entity.children.isEmpty
+
+            rows.append(
+                OutlinerRow(
+                    id: path,
+                    entity: entity,
+                    depth: depth,
+                    kind: .entity,
+                    hasChildren: hasChildren,
+                    isExpanded: isExpanded
+                )
+            )
+
+            guard isExpanded else { return }
+
+            for component in components {
+                rows.append(
+                    OutlinerRow(
+                        id: "\(path)#\(component.id)",
+                        entity: entity,
+                        depth: depth + 1,
+                        kind: .component(component),
+                        hasChildren: false,
+                        isExpanded: false
+                    )
+                )
+            }
+
+            for (index, child) in entity.children.enumerated() {
+                visit(child, depth: depth + 1, pathPrefix: "\(path)/\(index)")
+            }
+        }
+
+        visit(root, depth: 0, pathPrefix: "")
+        return rows
+    }
+}
+
+/// Draws a single pre-flattened `OutlinerRow`. All rows live in one `List` `ForEach`,
+/// so identity is unambiguous; the selection highlight is a plain per-row comparison.
+private struct OutlinerRowView: View {
+    @Bindable var store: StoreOf<DocumentFeature>
+    let row: OutlinerRow
+    let rootID: RCP3Entity.ID
     @Binding var expandedEntityIDs: Set<RCP3Entity.ID>
     @Binding var selectedComponent: EntityOutlinerComponentSelection?
 
-    private var isExpanded: Bool { expandedEntityIDs.contains(entity.id) }
+    private var entity: RCP3Entity { row.entity }
+    private var depth: Int { row.depth }
+    private var isExpanded: Bool { row.isExpanded }
+    private var hasChildren: Bool { row.hasChildren }
     private var isEntitySelected: Bool {
         store.selection == entity.id && selectedComponent?.entityID != entity.id
     }
-    private var components: [EntityOutlinerComponent] { entity.outlinerComponents }
-    private var hasChildren: Bool { !components.isEmpty || !entity.children.isEmpty }
 
     var body: some View {
-        Group {
+        switch row.kind {
+        case .entity:
             entityRow
-
-            if isExpanded {
-                ForEach(components) { component in
-                    componentRow(component)
-                }
-                ForEach(entity.children) { child in
-                    EntityOutlinerRow(
-                        store: store,
-                        entity: child,
-                        rootID: rootID,
-                        depth: depth + 1,
-                        expandedEntityIDs: $expandedEntityIDs,
-                        selectedComponent: $selectedComponent
-                    )
-                }
-            }
+        case let .component(component):
+            componentRow(component)
         }
     }
 
@@ -643,7 +714,8 @@ private struct EntityOutlinerRow: View {
                 .fontWeight(component.kind == .transform ? .semibold : .regular)
             Spacer(minLength: 8)
         }
-        .padding(.leading, CGFloat(depth + 1) * 16)
+        // `row.depth` already includes the +1 offset for component rows.
+        .padding(.leading, CGFloat(depth) * 16)
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
         .background {
@@ -718,7 +790,7 @@ private struct EntityOutlinerRow: View {
     }
 }
 
-private struct EntityOutlinerComponent: Identifiable, Equatable {
+struct EntityOutlinerComponent: Identifiable, Equatable {
     enum Kind: Equatable {
         case transform
         case model
@@ -1239,7 +1311,11 @@ private extension RCP3Entity {
             guard !type.isTransformComponentType, !type.isModelComponentType else { continue }
             components.append(.init(kind: .other(type)))
         }
-        return components
+        // De-duplicate by id: a component type present in BOTH `components` and
+        // `components__instantiated` (authored + inherited) would otherwise yield two
+        // rows sharing one selection key, so selecting it would highlight both.
+        var seen = Set<String>()
+        return components.filter { seen.insert($0.id).inserted }
     }
 
     var inspectorSecondaryComponents: [EntityOutlinerComponent] {
