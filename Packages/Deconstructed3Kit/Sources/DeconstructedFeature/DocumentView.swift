@@ -166,23 +166,21 @@ public struct DocumentView<CanonicalPlay: View>: View {
     @ViewBuilder
     private var sidebar: some View {
         if let root = store.rootEntity {
-            List {
-                // The entire entity tree is pre-flattened into one identified row
-                // list and rendered by a SINGLE `ForEach`. This is the fix for the
-                // "selecting one row highlights several" bug: a recursively-nested
-                // `Group` + conditional `ForEach` view tree gives `List` ambiguous
-                // row identity, so its row reuse can paint the selection highlight on
-                // the wrong (or extra) rows. A flat `ForEach` over rows with unique,
-                // path-stable ids removes that ambiguity entirely.
-                ForEach(OutlinerRow.flatten(root: root, expanded: expandedEntityIDs)) { row in
-                    OutlinerRowView(
-                        store: store,
-                        row: row,
-                        rootID: root.id,
-                        expandedEntityIDs: $expandedEntityIDs,
-                        selectedComponent: $selectedOutlinerComponent
-                    )
-                }
+            // `List(selection:)` owns row identity AND the selection highlight — the
+            // idiomatic SwiftUI design. Every row is `.tag`-ged with its selection id, so
+            // SwiftUI (not hand-rolled booleans + `onTapGesture`) decides which single
+            // row is highlighted; that is the actual fix for "selecting one row
+            // highlights several". The tree is a recursive `DisclosureGroup` rather than
+            // `OutlineGroup`/`List(children:)` because the editor needs programmatic
+            // expansion (auto-expand the root; reveal a freshly-inserted entity), which
+            // those start-collapsed APIs don't expose.
+            List(selection: outlineSelection) {
+                EntityOutlineRows(
+                    store: store,
+                    entity: root,
+                    rootID: root.id,
+                    expandedEntityIDs: $expandedEntityIDs
+                )
 
                 // Script graphs as first-class, browsable assets: open the editor
                 // directly here instead of hunting for which entity references one.
@@ -225,6 +223,44 @@ public struct DocumentView<CanonicalPlay: View>: View {
     private func expandRootIfNeeded(_ root: RCP3Entity) {
         guard expandedEntityIDs.isEmpty || !expandedEntityIDs.contains(root.id) else { return }
         expandedEntityIDs.insert(root.id)
+    }
+
+    /// The single source of truth for `List(selection:)`, bridged to the store. The
+    /// *getter* projects the current selection to a row tag — a component tag when a
+    /// component of the selected entity is chosen, otherwise the entity's id. The
+    /// *setter* decodes the tag the user clicked and pushes it back: a component tag
+    /// sets `selectedOutlinerComponent` (the inspector surface) and selects its owning
+    /// entity; an entity tag clears the component and selects the entity. Selection
+    /// thus stays consistent with the viewport (which also writes `store.selection`).
+    private var outlineSelection: Binding<String?> {
+        Binding(
+            get: {
+                if let component = selectedOutlinerComponent, component.entityID == store.selection {
+                    return OutlineSelectionID.component(
+                        entityID: component.entityID,
+                        componentID: component.component.id
+                    )
+                }
+                return store.selection
+            },
+            set: { newValue in
+                guard let newValue else {
+                    selectedOutlinerComponent = nil
+                    store.send(.selected(nil))
+                    return
+                }
+                if let decoded = OutlineSelectionID.decode(newValue) {
+                    selectedOutlinerComponent = .init(
+                        entityID: decoded.entityID,
+                        component: EntityOutlinerComponent(id: decoded.componentID)
+                    )
+                    store.send(.selected(decoded.entityID))
+                } else {
+                    selectedOutlinerComponent = nil
+                    store.send(.selected(newValue))
+                }
+            }
+        )
     }
 
     // MARK: Center column (viewport ⇄ script-graph canvas ⇄ canonical Play)
@@ -551,184 +587,90 @@ private struct EntityOutlinerComponentSelection: Equatable {
     var component: EntityOutlinerComponent
 }
 
-/// One visible line in the outliner: an entity, or one of that entity's component
-/// rows. Carries a unique, path-stable `id` so the whole tree can be rendered by a
-/// single `ForEach` — see `OutlinerRow.flatten`. Internal (not private) so the pure
-/// `flatten` can be unit-tested for unique ids.
-struct OutlinerRow: Identifiable {
-    enum Kind: Equatable {
-        case entity
-        case component(EntityOutlinerComponent)
+/// Identity scheme for the outliner's `List(selection:)` row tags. An entity row is
+/// tagged with its entity id; a component row with `"<entityID>#<componentID>"`.
+/// Entity ids (uuids) and component ids never contain `#`, so the delimiter decodes
+/// unambiguously. Pure + internal so the encode/decode is unit-tested.
+enum OutlineSelectionID {
+    static func component(entityID: String, componentID: String) -> String {
+        "\(entityID)#\(componentID)"
     }
 
-    /// Globally-unique, stable identity: the slash-joined ancestor *index* path plus
-    /// each entity's `id` (and, for component rows, the component id). Index-keyed so
-    /// it stays unique even if two entities ever shared a content id.
-    let id: String
-    let entity: RCP3Entity
-    /// The row's own indentation depth (component rows sit one level under their entity).
-    let depth: Int
-    let kind: Kind
-    /// Entity rows only: whether a disclosure triangle is shown / the row is expanded.
-    let hasChildren: Bool
-    let isExpanded: Bool
-
-    /// Pre-flattens the entity tree (honoring `expanded`) into the ordered rows the
-    /// outliner draws. A pure function — unit-tested for unique ids — so the view can
-    /// render one flat, unambiguously-identified `ForEach` instead of a recursively
-    /// nested `Group`/`ForEach` whose identity `List` mis-assigns.
-    static func flatten(
-        root: RCP3Entity,
-        expanded: Set<RCP3Entity.ID>
-    ) -> [OutlinerRow] {
-        var rows: [OutlinerRow] = []
-
-        func visit(_ entity: RCP3Entity, depth: Int, pathPrefix: String) {
-            let path = "\(pathPrefix)/\(entity.id)"
-            let components = entity.outlinerComponents
-            let isExpanded = expanded.contains(entity.id)
-            let hasChildren = !components.isEmpty || !entity.children.isEmpty
-
-            rows.append(
-                OutlinerRow(
-                    id: path,
-                    entity: entity,
-                    depth: depth,
-                    kind: .entity,
-                    hasChildren: hasChildren,
-                    isExpanded: isExpanded
-                )
-            )
-
-            guard isExpanded else { return }
-
-            for component in components {
-                rows.append(
-                    OutlinerRow(
-                        id: "\(path)#\(component.id)",
-                        entity: entity,
-                        depth: depth + 1,
-                        kind: .component(component),
-                        hasChildren: false,
-                        isExpanded: false
-                    )
-                )
-            }
-
-            for (index, child) in entity.children.enumerated() {
-                visit(child, depth: depth + 1, pathPrefix: "\(path)/\(index)")
-            }
-        }
-
-        visit(root, depth: 0, pathPrefix: "")
-        return rows
+    /// Decodes a component tag into its parts, or `nil` for a plain entity tag.
+    static func decode(_ tag: String) -> (entityID: String, componentID: String)? {
+        guard let separator = tag.range(of: "#") else { return nil }
+        return (
+            entityID: String(tag[..<separator.lowerBound]),
+            componentID: String(tag[separator.upperBound...])
+        )
     }
 }
 
-/// Draws a single pre-flattened `OutlinerRow`. All rows live in one `List` `ForEach`,
-/// so identity is unambiguous; the selection highlight is a plain per-row comparison.
-private struct OutlinerRowView: View {
+/// One entity and its subtree in the outliner, rendered as a native
+/// `DisclosureGroup`. `List` owns indentation and disclosure; the row `.tag`s plus
+/// the enclosing `List(selection:)` own identity and the selection highlight — so
+/// there is no `onTapGesture` and no hand-drawn highlight (selecting a row is just
+/// "`List` set the bound selection to this row's tag"). Component rows hang off the
+/// disclosure group as leaves alongside child entities.
+///
+/// The body branches between a `DisclosureGroup` (has children) and a bare label
+/// (leaf), making it a multi-shape row — that trades `List`'s id-templating fast
+/// path for native disclosure. A scene outliner is a handful of nested rows, so the
+/// trade is right; the fast path matters for long *flat* lists.
+private struct EntityOutlineRows: View {
     @Bindable var store: StoreOf<DocumentFeature>
-    let row: OutlinerRow
+    let entity: RCP3Entity
     let rootID: RCP3Entity.ID
     @Binding var expandedEntityIDs: Set<RCP3Entity.ID>
-    @Binding var selectedComponent: EntityOutlinerComponentSelection?
 
-    private var entity: RCP3Entity { row.entity }
-    private var depth: Int { row.depth }
-    private var isExpanded: Bool { row.isExpanded }
-    private var hasChildren: Bool { row.hasChildren }
-    private var isEntitySelected: Bool {
-        store.selection == entity.id && selectedComponent?.entityID != entity.id
-    }
+    private var components: [EntityOutlinerComponent] { entity.outlinerComponents }
+    private var hasChildren: Bool { !components.isEmpty || !entity.children.isEmpty }
 
     var body: some View {
-        switch row.kind {
-        case .entity:
-            entityRow
-        case let .component(component):
-            componentRow(component)
-        }
-    }
-
-    private var entityRow: some View {
-        HStack(spacing: 6) {
-            disclosure
-            Image(systemName: entity.outlinerSymbolName)
-                .foregroundStyle(entity.outlinerSymbolStyle)
-                .frame(width: 16)
-            Text(entity.displayName)
-                .lineLimit(1)
-                .fontWeight(isEntitySelected ? .semibold : .regular)
-            Spacer(minLength: 8)
-            if isEntitySelected {
-                Image(systemName: "lock.open")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Image(systemName: "eye")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        if hasChildren {
+            DisclosureGroup(isExpanded: expansion) {
+                ForEach(components) { component in
+                    Label(component.displayName, systemImage: component.symbolName)
+                        .lineLimit(1)
+                        .tag(OutlineSelectionID.component(entityID: entity.id, componentID: component.id))
+                }
+                ForEach(entity.children) { child in
+                    EntityOutlineRows(
+                        store: store,
+                        entity: child,
+                        rootID: rootID,
+                        expandedEntityIDs: $expandedEntityIDs
+                    )
+                }
+            } label: {
+                entityLabel
             }
+        } else {
+            entityLabel
         }
-        .padding(.leading, CGFloat(depth) * 16)
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isEntitySelected ? Color.accentColor : Color.clear)
-        }
-        .foregroundStyle(isEntitySelected ? Color.white : Color.primary)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selectedComponent = nil
-            store.send(.selected(entity.id))
-        }
-        .contextMenu { entityContextMenu }
-        .listRowInsets(.init(top: 0, leading: 8, bottom: 0, trailing: 8))
-        .listRowSeparator(.hidden)
     }
 
-    private var disclosure: some View {
-        Button {
-            toggleExpanded()
-        } label: {
-            Image(systemName: hasChildren ? (isExpanded ? "chevron.down" : "chevron.right") : "")
-                .font(.caption)
-                .frame(width: 12, height: 16)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!hasChildren)
+    /// The selectable entity row: tagged with the entity id so `List(selection:)`
+    /// highlights exactly it, and carrying the entity context menu.
+    private var entityLabel: some View {
+        Label(entity.displayName, systemImage: entity.outlinerSymbolName)
+            .lineLimit(1)
+            .tag(entity.id)
+            .contextMenu { entityContextMenu }
     }
 
-    private func componentRow(_ component: EntityOutlinerComponent) -> some View {
-        let isSelected = selectedComponent == .init(entityID: entity.id, component: component)
-        return HStack(spacing: 6) {
-            Color.clear.frame(width: 12, height: 16)
-            Image(systemName: component.symbolName)
-                .foregroundStyle(isSelected ? Color.white : component.tint)
-                .frame(width: 16)
-            Text(component.displayName)
-                .lineLimit(1)
-                .foregroundStyle(isSelected ? Color.white : Color.secondary)
-                .fontWeight(component.kind == .transform ? .semibold : .regular)
-            Spacer(minLength: 8)
-        }
-        // `row.depth` already includes the +1 offset for component rows.
-        .padding(.leading, CGFloat(depth) * 16)
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.accentColor : Color.clear)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            selectedComponent = .init(entityID: entity.id, component: component)
-            store.send(.selected(entity.id))
-        }
-        .listRowInsets(.init(top: 0, leading: 8, bottom: 0, trailing: 8))
-        .listRowSeparator(.hidden)
+    /// Two-way expansion for this entity, backed by the shared `expandedEntityIDs`.
+    private var expansion: Binding<Bool> {
+        Binding(
+            get: { expandedEntityIDs.contains(entity.id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedEntityIDs.insert(entity.id)
+                } else {
+                    expandedEntityIDs.remove(entity.id)
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -775,14 +717,6 @@ private struct OutlinerRowView: View {
         .disabled(entity.id == rootID)
     }
 
-    private func toggleExpanded() {
-        if isExpanded {
-            expandedEntityIDs.remove(entity.id)
-        } else {
-            expandedEntityIDs.insert(entity.id)
-        }
-    }
-
     private func add(_ kind: RCP3PrimitiveKind) {
         store.send(.selected(entity.id))
         store.send(.addPrimitive(kind))
@@ -798,6 +732,22 @@ struct EntityOutlinerComponent: Identifiable, Equatable {
     }
 
     var kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+    }
+
+    /// Reconstructs a component from its row id — the inverse of `id`. The known keys
+    /// map back to their kind; anything else is an `.other(type)`. Used when decoding
+    /// a `List(selection:)` component tag.
+    init(id: String) {
+        switch id {
+        case "transform": self.kind = .transform
+        case "model": self.kind = .model
+        default: self.kind = .other(id)
+        }
+    }
+
     var id: String {
         switch kind {
         case .transform: return "transform"
@@ -1286,20 +1236,14 @@ extension DocumentFeature.State {
     }
 }
 
-private extension RCP3Entity {
+// Internal (not `private`) so `outlinerComponents` — the component de-duplication
+// behind the outliner rows — is reachable from unit tests.
+extension RCP3Entity {
     var displayName: String { name.isEmpty ? "(unnamed)" : name }
-    var symbolName: String {
-        if name == "world" { return "globe" }
-        if prototypeUUID != nil { return "cube.fill" }
-        return "cube"
-    }
     var outlinerSymbolName: String {
         if name == "world" { return "cube" }
         if isGeometryPrototypeInstance { return "shippingbox" }
         return prototypeUUID == nil ? "cube" : "shippingbox"
-    }
-    var outlinerSymbolStyle: Color {
-        isGeometryPrototypeInstance ? .purple : .secondary
     }
 
     var outlinerComponents: [EntityOutlinerComponent] {
