@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > Work in progress. Successor to [Deconstructed](https://github.com/elkraneo/Deconstructed)
-> (sealed at `final-rcp2`). Targets **Reality Composer Pro 3** on the macOS 27
-> USDKit-native stack.
+> (sealed at `final-rcp2`). Targets **Reality Composer Pro 3** on macOS 27, on a
+> RealityKit-native stack.
 
 An open-source macOS application that reverse-engineers and reconstructs
 **Reality Composer Pro 3** — opening, displaying, editing, and round-tripping the
@@ -13,22 +13,26 @@ An open-source macOS application that reverse-engineers and reconstructs
 
 Deconstructed (1–2) is sealed: it targets the pre–RCP 3 format on macOS 26, on the
 `SwiftUsdShell` + OpenUSD runtime. Deconstructed 3 is a clean successor that tracks
-RCP 3 on Apple's **USDKit** (macOS 27+). Same OSS posture (Apache-2.0), same
+RCP 3 on macOS 27+, rendering through RealityKit. Same OSS posture (Apache-2.0), same
 architecture stack (TCA + Point-Free), fresh runtime substrate.
 
-## Runtime substrate — USDKit first
+## Runtime substrate — RealityKit
 
 | Concern | Engine | Why |
 |--|--|--|
-| Render | USDKit + RealityKit (`USDStageComponent`) | In-scene entities per prim path; picking, post-process selection, grid/IBL all reach it. |
-| Selection | USDKit + RealityKit | Pick by `entity.name == primPath`; outline via custom post-process. |
-| Mutation / authoring | `SwiftUsdShell` (reconnected on demand) | USDKit's authoring layer is private (array marshalling, connection authoring); the Shell is the controllable authoring engine, kept behind the same pure-Swift contract boundary used in Deconstructed. |
+| Document model | `TMFormat` (`.tm_*` text object-database) | The bundle is parsed and written directly as its native tab-indented text grammar; faithful round-trip. |
+| Render | RealityKit (via StageView's `RealityKitStageView`) | Scene data is reconstructed into RealityKit `Entity`s per prim path; picking, selection outline, grid/IBL all reach it. |
+| Selection | RealityKit | Pick by `entity.name == primPath`; outline via StageView's render path. |
+| Editing / authoring | Direct `TMFormat` round-trip | Transform edits, entity insert / duplicate / delete, and script-graph authoring mutate the parsed model and save back to the bundle. |
+| Script execution | `RealityKitScripting` (macOS 27) + JavaScriptCore | Compiled `tm_graph` runs on Apple's canonical runtime and on a JS host. |
 
-USDKit is the base; the Shell returns only where authoring needs it.
+The document is parsed and written as its native text grammar; there is no USD
+authoring layer in the loop.
 
 ## Platform
 
-- **macOS 27+ only.** USDKit requires it; RCP 3 targets it. No back-compat, no `#available`.
+- **macOS 27+ only.** RCP 3 targets it, and the canonical `RealityKitScripting`
+  runtime requires it. No back-compat, no `#available`.
 - Swift 6.2, strict concurrency, MainActor-by-default.
 - The Composable Architecture (TCA).
 
