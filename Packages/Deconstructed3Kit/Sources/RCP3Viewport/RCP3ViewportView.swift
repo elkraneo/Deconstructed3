@@ -221,6 +221,10 @@ public struct RCP3ViewportView: View {
         config.source = .injectedEntity
         config.appearance = .dark
         config.interactionMode = playMode ? .entityDrag : .camera
+        // Selection outline: StageView defaults to a bounding-box cage; opt into the
+        // mesh outline and color it RCP orange so a picked entity reads clearly.
+        config.selectionHighlightStyle = .outline
+        config.outlineConfiguration = OutlineConfiguration(color: .orange)
         return config
     }
 
