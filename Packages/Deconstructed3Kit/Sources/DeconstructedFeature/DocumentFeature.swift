@@ -137,6 +137,9 @@ public struct DocumentFeature: Sendable {
         case deleteSelectedEntity
         /// User added a built-in primitive under the selected entity.
         case addPrimitive(RCP3PrimitiveKind)
+        /// User created a new Script Graph asset (browser "+"). Writes a new
+        /// `*.tm_script_graph` to the bundle and opens it in the editor.
+        case newScriptGraphTapped
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -246,6 +249,20 @@ public struct DocumentFeature: Sendable {
                     state.loadedExample = nil
                     state.loadedExampleID = nil
                 }
+                return .none
+
+            case .newScriptGraphTapped:
+                guard let editor = state.editor else { return .none }
+                @Dependency(\.uuid) var uuid
+                let makeUUID = { uuid().uuidString.lowercased() }
+                guard let asset = try? editor.createScriptGraphAsset(makeUUID: makeUUID) else {
+                    return .none
+                }
+                // Open the new asset in the editor (re-scans the bundle on render, so
+                // it also appears in the sidebar's Script Graphs list).
+                state.openAssetGraphID = asset.id
+                state.loadedExample = nil
+                state.loadedExampleID = nil
                 return .none
 
             case .saveTapped:

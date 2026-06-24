@@ -169,4 +169,34 @@ import RCP3Document
         // The whole tree (minus the rename) round-trips.
         #expect(reopened.root.removing(key: "name") == original.root.removing(key: "name"))
     }
+
+    // MARK: Create a Script Graph asset (the browser "+" action)
+
+    @Test func createScriptGraphAssetWritesEnumerableEmptyGraph() throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bundle = try RCP3Bundle.open(dir)
+
+        // No assets to start.
+        #expect(bundle.scriptGraphAssets().isEmpty)
+
+        let asset = try bundle.createScriptGraphAsset()
+
+        // The file exists, enumerates, and its id matches.
+        let onDisk = bundle.scriptGraphAssets()
+        #expect(onDisk.map(\.id) == [asset.id])
+        #expect(asset.name == "Script Graph")
+        #expect(FileManager.default.fileExists(
+            atPath: dir.appending(path: "Script Graph.tm_script_graph").path
+        ))
+
+        // It loads as an empty, well-formed graph (no nodes), keyed by the asset id.
+        let graph = try #require(bundle.scriptGraph(assetID: asset.id))
+        #expect(graph.nodes.isEmpty)
+
+        // A second create de-duplicates the filename.
+        let second = try bundle.createScriptGraphAsset()
+        #expect(second.name == "Script Graph 1")
+        #expect(bundle.scriptGraphAssets().count == 2)
+    }
 }

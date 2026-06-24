@@ -49,6 +49,15 @@ public struct RCP3Editor: Sendable, Equatable {
         bundle.scriptGraphAssets()
     }
 
+    /// Creates a new empty `*.tm_script_graph` asset in the backing bundle (the RCP
+    /// "+ → Script Graph" action) and returns it. Writes directly to disk.
+    public func createScriptGraphAsset(
+        named base: String = "Script Graph",
+        makeUUID: () -> String = { UUID().uuidString.lowercased() }
+    ) throws -> RCP3ScriptGraphAsset {
+        try bundle.createScriptGraphAsset(named: base, makeUUID: makeUUID)
+    }
+
     /// Loads and parses the bundle's `*.tm_script_graph` asset with this id (the
     /// asset's root `__uuid`).
     public func scriptGraph(assetID: String) -> RCP3ScriptGraph? {

@@ -520,6 +520,21 @@ public struct DocumentView<CanonicalPlay: View>: View {
     @ToolbarContentBuilder
     private var sidebarToolbar: some ToolbarContent {
         ToolbarItem {
+            // Browser "+" — create a new project asset. RCP lists many asset types
+            // here; the script graph is the one we author today.
+            Menu {
+                Button("Script Graph", systemImage: "point.3.connected.trianglepath.dotted") {
+                    store.send(.newScriptGraphTapped)
+                    centerMode = .graph
+                }
+            } label: {
+                Label("New", systemImage: "plus")
+            }
+            .menuIndicator(.hidden)
+            .disabled(store.rootEntity == nil)
+            .help("Create a new asset")
+        }
+        ToolbarItem {
             Button("Open…", systemImage: "folder") { presentOpenPanel() }
         }
         ToolbarItem {

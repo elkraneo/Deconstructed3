@@ -45,6 +45,57 @@ extension RCP3Bundle {
         return assets.sorted { $0.name < $1.name }
     }
 
+    /// Creates a new, empty `*.tm_script_graph` asset in this bundle and returns it —
+    /// the RCP "+ → Script Graph" action. The file is the observed empty shape (see
+    /// `Docs/CleanRoom-Spec.md`): a `re_scripting_source_graph` whose `graph` has no
+    /// nodes. The filename is `<base>`, de-duplicated with a numeric suffix; the
+    /// returned `id` is the file's root `__uuid` — what an entity's scripting
+    /// component points at.
+    public func createScriptGraphAsset(
+        named base: String = "Script Graph",
+        makeUUID: () -> String = { UUID().uuidString.lowercased() }
+    ) throws -> RCP3ScriptGraphAsset {
+        let fileManager = FileManager.default
+        var name = base
+        var suffix = 1
+        while fileManager.fileExists(atPath: url.appending(path: "\(name).tm_script_graph").path) {
+            name = "\(base) \(suffix)"
+            suffix += 1
+        }
+        let asset = Self.emptyScriptGraphAsset(makeUUID: makeUUID)
+        try asset.tmText().write(
+            to: url.appending(path: "\(name).tm_script_graph"),
+            atomically: true,
+            encoding: .utf8
+        )
+        return RCP3ScriptGraphAsset(id: asset.uuid ?? name, name: name)
+    }
+
+    /// The observed on-disk shape of an empty script-graph asset:
+    /// `re_scripting_source_graph { graph: tm_graph { nodes: [], interface },
+    /// validation_settings, __asset_uuid }`.
+    static func emptyScriptGraphAsset(makeUUID: () -> String) -> TMObject {
+        var interface = TMObject()
+        interface.set(.string(makeUUID()), forKey: "__uuid")
+
+        var graph = TMObject()
+        graph.set(.string(makeUUID()), forKey: "__uuid")
+        graph.set(.array([]), forKey: "nodes")
+        graph.set(.object(interface), forKey: "interface")
+
+        var validation = TMObject()
+        validation.set(.string(makeUUID()), forKey: "__uuid")
+        validation.set(.string(""), forKey: "path")
+
+        var asset = TMObject()
+        asset.set(.string("re_scripting_source_graph"), forKey: "__type")
+        asset.set(.string(makeUUID()), forKey: "__uuid")
+        asset.set(.object(graph), forKey: "graph")
+        asset.set(.object(validation), forKey: "validation_settings")
+        asset.set(.string(makeUUID()), forKey: "__asset_uuid")
+        return asset
+    }
+
     /// Loads and parses the `*.tm_script_graph` asset with this id. The asset id IS
     /// the graph's root `__uuid`, so this is the prototype-uuid path under another
     /// name.
