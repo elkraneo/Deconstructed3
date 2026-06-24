@@ -117,12 +117,14 @@ public struct EditableLiteral: Identifiable, Hashable, Sendable {
     public let id: String
     /// The bound pin (node + connector hash).
     public let key: LiteralKey
-    /// The Title Case pin name (e.g. `"X"`, `"A"`).
+    /// The Title Case pin name (e.g. `"X"`, `"A"`, `"Initial Value"`).
     public let displayName: String
-    /// The pin's current literal value: the authored value, else `0`.
-    public let value: Double
+    /// The pin's current value as the canonical ``TMGraphValue`` — the authored value,
+    /// else `.number(0)` for an empty numeric pin. The inspector renders the control by
+    /// its kind (number field / Toggle / text field).
+    public let value: TMGraphValue
 
-    public init(id: String, key: LiteralKey, displayName: String, value: Double) {
+    public init(id: String, key: LiteralKey, displayName: String, value: TMGraphValue) {
         self.id = id
         self.key = key
         self.displayName = displayName
@@ -355,24 +357,40 @@ public final class ScriptGraphEditorModel {
     /// Returns `[]` for an unknown node id or a node with no editable numeric pins.
     public func editableLiterals(forNode id: String) -> [EditableLiteral] {
         guard let box = node(id) else { return [] }
-        return box.payload.inputPins.compactMap { pin -> EditableLiteral? in
-            guard !pin.isExec else { return nil }
-            // Only pins whose connector name is a recognized scalar component (so we
-            // don't offer a numeric field for an Entity/Component/Vector input).
-            guard let hash = Self.connectorHash(forInputPinID: pin.id),
-                  Self.isScalarConnector(hash) else { return nil }
+        var rows: [EditableLiteral] = []
+        var seen = Set<LiteralKey>()
+
+        // 1. Numeric scalar pins the node declares — authorable from scratch (default 0).
+        for pin in box.payload.inputPins {
+            guard !pin.isExec,
+                  let hash = Self.connectorHash(forInputPinID: pin.id),
+                  Self.isScalarConnector(hash) else { continue }
             // An input already fed by a wire is not literal-editable (the wire wins).
             let ref = GraphPortRef(nodeID: id, pinID: pin.id)
-            guard connections(touching: ref).allSatisfy({ $0.to != ref }) else { return nil }
-
+            guard connections(touching: ref).allSatisfy({ $0.to != ref }) else { continue }
             let key = LiteralKey(nodeID: id, pinConnectorHash: hash)
-            return EditableLiteral(
+            seen.insert(key)
+            rows.append(EditableLiteral(
                 id: pin.id,
                 key: key,
                 displayName: pin.label,
-                value: literals[key]?.number ?? 0
-            )
+                value: literals[key] ?? .number(0)
+            ))
         }
+
+        // 2. Any other authored value already on this node (e.g. a bool/string
+        // *Initial Value* whose pin the library doesn't declare as a scalar). Surfaced
+        // so it's editable with the right control; named from its connector hash.
+        for (key, value) in literals where key.nodeID == id && !seen.contains(key) {
+            seen.insert(key)
+            rows.append(EditableLiteral(
+                id: "lit.\(TMHash.hex(key.pinConnectorHash))",
+                key: key,
+                displayName: RCP3ScriptGraph.label(forHash: key.pinConnectorHash),
+                value: value
+            ))
+        }
+        return rows
     }
 
     /// The authored value on a pin as the canonical ``TMGraphValue``, or `nil` when

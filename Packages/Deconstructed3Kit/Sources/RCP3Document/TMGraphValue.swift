@@ -14,7 +14,7 @@ import TMFormat
 /// remaining kinds (boolean, string, enum, vector, color, entity/asset reference) are
 /// deliberately absent until a capture pins their on-disk `data: { … }` shape — they
 /// must not be guessed. Each lands as a new `case` + parser branch when captured.
-public enum TMGraphValue: Equatable, Sendable {
+public enum TMGraphValue: Hashable, Sendable {
     /// A plain number — `data: { value: <number> }`. The kind an unwired numeric pin
     /// (a `make_vector*` component, a math operand) carries; the compiler reads it.
     case number(Double)

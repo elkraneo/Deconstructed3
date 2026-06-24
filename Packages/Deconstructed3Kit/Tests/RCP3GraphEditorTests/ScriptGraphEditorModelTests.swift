@@ -181,18 +181,18 @@ import RCP3Document
         // x/y/z are offered as editable numeric pins, all defaulting to 0.
         let editable = model.editableLiterals(forNode: "v")
         #expect(editable.map(\.displayName).sorted() == ["X", "Y", "Z"])
-        #expect(editable.allSatisfy { $0.value == 0 })
+        #expect(editable.allSatisfy { $0.value == .number(0) })
 
         // Author the x literal.
         let x = TMHash.murmur64a("x")
         model.setLiteral(nodeID: "v", pinConnectorHash: x, value: 2.5)
         #expect(model.literal(nodeID: "v", pinConnectorHash: x) == 2.5)
-        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == 2.5)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == .number(2.5))
 
         // Clearing it removes the authored value (pin reverts to default 0).
         model.setLiteral(nodeID: "v", pinConnectorHash: x, value: nil)
         #expect(model.literal(nodeID: "v", pinConnectorHash: x) == nil)
-        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == 0)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "X" }?.value == .number(0))
     }
 
     /// A wired input pin is NOT offered as a literal (the wire feeds it); only the
@@ -224,7 +224,7 @@ import RCP3Document
             graph: RCP3ScriptGraph(nodes: [vec], wires: [], data: [literal])
         )
         #expect(model.literal(nodeID: "v", pinConnectorHash: z) == -3)
-        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "Z" }?.value == -3)
+        #expect(model.editableLiterals(forNode: "v").first { $0.displayName == "Z" }?.value == .number(-3))
     }
 
     /// Deleting a node drops the scalar literals bound to it.

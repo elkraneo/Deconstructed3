@@ -1138,34 +1138,64 @@ private struct VariableRow: View {
     }
 }
 
-/// One editable scalar-literal row: a labelled numeric `TextField` plus a `Stepper`,
-/// both writing through `setLiteral`. The binding reads the pin's current value
-/// (authored, else `0`) and writes the edited number straight to the model.
+/// One editable pin-literal row, rendering the control that matches the value's kind:
+/// a numeric `TextField` + `Stepper` for a number, a `Toggle` for a bool, a text field
+/// for a string. Each writes the typed value straight to the model via `setValue`.
 private struct LiteralRow: View {
     @Bindable var model: ScriptGraphEditorModel
     let literal: EditableLiteral
 
-    private var value: Binding<Double> {
-        Binding(
-            get: { model.literal(nodeID: literal.key.nodeID, pinConnectorHash: literal.key.pinConnectorHash) ?? 0 },
-            set: { model.setLiteral(nodeID: literal.key.nodeID, pinConnectorHash: literal.key.pinConnectorHash, value: $0) }
-        )
-    }
-
     var body: some View {
         LabeledContent(literal.displayName) {
-            HStack(spacing: 8) {
-                TextField(literal.displayName, value: value, format: .number)
+            switch literal.value {
+            case .bool:
+                Toggle(literal.displayName, isOn: boolBinding)
+                    .labelsHidden()
+                    .accessibilityLabel(literal.displayName)
+            case .string:
+                TextField(literal.displayName, text: stringBinding)
                     .labelsHidden()
                     .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 120)
+                    .frame(maxWidth: 160)
                     .accessibilityLabel(literal.displayName)
-                Stepper(literal.displayName, value: value)
-                    .labelsHidden()
-                    .accessibilityLabel("\(literal.displayName) stepper")
+            case .number, .variableRef:
+                HStack(spacing: 8) {
+                    TextField(literal.displayName, value: numberBinding, format: .number)
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 120)
+                        .accessibilityLabel(literal.displayName)
+                    Stepper(literal.displayName, value: numberBinding)
+                        .labelsHidden()
+                        .accessibilityLabel("\(literal.displayName) stepper")
+                }
             }
         }
     }
+
+    private var numberBinding: Binding<Double> {
+        Binding(
+            get: { model.value(nodeID: nodeID, pinConnectorHash: pinHash)?.number ?? 0 },
+            set: { model.setValue(nodeID: nodeID, pinConnectorHash: pinHash, value: .number($0)) }
+        )
+    }
+
+    private var boolBinding: Binding<Bool> {
+        Binding(
+            get: { model.value(nodeID: nodeID, pinConnectorHash: pinHash)?.bool ?? false },
+            set: { model.setValue(nodeID: nodeID, pinConnectorHash: pinHash, value: .bool($0)) }
+        )
+    }
+
+    private var stringBinding: Binding<String> {
+        Binding(
+            get: { model.value(nodeID: nodeID, pinConnectorHash: pinHash)?.string ?? "" },
+            set: { model.setValue(nodeID: nodeID, pinConnectorHash: pinHash, value: .string($0)) }
+        )
+    }
+
+    private var nodeID: String { literal.key.nodeID }
+    private var pinHash: UInt64 { literal.key.pinConnectorHash }
 }
 
 // MARK: - Script-graph section
