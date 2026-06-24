@@ -298,7 +298,7 @@ public enum ScriptGraphWriteBack {
         model: ScriptGraphEditorModel,
         liveIDs: Set<String>
     ) -> [TMValue] {
-        var remaining = model.scalarLiterals // authored pins not yet matched to an existing literal
+        var remaining = model.literals // authored pins not yet matched to an existing literal
         // Variable references the model still wants, keyed by node — consumed as we
         // rewrite existing `tm_graph_variable_ref` entries; the rest are appended fresh.
         var remainingVariableNodes = Set(model.variableNames.keys)
@@ -328,30 +328,28 @@ public enum ScriptGraphWriteBack {
                 continue
             }
 
-            // A scalar literal: its value object carries a `value` number (and no
-            // named `type` hash — that marks a component-type literal). Reconcile it
-            // with the model's authored value for this pin.
-            let isScalarLiteral = valueObject?["value"]?.doubleValue != nil
-                && valueObject?["type"] == nil
-            if isScalarLiteral,
+            // A MODELED value literal (number / bool / string — anything TMGraphValue
+            // classifies). Reconcile it with the model's authored value for this pin.
+            // A `component_type` literal classifies as nil → falls through and is preserved.
+            if let vo = valueObject, TMGraphValue(valueObject: vo) != nil,
                let pinHex = object["to_connector_hash"]?.stringValue,
                let pinHash = UInt64(pinHex, radix: 16) {
                 let key = LiteralKey(nodeID: toNode, pinConnectorHash: pinHash)
                 if let authored = remaining.removeValue(forKey: key) {
                     // Rewrite the value in place, preserving identity + other members.
-                    kept.append(.object(updatedScalarLiteral(object, value: authored)))
+                    kept.append(.object(updatedValueLiteral(object, value: authored)))
                 }
                 // else: no authored value for this pin → the literal was cleared; drop it.
                 continue
             }
 
-            // Non-scalar literal (e.g. component_type) — preserved untouched.
+            // Unmodeled literal (e.g. component_type) — preserved untouched.
             kept.append(value)
         }
 
         // Append a fresh literal for each newly-authored pin (bound to a live node).
-        for (key, scalar) in remaining where liveIDs.contains(key.nodeID) {
-            kept.append(.object(newScalarLiteral(key: key, value: scalar)))
+        for (key, value) in remaining where liveIDs.contains(key.nodeID) {
+            kept.append(.object(newValueLiteral(key: key, value: value)))
         }
 
         // Append a fresh `tm_graph_variable_ref` for each newly-named variable node.
@@ -410,26 +408,54 @@ public enum ScriptGraphWriteBack {
         return object
     }
 
-    /// `object` with its value object's `value` member rewritten to `value`,
-    /// preserving the literal's `__uuid` and the value object's `__type`/`__uuid`.
-    private static func updatedScalarLiteral(_ object: TMObject, value: Double) -> TMObject {
+    /// `object` with its inner value object rewritten to `value`, preserving the
+    /// literal entry's `__uuid` and (when present) the value object's `__uuid`.
+    private static func updatedValueLiteral(_ object: TMObject, value: TMGraphValue) -> TMObject {
         var object = object
-        var valueObject = object["data"]?.objectValue ?? TMObject()
-        valueObject.set(.number(numberLexeme(value)), forKey: "value")
-        object.set(.object(valueObject), forKey: "data")
+        let existing = object["data"]?.objectValue
+        object.set(.object(valueObject(for: value, reusing: existing)), forKey: "data")
         return object
     }
 
-    /// A fresh scalar data literal `{ __uuid, to_node, to_connector_hash, data: { value } }`
+    /// A fresh data literal `{ __uuid, to_node, to_connector_hash, data: <value object> }`
     /// for a newly-authored pin.
-    private static func newScalarLiteral(key: LiteralKey, value: Double) -> TMObject {
+    private static func newValueLiteral(key: LiteralKey, value: TMGraphValue) -> TMObject {
         var object = TMObject()
         object.set(.string(UUID().uuidString), forKey: "__uuid")
         object.set(.string(key.nodeID), forKey: "to_node")
         object.set(.string(TMHash.hex(key.pinConnectorHash)), forKey: "to_connector_hash")
-        var valueObject = TMObject()
-        valueObject.set(.number(numberLexeme(value)), forKey: "value")
-        object.set(.object(valueObject), forKey: "data")
+        object.set(.object(valueObject(for: value, reusing: nil)), forKey: "data")
+        return object
+    }
+
+    /// Builds the inner `data: { … }` value object for a ``TMGraphValue``, per the
+    /// observed encodings (see `Docs/CleanRoom-Spec.md`): a number is the bare
+    /// `{ value: <number> }` scalar form; a bool is `{ __type: "tm_bool", bool }`; a
+    /// string is `{ __type: "tm_string", string }`. Reuses `existing`'s `__uuid` when
+    /// rewriting in place. (Variable refs are written by their own path.)
+    private static func valueObject(for value: TMGraphValue, reusing existing: TMObject?) -> TMObject {
+        var object = existing ?? TMObject()
+        switch value {
+        case let .number(number):
+            object.remove(key: "__type")
+            object.remove(key: "bool")
+            object.remove(key: "string")
+            object.set(.number(numberLexeme(number)), forKey: "value")
+        case let .bool(flag):
+            object.set(.string("tm_bool"), forKey: "__type")
+            if object.uuid == nil { object.set(.string(UUID().uuidString), forKey: "__uuid") }
+            object.remove(key: "value")
+            object.remove(key: "string")
+            object.set(.bool(flag), forKey: "bool")
+        case let .string(text):
+            object.set(.string("tm_string"), forKey: "__type")
+            if object.uuid == nil { object.set(.string(UUID().uuidString), forKey: "__uuid") }
+            object.remove(key: "value")
+            object.remove(key: "bool")
+            object.set(.string(text), forKey: "string")
+        case .variableRef:
+            break
+        }
         return object
     }
 

@@ -316,6 +316,34 @@ import RCP3Document
         #expect(reloaded.literal(nodeID: "v1", pinConnectorHash: z) == -4)
     }
 
+    /// Authoring a boolean and a string literal survives write → parse: each lands in
+    /// `data[]` with its observed value object (`tm_bool { bool }` / `tm_string
+    /// { string }`) and re-seeds a fresh model as the same `TMGraphValue`.
+    @Test func authoredBoolAndStringLiteralsRoundTrip() throws {
+        let asset = try Self.vectorAsset()
+        let model = try Self.model(for: asset)
+
+        let flag = TMHash.murmur64a("flag")
+        let label = TMHash.murmur64a("label")
+        model.setValue(nodeID: "v1", pinConnectorHash: flag, value: .bool(true))
+        model.setValue(nodeID: "v1", pinConnectorHash: label, value: .string("hi"))
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(reparsed["graph"]?.objectValue)
+
+        // The written value objects carry the observed encodings.
+        let data = try #require(tmGraph["data"]?.arrayValue)
+        let valueObjects = data.compactMap { $0.objectValue?["data"]?.objectValue }
+        #expect(valueObjects.contains { $0.type == "tm_bool" && $0["bool"]?.boolValue == true })
+        #expect(valueObjects.contains { $0.type == "tm_string" && $0["string"]?.stringValue == "hi" })
+
+        // A fresh model re-seeds them as the canonical values.
+        let reloaded = ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
+        #expect(reloaded.value(nodeID: "v1", pinConnectorHash: flag) == .bool(true))
+        #expect(reloaded.value(nodeID: "v1", pinConnectorHash: label) == .string("hi"))
+    }
+
     /// Editing an existing scalar literal rewrites its value in place (preserving the
     /// literal's identity); clearing it drops the literal from data[].
     @Test func editingAndClearingScalarLiteral() throws {
