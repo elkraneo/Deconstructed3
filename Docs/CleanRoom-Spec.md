@@ -223,7 +223,7 @@ be guessed** (clean-room).
 | Number (int/double) | `{ value: <number> }` | ✅ observed |
 | Variable reference | `{ __type: "tm_graph_variable_ref", name: "<var>", ref: "<uuid>" }` | ✅ observed |
 | Component type | `{ type: "<murmur64a hex>" }` (named-value hash, no `value`) | ✅ observed (read-only) |
-| Boolean | `{ … }` | ⬜ pending capture |
+| Boolean | `{ __type: "tm_bool", bool: <true\|false> }` | ✅ observed (`bool.realitycomposerpro`) |
 | String | `{ … }` | ⬜ pending capture |
 | Enum (switch case / gesture phase) | `script_graph_enum` / `script_graph_enum_associated_value` — members? | ⬜ pending capture |
 | Vector2/3/4 | `{ … }` | ⬜ pending capture |

@@ -17,6 +17,23 @@ import RCP3Document
         #expect(value?.number == 2.5)
     }
 
+    @Test func parsesBoolean() {
+        // Observed shape (bool.realitycomposerpro): { __type: "tm_bool", bool: true }.
+        let value = TMGraphValue(valueObject: object([
+            ("__type", .string("tm_bool")),
+            ("bool", .bool(true)),
+        ]))
+        #expect(value == .bool(true))
+        #expect(value?.bool == true)
+        #expect(value?.number == nil)
+
+        let falseValue = TMGraphValue(valueObject: object([
+            ("__type", .string("tm_bool")),
+            ("bool", .bool(false)),
+        ]))
+        #expect(falseValue == .bool(false))
+    }
+
     @Test func parsesVariableReference() {
         let value = TMGraphValue(valueObject: object([
             ("__type", .string("tm_graph_variable_ref")),
