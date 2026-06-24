@@ -34,6 +34,17 @@ import RCP3Document
         #expect(falseValue == .bool(false))
     }
 
+    @Test func parsesString() {
+        // Observed shape (string.realitycomposerpro): { __type: "tm_string", string: "…" }.
+        let value = TMGraphValue(valueObject: object([
+            ("__type", .string("tm_string")),
+            ("string", .string("hello")),
+        ]))
+        #expect(value == .string("hello"))
+        #expect(value?.string == "hello")
+        #expect(value?.number == nil)
+    }
+
     @Test func parsesVariableReference() {
         let value = TMGraphValue(valueObject: object([
             ("__type", .string("tm_graph_variable_ref")),

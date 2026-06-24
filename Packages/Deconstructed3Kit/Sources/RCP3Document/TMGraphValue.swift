@@ -23,6 +23,10 @@ public enum TMGraphValue: Equatable, Sendable {
     /// `bool.realitycomposerpro` (a `tm_make_bool` node's *Initial Value*).
     case bool(Bool)
 
+    /// A string — `data: { __type: "tm_string", string: "<text>" }`. Observed from
+    /// `string.realitycomposerpro` (a `tm_make_string` node's *Initial Value*).
+    case string(String)
+
     /// A reference to a graph variable — `data: { __type: "tm_graph_variable_ref",
     /// name: "<var>", ref: "<uuid>" }` — bound to a Get/Set/Clear variable node's
     /// `name` connector. `ref` is the variable table entry's uuid, when present.
@@ -30,7 +34,6 @@ public enum TMGraphValue: Equatable, Sendable {
 
     // PENDING observed captures — see the "Pin literal value encodings" table in
     // Docs/CleanRoom-Spec.md. Do NOT add these until the capture pins the shape:
-    //   case string(String)
     //   case enumCase(type: String, caseName: String)   // script_graph_enum
     //   case vector([Double])                            // make_vector* literals
     //   case color(...)                                  // re_* color literal
@@ -50,6 +53,10 @@ public enum TMGraphValue: Equatable, Sendable {
             self = .bool(valueObject["bool"]?.boolValue ?? false)
             return
         }
+        if valueObject.type == "tm_string" {
+            self = .string(valueObject["string"]?.stringValue ?? "")
+            return
+        }
         if let number = valueObject["value"]?.doubleValue {
             self = .number(number)
             return
@@ -67,6 +74,12 @@ public enum TMGraphValue: Equatable, Sendable {
     /// The boolean value, when this is a `.bool` (else `nil`).
     public var bool: Bool? {
         if case let .bool(value) = self { return value }
+        return nil
+    }
+
+    /// The string value, when this is a `.string` (else `nil`).
+    public var string: String? {
+        if case let .string(value) = self { return value }
         return nil
     }
 }
