@@ -1046,10 +1046,29 @@ struct NodeInspectorView: View {
     @Bindable var model: ScriptGraphEditorModel
     let nodeID: String
 
+    /// The node's editable name, bound through the model. Blank clears the label, so
+    /// the canvas falls back to the humanized type.
+    private var name: Binding<String> {
+        Binding(
+            get: { model.nodeLabel(nodeID: nodeID) },
+            set: { model.setNodeLabel(nodeID: nodeID, label: $0) }
+        )
+    }
+
     var body: some View {
         Form {
-            if let title = model.node(nodeID)?.payload.title {
-                LabeledContent("Node", value: title)
+            Section {
+                LabeledContent("Name") {
+                    TextField("Name", text: name, prompt: Text(model.node(nodeID)?.payload.title ?? "Node"))
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 180)
+                        .accessibilityLabel("Node name")
+                }
+                if let type = model.node(nodeID)?.payload.type {
+                    LabeledContent("Type", value: type)
+                        .font(.callout)
+                }
             }
 
             if model.isVariableNode(nodeID) {

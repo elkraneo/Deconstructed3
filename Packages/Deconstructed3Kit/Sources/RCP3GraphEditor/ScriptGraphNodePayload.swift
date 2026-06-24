@@ -17,8 +17,9 @@ public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
     public let id: String
     /// The node `type` (e.g. `tm_gesture_event_drag`, `tm_set_component`).
     public let type: String
-    /// The author-given label, when present (e.g. `"Set Transform"`).
-    public let label: String?
+    /// The author-given label, when present (e.g. `"Set Transform"`). Mutable so the
+    /// editor can rename a node in place; write-back mirrors it to the on-disk `label`.
+    public var label: String?
     /// The node's clean-room role, used for tint/icon and grouping.
     public let role: ScriptGraphNodeRole
     /// The node's pins (exec + data, input + output), in display order. Each pin's

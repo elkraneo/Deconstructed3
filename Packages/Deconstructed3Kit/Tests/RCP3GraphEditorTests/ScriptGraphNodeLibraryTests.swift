@@ -18,6 +18,46 @@ struct ScriptGraphNodeLibraryTests {
         )
     }
 
+    // MARK: - Palette search
+
+    @Test("Blank query returns the full palette")
+    func paletteSearchBlankReturnsAll() {
+        func types(_ sections: [ScriptGraphNodeLibrary.PaletteSection]) -> [String] {
+            sections.flatMap(\.items).map(\.type)
+        }
+        let all = types(ScriptGraphNodeLibrary.paletteSections)
+        #expect(types(ScriptGraphNodeLibrary.paletteSections(matching: "")) == all)
+        #expect(types(ScriptGraphNodeLibrary.paletteSections(matching: "   ")) == all)
+    }
+
+    @Test("Query matches on display name and on raw type")
+    func paletteSearchMatchesNameAndType() {
+        func types(_ q: String) -> Set<String> {
+            Set(ScriptGraphNodeLibrary.paletteSections(matching: q).flatMap(\.items).map(\.type))
+        }
+        // The drag event is found by readable name, by raw type, and by a fragment.
+        #expect(types("drag").contains("tm_gesture_event_drag"))
+        #expect(types("tm_gesture_event_drag").contains("tm_gesture_event_drag"))
+        #expect(types("gesture").contains("tm_gesture_event_drag"))
+        // Case-insensitive.
+        #expect(types("DRAG").contains("tm_gesture_event_drag"))
+    }
+
+    @Test("A query that matches nothing yields no sections")
+    func paletteSearchNoMatchIsEmpty() {
+        #expect(ScriptGraphNodeLibrary.paletteSections(matching: "zzzznotanode").isEmpty)
+    }
+
+    @Test("Filtered results are a subset of the full palette")
+    func paletteSearchIsSubset() {
+        let allTypes = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
+        let filtered = Set(
+            ScriptGraphNodeLibrary.paletteSections(matching: "set").flatMap(\.items).map(\.type)
+        )
+        #expect(!filtered.isEmpty)
+        #expect(filtered.isSubset(of: allTypes))
+    }
+
     // MARK: - Library
 
     @Test("Drag spec declares the full named output set")

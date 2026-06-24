@@ -324,4 +324,32 @@ import RCP3Document
         // The nearest port to its own connection point is itself.
         if let point { #expect(model.canvasPort(near: point) == setTranslation) }
     }
+
+    // MARK: Node rename
+
+    @Test func setNodeLabelRenamesAndDirties() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        #expect(model.nodeLabel(nodeID: "n2") == "Set Transform")
+        #expect(!model.isDirty)
+
+        model.setNodeLabel(nodeID: "n2", label: "Move Box")
+        #expect(model.nodeLabel(nodeID: "n2") == "Move Box")
+        #expect(model.node("n2")?.payload.title == "Move Box")
+        #expect(model.isDirty)
+    }
+
+    @Test func blankNameClearsLabelToHumanizedType() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        model.setNodeLabel(nodeID: "n2", label: "   ")
+        // Cleared: no label, so the title falls back to the humanized type.
+        #expect(model.nodeLabel(nodeID: "n2") == "")
+        #expect(model.node("n2")?.payload.label == nil)
+        #expect(model.node("n2")?.payload.title == "Set Component")
+    }
+
+    @Test func renameToSameLabelIsNoOp() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        model.setNodeLabel(nodeID: "n2", label: "Set Transform")
+        #expect(!model.isDirty)
+    }
 }

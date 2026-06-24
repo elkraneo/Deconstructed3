@@ -174,7 +174,27 @@ public enum ScriptGraphNodeLibrary {
     /// ordered by `Category.order`. Items within a section are sorted by display name.
     /// Empty sections are omitted. Data-driven: sections grow as specs are added.
     public static var paletteSections: [PaletteSection] {
-        let grouped = Dictionary(grouping: paletteItems, by: \.category)
+        sections(of: paletteItems)
+    }
+
+    /// Palette sections filtered by a free-text `query`, matched case-insensitively
+    /// against each item's display name AND its raw `type` (so "drag", "gesture", or
+    /// "tm_gesture_event_drag" all find the drag event). A blank query returns the
+    /// full palette. Pure + data-driven — unit-tested — so the canvas search field is a
+    /// thin wrapper. With 250+ node types, search is how the palette stays usable.
+    public static func paletteSections(matching query: String) -> [PaletteSection] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return paletteSections }
+        let matches = paletteItems.filter {
+            $0.displayName.lowercased().contains(q) || $0.type.lowercased().contains(q)
+        }
+        return sections(of: matches)
+    }
+
+    /// Groups palette items into category sections, ordered by `Category.order`,
+    /// dropping empty categories.
+    private static func sections(of items: [PaletteItem]) -> [PaletteSection] {
+        let grouped = Dictionary(grouping: items, by: \.category)
         return Category.allCases
             .sorted { $0.order < $1.order }
             .compactMap { category in

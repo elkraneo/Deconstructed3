@@ -317,6 +317,26 @@ public final class ScriptGraphEditorModel {
         return newID
     }
 
+    // MARK: Node label (rename)
+
+    /// The node's current author label, or `""` when it has none (the canvas then
+    /// shows a humanized type). The read side of the inspector's Name field.
+    public func nodeLabel(nodeID: String) -> String {
+        node(nodeID)?.payload.label ?? ""
+    }
+
+    /// Renames node `nodeID`. A blank name clears the label (the node falls back to its
+    /// humanized type). Mirrors to `payload.label`, which the canvas title reads and
+    /// write-back persists to the on-disk `label`. No-op (no dirtying) when unchanged.
+    public func setNodeLabel(nodeID: String, label: String) {
+        guard let index = nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newLabel = trimmed.isEmpty ? nil : trimmed
+        guard nodes[index].payload.label != newLabel else { return }
+        nodes[index].payload.label = newLabel
+        markDirty()
+    }
+
     // MARK: Scalar pin literals (author an unwired numeric input)
 
     /// The editable, unwired numeric INPUT pins of node `id`, in declared order — the

@@ -65,6 +65,8 @@ public struct ScriptGraphCanvasView: View {
 
     // Whether the node-insert palette popover is open.
     @State private var showingPalette = false
+    // Free-text filter for the node palette (250+ types). Reset when the palette opens.
+    @State private var paletteQuery = ""
 
     // Keyboard focus — required for `.onKeyPress` delete to fire.
     @FocusState private var focused: Bool
@@ -505,6 +507,9 @@ public struct ScriptGraphCanvasView: View {
         .popover(isPresented: $showingPalette, arrowEdge: .leading) {
             palettePopover
         }
+        .onChange(of: showingPalette) { _, isOpen in
+            if isOpen { paletteQuery = "" }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -514,7 +519,8 @@ public struct ScriptGraphCanvasView: View {
     /// node at the viewport center. A flat list doesn't scale once the library grows,
     /// so the popover scrolls and groups by `ScriptGraphNodeLibrary.paletteSections`.
     private var palettePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let sections = ScriptGraphNodeLibrary.paletteSections(matching: paletteQuery)
+        return VStack(alignment: .leading, spacing: 0) {
             Text("Add Node")
                 .font(.headline)
                 .padding(.horizontal, 12)
@@ -522,33 +528,52 @@ public struct ScriptGraphCanvasView: View {
                 .padding(.bottom, 6)
                 .accessibilityAddTraits(.isHeader)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(ScriptGraphNodeLibrary.paletteSections) { section in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(section.category.displayName)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.top, 4)
-                                .accessibilityAddTraits(.isHeader)
-                            ForEach(section.items) { item in
-                                Button {
-                                    insertNode(type: item.type)
-                                } label: {
-                                    Text(item.displayName)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search nodes", text: $paletteQuery)
+                    .textFieldStyle(.plain)
+                    .accessibilityLabel("Search nodes")
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+
+            Divider()
+
+            if sections.isEmpty {
+                Text("No nodes match \u{201C}\(paletteQuery)\u{201D}")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(sections) { section in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(section.category.displayName)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, 4)
+                                    .accessibilityAddTraits(.isHeader)
+                                ForEach(section.items) { item in
+                                    Button {
+                                        insertNode(type: item.type)
+                                    } label: {
+                                        Text(item.displayName)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel(item.displayName)
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(item.displayName)
                             }
                         }
                     }
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 8)
             }
         }
         .frame(minWidth: 220, alignment: .leading)
