@@ -222,9 +222,10 @@ public struct RCP3ViewportView: View {
         config.appearance = .dark
         config.interactionMode = playMode ? .entityDrag : .camera
         // Selection outline: StageView defaults to a bounding-box cage; opt into the
-        // mesh outline and color it RCP orange so a picked entity reads clearly.
+        // mesh outline, color it RCP orange, and keep it thin (default width 0.1 reads
+        // as a thick halo on unit-sized primitives).
         config.selectionHighlightStyle = .outline
-        config.outlineConfiguration = OutlineConfiguration(color: .orange)
+        config.outlineConfiguration = OutlineConfiguration(color: .orange, width: 0.03)
         return config
     }
 
@@ -256,10 +257,19 @@ public struct RCP3ViewportView: View {
 
     // MARK: - Selection bridge
 
-    /// Host → viewport: push the prim path for `nodeID` into the provider.
+    /// Host → viewport: push the prim path for `nodeID` into the provider — but only
+    /// for an entity that actually has geometry. StageView's outline recurses into the
+    /// selected entity's whole subtree, so selecting a STRUCTURAL node (the `world`
+    /// root or a group, which carry no `ModelComponent`) would outline every descendant
+    /// — making the entire scene look selected (notably the root auto-selected at open).
+    /// A model-less selection therefore clears the viewport outline instead.
     @MainActor
     private func pushSelection(_ nodeID: String?) {
-        let path = nodeID.flatMap { primPathByNodeID[$0] }
+        let path = nodeID.flatMap { id -> String? in
+            guard let entity = entity(forNodeID: id),
+                  entity.components.has(ModelComponent.self) else { return nil }
+            return primPathByNodeID[id]
+        }
         guard provider.selectedPrimPath != path else { return }
         provider.setSelection(path)
     }
