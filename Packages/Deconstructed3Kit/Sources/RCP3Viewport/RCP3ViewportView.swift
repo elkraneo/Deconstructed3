@@ -227,7 +227,7 @@ public struct RCP3ViewportView: View {
         // `outlineConfiguration.color` drives the stroke color; its `width` is unused
         // by the post-process path (the effect uses a fixed screen-space radius).
         config.selectionHighlightStyle = .postProcessOutline
-        config.outlineConfiguration = OutlineConfiguration(color: .purple, width: 0.02)
+        config.outlineConfiguration = OutlineConfiguration(color: .purple, width: 0.1)
         return config
     }
 
