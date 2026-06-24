@@ -141,14 +141,20 @@ public final class ScriptGraphEditorModel {
     public private(set) var nodes: [GraphNodeBox]
     public private(set) var connections: [GraphConnection]
 
-    /// Authored scalar (`Double`) pin literals, keyed by the bound pin. Each is a
-    /// constant value fed into a node's INPUT data pin when no wire feeds it — the
-    /// editor's writable mirror of the graph's `data[]` scalar literals. Seeded from
-    /// the source graph at `init` (any `data` literal carrying a scalar), updated by
-    /// ``setLiteral(nodeID:pinConnectorHash:value:)``, and folded back into `data[]`
+    /// Authored pin literals, keyed by the bound pin — the ONE store for every value
+    /// kind (number / bool / string / …), the editor's writable mirror of the graph's
+    /// `data[]` constants. Seeded from the source graph at `init`, updated by
+    /// ``setLiteral(nodeID:pinConnectorHash:value:)`` (number) and
+    /// ``setValue(nodeID:pinConnectorHash:value:)`` (any), and folded back into `data[]`
     /// by ``ScriptGraphWriteBack``. The canonical compiler reads these so an edited
     /// value is reflected in Play.
-    public private(set) var scalarLiterals: [LiteralKey: Double]
+    public private(set) var literals: [LiteralKey: TMGraphValue]
+
+    /// The numeric subset of `literals`, for the scalar write-back/compiler paths still
+    /// keyed on `Double`. A read-only bridge over the unified store.
+    public var scalarLiterals: [LiteralKey: Double] {
+        literals.compactMapValues(\.number)
+    }
 
     /// The graph-level variable table (`variables:`), keyed for round-trip by `uuid`.
     /// Seeded from the source graph; grown by ``setVariableName(nodeID:name:)`` when a
@@ -250,16 +256,16 @@ public final class ScriptGraphEditorModel {
         }
         connections = conns
 
-        // Seed the writable scalar literals from the source graph's `data[]`: any
-        // literal carrying a scalar (a numeric constant on an unwired pin) becomes an
-        // authored value the inspector can edit and write-back can persist.
-        var seeded: [LiteralKey: Double] = [:]
+        // Seed the writable literals from the source graph's `data[]`: any modeled
+        // value (number / bool / string) on a pin becomes an authored value the
+        // inspector can edit and write-back can persist.
+        var seeded: [LiteralKey: TMGraphValue] = [:]
         for literal in graph.data {
-            if let scalar = literal.scalarValue {
-                seeded[LiteralKey(nodeID: literal.toNode, pinConnectorHash: literal.toPin)] = scalar
+            if let value = literal.value {
+                seeded[LiteralKey(nodeID: literal.toNode, pinConnectorHash: literal.toPin)] = value
             }
         }
-        scalarLiterals = seeded
+        literals = seeded
 
         // Seed the variable table and the per-node variable references from the graph.
         variables = graph.variables
@@ -364,29 +370,38 @@ public final class ScriptGraphEditorModel {
                 id: pin.id,
                 key: key,
                 displayName: pin.label,
-                value: scalarLiterals[key] ?? 0
+                value: literals[key]?.number ?? 0
             )
         }
     }
 
-    /// The authored scalar literal on a pin, or `nil` when none is set.
-    public func literal(nodeID: String, pinConnectorHash: UInt64) -> Double? {
-        scalarLiterals[LiteralKey(nodeID: nodeID, pinConnectorHash: pinConnectorHash)]
+    /// The authored value on a pin as the canonical ``TMGraphValue``, or `nil` when
+    /// none is set.
+    public func value(nodeID: String, pinConnectorHash: UInt64) -> TMGraphValue? {
+        literals[LiteralKey(nodeID: nodeID, pinConnectorHash: pinConnectorHash)]
     }
 
-    /// Sets (or clears) the scalar literal bound to a node's input data pin. The pin
-    /// is addressed by its `connector_hash` (`murmur64a(connectorName)`). Passing
-    /// `nil` removes the authored literal (the pin reverts to the compiler's default).
-    /// Mutating `scalarLiterals` marks the model changed; write-back then folds the
-    /// value into the asset's `data[]`.
-    public func setLiteral(nodeID: String, pinConnectorHash: UInt64, value: Double?) {
+    /// Sets (or clears) the value bound to a node's input data pin — any kind. The pin
+    /// is addressed by its `connector_hash` (`murmur64a(connectorName)`). `nil` removes
+    /// the authored value. Marks the model changed; write-back folds it into `data[]`.
+    public func setValue(nodeID: String, pinConnectorHash: UInt64, value: TMGraphValue?) {
         let key = LiteralKey(nodeID: nodeID, pinConnectorHash: pinConnectorHash)
         if let value {
-            scalarLiterals[key] = value
+            literals[key] = value
         } else {
-            scalarLiterals.removeValue(forKey: key)
+            literals.removeValue(forKey: key)
         }
         markDirty()
+    }
+
+    /// The authored scalar literal on a pin, or `nil` when none is set (numeric bridge).
+    public func literal(nodeID: String, pinConnectorHash: UInt64) -> Double? {
+        value(nodeID: nodeID, pinConnectorHash: pinConnectorHash)?.number
+    }
+
+    /// Sets (or clears) a NUMERIC literal on a pin — the scalar bridge over `setValue`.
+    public func setLiteral(nodeID: String, pinConnectorHash: UInt64, value: Double?) {
+        setValue(nodeID: nodeID, pinConnectorHash: pinConnectorHash, value: value.map(TMGraphValue.number))
     }
 
     /// The `connector_hash` carried by a data INPUT pin id (`in.<hex>`), or `nil` for
@@ -564,7 +579,7 @@ public final class ScriptGraphEditorModel {
             nodes.removeAll { $0.id == id }
             // Drop any authored literals bound to the deleted node (they can no longer
             // apply, mirroring write-back's pruning of `data[]` for deleted nodes).
-            scalarLiterals = scalarLiterals.filter { $0.key.nodeID != id }
+            literals = literals.filter { $0.key.nodeID != id }
             // Drop the deleted node's variable reference too (the table entry stays —
             // a declared variable can outlive its nodes).
             variableNames.removeValue(forKey: id)

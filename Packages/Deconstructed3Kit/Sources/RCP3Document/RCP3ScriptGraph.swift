@@ -126,31 +126,33 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// 16-digit hex string). Lets a consumer resolve *which* value the literal
         /// names (the component type, the enum case, …), not just its container type.
         public let valueHash: UInt64?
-        /// A scalar (numeric) constant bound to the pin, when the literal is a plain
-        /// number — e.g. an unwired `make_vector3` component or a math operand. Read by
-        /// the canonical compiler (an unwired numeric pin compiles to this value), and
-        /// round-tripped through the on-disk `data[]` by the editor's scalar-literal
-        /// authoring: the value object carries a `value` number member
-        /// (`data: { value: <number> }`) which the parser reads back into `scalarValue`.
-        public let scalarValue: Double?
+        /// The literal's value as the canonical ``TMGraphValue`` — the modeled kinds
+        /// (number / bool / string), or `nil` for an as-yet-unmodeled typed value (e.g.
+        /// `component_type`, whose identity is in `valueType`/`valueHash`). Variable
+        /// references are folded onto their node during parse and never become a literal.
+        public let value: TMGraphValue?
 
-        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil, scalarValue: Double? = nil) {
+        /// The canonical initializer.
+        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil, value: TMGraphValue? = nil) {
             self.id = id
             self.toNode = toNode
             self.toPin = toPin
             self.valueType = valueType
             self.valueHash = valueHash
-            self.scalarValue = scalarValue
+            self.value = value
         }
 
-        /// The literal as the canonical ``TMGraphValue``. A bridge while the pipeline
-        /// migrates off the scalar-only `Double?`: today a `DataLiteral` is either a
-        /// number or an as-yet-unmodeled typed value (e.g. `component_type`), so this is
-        /// `.number` when a scalar is present, else `nil`. (Variable references are
-        /// folded onto their node during parse and never become a `DataLiteral`.)
-        public var value: TMGraphValue? {
-            scalarValue.map(TMGraphValue.number)
+        /// Convenience for callers/tests that author a plain numeric literal.
+        public init(id: String, toNode: String, toPin: UInt64, valueType: String? = nil, valueHash: UInt64? = nil, scalarValue: Double?) {
+            self.init(
+                id: id, toNode: toNode, toPin: toPin,
+                valueType: valueType, valueHash: valueHash,
+                value: scalarValue.map(TMGraphValue.number)
+            )
         }
+
+        /// The numeric value, when this literal is a number — the scalar pin path.
+        public var scalarValue: Double? { value?.number }
     }
 
     /// The graph's own STABLE identity — the `tm_graph`'s root `__uuid` (the `graph`
@@ -305,10 +307,8 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 // The value object's plain `type` member (not the reserved `__type`)
                 // carries the named value's hash as a 16-digit hex string.
                 valueHash: valueObject?["type"]?.stringValue.flatMap { UInt64($0, radix: 16) },
-                // A scalar literal stores its number as the value object's `value`
-                // member (`data: { value: <number> }`) — what the editor authors and
-                // the compiler reads back for an unwired numeric pin.
-                scalarValue: parsedValue?.number
+                // The modeled value (number / bool / string), classified by TMGraphValue.
+                value: parsedValue
             ))
         }
         data = parsedData
