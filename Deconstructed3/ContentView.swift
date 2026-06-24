@@ -12,8 +12,8 @@ import SwiftUI
 /// runtime.
 struct ContentView: View {
     var body: some View {
-        AppRootView { graph in
-            CanonicalPlayView(graph: graph)
+        AppRootView { graph, scene, selectedID in
+            CanonicalPlayView(graph: graph, scene: scene, selectedID: selectedID)
         }
     }
 }

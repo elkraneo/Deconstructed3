@@ -3,27 +3,37 @@ import RealityKit
 import RealityKitScripting
 import RCP3Document
 import RCP3Runtime
+import simd
 
 /// The canonical **Play** view: it runs an RCP 3 script graph on Apple's *real*
 /// `RealityKitScripting` runtime, in a `RealityView` we own, with Apple's own
 /// debugging surfaced — a live **console** (the structured runtime log) and the
 /// **JS debugger** (Safari Web Inspector).
 ///
-/// The graph is compiled to the public-runtime JavaScript by
-/// ``RCP3Runtime/CanonicalScriptGraphCompiler``, attached to the box via
-/// `ScriptingComponent(source:)`, and executed once `.realityScripting()` is active.
-/// The script installs the input-target + collision and registers the drag handler,
-/// so a plain `ModelEntity` is enough — drag it and Apple's runtime moves it.
+/// Mirrors RCP 3's model: the **whole captured scene** is reconstructed into
+/// RealityKit entities, and the graph (compiled to public-runtime JavaScript by
+/// ``RCP3Runtime/CanonicalScriptGraphCompiler``) is attached — via
+/// `ScriptingComponent(source:)` — to the **selected entity**, exactly where RCP
+/// authors a scripting component. So pressing ▶ Play runs the graph against
+/// whatever entity is selected, in the context of its siblings (entity-lookup nodes
+/// resolve against the real scene). When no scene is captured (e.g. an example graph
+/// with no project open) a neutral box stands in so the graph still runs.
 ///
 /// Self-contained (its own `RealityView` + orbit camera, not StageView's) so the
 /// canonical runtime can be exercised without entangling StageView with a macOS-27
-/// binary dependency. Designed to fill a view region INLINE (the document's center
-/// column), so its console is a small collapsible OVERLAY rather than a fixed panel
-/// that would dominate the viewport.
+/// binary dependency — the scene reconstruction here is RealityKit-only. Designed to
+/// fill a view region INLINE (the document's center column), so its console is a
+/// small collapsible OVERLAY rather than a fixed panel that would dominate the view.
 @MainActor
 public struct CanonicalPlayView: View {
     /// The compiled JavaScript (computed once from the graph).
     private let source: String
+    /// The captured scene root to reconstruct, or `nil` when no project is open (a
+    /// neutral box stands in). Frozen at Play start so edits mid-run don't disturb it.
+    private let scene: RCP3SceneNode?
+    /// The id of the selected entity to attach the script to. Falls back to the scene
+    /// root when `nil` or not found.
+    private let selectedID: String?
     @State private var validationError: String?
     /// Whether the runtime-log console overlay is shown. Collapsed by default so the
     /// inline 3D viewport isn't dominated; a small toolbar button toggles it.
@@ -34,8 +44,69 @@ public struct CanonicalPlayView: View {
     /// JSContext behind. Weak: this view must never keep the scene/context alive.
     @State private var session = PlaySession()
 
-    public init(graph: RCP3ScriptGraph) {
+    public init(graph: RCP3ScriptGraph, scene: RCP3SceneNode? = nil, selectedID: String? = nil) {
         self.source = CanonicalScriptGraphCompiler().compile(graph)
+        self.scene = scene
+        self.selectedID = selectedID
+    }
+
+    /// Reconstructs `node` (and its subtree) into RealityKit entities — the same
+    /// node→mesh/transform mapping the viewport uses — and indexes them by node id so
+    /// the script can be attached to the selected one. RealityKit-only (no StageView)
+    /// to keep this module off the viewport package.
+    private static func reconstruct(_ node: RCP3SceneNode) -> (root: Entity, byID: [String: Entity]) {
+        var byID: [String: Entity] = [:]
+        func build(_ node: RCP3SceneNode) -> Entity {
+            let entity: Entity
+            if let mesh = mesh(for: node.primitiveKind) {
+                entity = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: .gray, isMetallic: false)])
+            } else {
+                entity = Entity()
+            }
+            entity.name = node.name
+            entity.transform = transform(of: node)
+            byID[node.id] = entity
+            for child in node.children {
+                entity.addChild(build(child))
+            }
+            return entity
+        }
+        return (build(node), byID)
+    }
+
+    /// The mesh for a node's primitive kind (`.none` → structural, no mesh). Unit-sized
+    /// like the viewport's reconstruction; the node's own scale carries any sizing.
+    private static func mesh(for kind: RCP3PrimitiveKind) -> MeshResource? {
+        switch kind {
+        case .box: return .generateBox(size: 1)
+        case .sphere: return .generateSphere(radius: 0.5)
+        case .plane: return .generatePlane(width: 1, depth: 1)
+        case .none: return nil
+        }
+    }
+
+    /// Maps a node's `Double` transform tuples to a RealityKit `Transform`.
+    private static func transform(of node: RCP3SceneNode) -> Transform {
+        let t = node.translation, r = node.rotation, s = node.scale
+        return Transform(
+            scale: SIMD3(Float(s.x), Float(s.y), Float(s.z)),
+            rotation: simd_quatf(ix: Float(r.x), iy: Float(r.y), iz: Float(r.z), r: Float(r.w)),
+            translation: SIMD3(Float(t.x), Float(t.y), Float(t.z))
+        )
+    }
+
+    /// Centers and uniformly scales `container` so the reconstructed scene fits a
+    /// small volume around the origin — the inline orbit camera then frames it
+    /// regardless of the scene's authored transforms. A no-op for a scene with no
+    /// visible geometry (degenerate bounds).
+    private static func normalizeForFraming(_ container: Entity) {
+        let bounds = container.visualBounds(relativeTo: nil)
+        let extents = bounds.extents
+        let maxExtent = max(extents.x, extents.y, extents.z)
+        guard maxExtent.isFinite, maxExtent > 0 else { return }
+        let scale = 0.4 / maxExtent
+        container.scale = SIMD3(repeating: scale)
+        container.position = -bounds.center * scale
     }
 
     public var body: some View {
@@ -44,22 +115,40 @@ public struct CanonicalPlayView: View {
             // entities (idempotent).
             try? CanonicalRuntime.initializeOnce()
 
-            let box = ModelEntity(
-                mesh: .generateBox(size: 0.2),
-                materials: [SimpleMaterial(color: .gray, isMetallic: false)]
-            )
-            box.name = "box"
-            box.components.set(ScriptingComponent(source: source))
-            content.add(box)
+            // Reconstruct the captured scene and attach the script to the SELECTED
+            // entity — like RCP, where the scripting component lives on the entity.
+            // The compiled script binds to `this.entity`, so it drives whatever entity
+            // it's attached to, in the context of the rest of the scene.
+            let container = Entity()
+            let scriptHost: Entity
+            if let scene {
+                let built = Self.reconstruct(scene)
+                container.addChild(built.root)
+                scriptHost = selectedID.flatMap { built.byID[$0] } ?? built.root
+            } else {
+                // No project open (e.g. an example graph): a neutral box stands in so
+                // the graph still runs and can be exercised.
+                let box = ModelEntity(
+                    mesh: .generateBox(size: 1),
+                    materials: [SimpleMaterial(color: .gray, isMetallic: false)]
+                )
+                box.name = "entity"
+                container.addChild(box)
+                scriptHost = box
+            }
+            scriptHost.components.set(ScriptingComponent(source: source))
+            content.add(container)
+            // Frame the reconstructed scene for the inline orbit camera.
+            Self.normalizeForFraming(container)
 
             // Apple's JS debugger: name + enable so this script's JavaScriptCore
             // context appears in Safari ▸ Develop ▸ this Mac ▸ the named context
             // (breakpoints, stepping, live console, evaluate).
-            box.scene?.renameJSContext("Deconstructed 3 — Script Graph")
-            box.scene?.enableDebugger(true)
+            container.scene?.renameJSContext("Deconstructed 3 — Script Graph")
+            container.scene?.enableDebugger(true)
             // Capture the scene so teardown can disable the debugger it just enabled
             // (mutates the holder, not @State — safe inside the make closure).
-            session.scene = box.scene
+            session.scene = container.scene
         }
         .realityScripting()
         #if os(macOS) || os(iOS)

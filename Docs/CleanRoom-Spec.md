@@ -587,6 +587,12 @@ This documents the real API directly (no inference needed):
   `.orientation` / `.scale` / `.name` (a position is a `Math3D` vector with
   `.x/.y/.z`, `.add()`, `.clone()`). *(This corrects an earlier guess of
   `entity.transform.translation`.)*
+- **Runtime target = the entity carrying the component.** A graph drives the
+  entity whose `re_scripting_component` it instances (observed: the `Random` box
+  carries the component and is what the drag graph moves) — `this.entity` is that
+  entity. So a Play/Simulate surface reconstructs the scene and attaches the
+  compiled `ScriptingComponent` to the **selected** entity, in the context of its
+  siblings (entity-lookup nodes resolve against the real scene).
 - **Modules via `require`:** built-ins `RealityKit`, `Math3D`, `Foundation`,
   `CoreGraphics`; custom types via `TypeSchema<T>("Name") { StoredProperty / …
   Constructor / InstanceFunc / … }`, `EnumSchema`, grouped in `Module("Name") { … }`.
