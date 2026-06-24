@@ -142,6 +142,15 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             self.valueHash = valueHash
             self.scalarValue = scalarValue
         }
+
+        /// The literal as the canonical ``TMGraphValue``. A bridge while the pipeline
+        /// migrates off the scalar-only `Double?`: today a `DataLiteral` is either a
+        /// number or an as-yet-unmodeled typed value (e.g. `component_type`), so this is
+        /// `.number` when a scalar is present, else `nil`. (Variable references are
+        /// folded onto their node during parse and never become a `DataLiteral`.)
+        public var value: TMGraphValue? {
+            scalarValue.map(TMGraphValue.number)
+        }
     }
 
     /// The graph's own STABLE identity — the `tm_graph`'s root `__uuid` (the `graph`
@@ -278,10 +287,13 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             else { continue }
             let valueObject = object["data"]?.objectValue
 
+            // Classify the value object through the single `TMGraphValue` model.
+            let parsedValue = valueObject.flatMap(TMGraphValue.init(valueObject:))
+
             // A variable reference: attach its `name`/`ref` to `to_node`, don't surface
             // it as a literal (it isn't a scalar/component the inspector/compiler reads).
-            if valueObject?.type == "tm_graph_variable_ref", let name = valueObject?.name {
-                variableRefByNode[toNode] = (name, valueObject?["ref"]?.stringValue)
+            if case let .variableRef(name, ref) = parsedValue {
+                variableRefByNode[toNode] = (name, ref)
                 continue
             }
 
@@ -296,7 +308,7 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 // A scalar literal stores its number as the value object's `value`
                 // member (`data: { value: <number> }`) — what the editor authors and
                 // the compiler reads back for an unwired numeric pin.
-                scalarValue: valueObject?["value"]?.doubleValue
+                scalarValue: parsedValue?.number
             ))
         }
         data = parsedData
