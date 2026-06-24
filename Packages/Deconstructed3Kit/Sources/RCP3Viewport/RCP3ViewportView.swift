@@ -221,11 +221,13 @@ public struct RCP3ViewportView: View {
         config.source = .injectedEntity
         config.appearance = .dark
         config.interactionMode = playMode ? .entityDrag : .camera
-        // Selection outline: StageView defaults to a bounding-box cage; opt into the
-        // mesh outline, color it RCP orange, and keep it thin (default width 0.1 reads
-        // as a thick halo on unit-sized primitives).
-        config.selectionHighlightStyle = .outline
-        config.outlineConfiguration = OutlineConfiguration(color: .orange, width: 0.03)
+        // Selection outline: StageView defaults to a bounding-box cage. Use the
+        // POST-PROCESS outline (macOS 26+) — a pixel-width screen-space stroke (RCP's
+        // look), not the inverted-hull mesh whose thickness scales with the geometry.
+        // `outlineConfiguration.color` drives the stroke color; its `width` is unused
+        // by the post-process path (the effect uses a fixed screen-space radius).
+        config.selectionHighlightStyle = .postProcessOutline
+        config.outlineConfiguration = OutlineConfiguration(color: .purple, width: 0.02)
         return config
     }
 
