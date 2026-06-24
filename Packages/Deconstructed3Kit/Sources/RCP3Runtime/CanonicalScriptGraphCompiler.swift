@@ -675,8 +675,8 @@ public struct CanonicalScriptGraphCompiler {
             if let wire = dataWire(into: node.id, pin: valuePin) {
                 var seen: Set<String> = []
                 valueExpr = emitExpression(from: wire, context: context, seen: &seen).code
-            } else if let value = graph.scalarLiteral(node: node.id, pin: valuePin) {
-                valueExpr = Self.renderScalar(value)
+            } else if let value = graph.literal(node: node.id, pin: valuePin) {
+                valueExpr = Self.renderValue(value)
             } else {
                 valueExpr = "undefined /* no value wired */"
             }
@@ -1180,10 +1180,10 @@ public struct CanonicalScriptGraphCompiler {
         ) -> Expr {
             let pin = TMHash.murmur64a(pinName)
             guard let wire = dataWire(into: node.id, pin: pin) else {
-                // No wire feeding the pin: a bound scalar literal (a graph `data`
-                // constant) supplies it, else the safe `0`.
-                if let value = graph.scalarLiteral(node: node.id, pin: pin) {
-                    return Expr(Self.renderScalar(value))
+                // No wire feeding the pin: a bound literal (a graph `data` constant —
+                // number / bool / string) supplies it, else the safe `0`.
+                if let value = graph.literal(node: node.id, pin: pin) {
+                    return Expr(Self.renderValue(value))
                 }
                 if let defaultValue { return defaultValue }
                 return Expr("0 /* \(pinName) unwired */")
@@ -1198,6 +1198,34 @@ public struct CanonicalScriptGraphCompiler {
                 return String(Int(value))
             }
             return String(value)
+        }
+
+        /// Renders a pin literal value as a JS expression: a number, a `true`/`false`
+        /// boolean, or a quoted/escaped string. (Variable refs are emitted elsewhere.)
+        static func renderValue(_ value: TMGraphValue) -> String {
+            switch value {
+            case let .number(number): return renderScalar(number)
+            case let .bool(flag): return flag ? "true" : "false"
+            case let .string(text): return renderJSString(text)
+            case .variableRef: return "undefined"
+            }
+        }
+
+        /// A JS double-quoted string literal with the essential escapes.
+        static func renderJSString(_ text: String) -> String {
+            var out = "\""
+            for character in text {
+                switch character {
+                case "\\": out += "\\\\"
+                case "\"": out += "\\\""
+                case "\n": out += "\\n"
+                case "\r": out += "\\r"
+                case "\t": out += "\\t"
+                default: out.append(character)
+                }
+            }
+            out += "\""
+            return out
         }
 
         // MARK: Static maps
@@ -1364,7 +1392,7 @@ public struct CanonicalScriptGraphCompiler {
                 let name = String(letter)
                 let pin = TMHash.murmur64a(name)
                 let hasWire = dataWire(into: node.id, pin: pin) != nil
-                let hasLiteral = graph.scalarLiteral(node: node.id, pin: pin) != nil
+                let hasLiteral = graph.literal(node: node.id, pin: pin) != nil
                 guard hasWire || hasLiteral else { continue }
                 operands.append(inputExpression(into: node, pinName: name, context: context, seen: &seen))
             }

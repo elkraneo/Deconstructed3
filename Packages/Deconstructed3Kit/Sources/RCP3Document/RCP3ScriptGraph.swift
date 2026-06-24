@@ -373,6 +373,13 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
     /// The scalar constant bound to `pin` of node `nodeID` via a `data` literal, if
     /// any — the value an unwired numeric pin carries.
     public func scalarLiteral(node nodeID: String, pin: UInt64) -> Double? {
-        data.first { $0.toNode == nodeID && $0.toPin == pin && $0.scalarValue != nil }?.scalarValue
+        literal(node: nodeID, pin: pin)?.number
+    }
+
+    /// The constant value bound to `pin` of node `nodeID` via a `data` literal, as the
+    /// canonical ``TMGraphValue`` (number / bool / string), or `nil` when none — what
+    /// an unwired pin carries. The compiler emits this for Play.
+    public func literal(node nodeID: String, pin: UInt64) -> TMGraphValue? {
+        data.first { $0.toNode == nodeID && $0.toPin == pin && $0.value != nil }?.value
     }
 }

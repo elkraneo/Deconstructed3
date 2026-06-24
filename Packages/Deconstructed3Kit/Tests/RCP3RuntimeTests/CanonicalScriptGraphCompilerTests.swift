@@ -120,6 +120,26 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func boolAndStringPinLiteralsCompileToJSValues() {
+        // On Update → Set Variable, with the value pin fed by a literal (no wire).
+        let valuePin = TMHash.murmur64a("value")
+
+        func setVariableGraph(value: TMGraphValue) -> RCP3ScriptGraph {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(id: "v", type: "tm_set_variable_node", variableName: "flag")
+            let exec = RCP3ScriptGraph.Wire(id: "e", from: "u", to: "v")
+            let literal = RCP3ScriptGraph.DataLiteral(id: "lit", toNode: "v", toPin: valuePin, value: value)
+            return RCP3ScriptGraph(nodes: [update, set], wires: [exec], data: [literal])
+        }
+
+        let boolJS = CanonicalScriptGraphCompiler().compile(setVariableGraph(value: .bool(true)))
+        #expect(boolJS.contains("= true;"))
+        #expect(!boolJS.contains("undefined"))
+
+        let stringJS = CanonicalScriptGraphCompiler().compile(setVariableGraph(value: .string("hi")))
+        #expect(stringJS.contains("= \"hi\";"))
+    }
+
     @Test func playbackEventsExposePlaybackController() {
         for (type, hook) in [
             ("tm_animation_event_playback_started", "animationPlaybackStarted"),
