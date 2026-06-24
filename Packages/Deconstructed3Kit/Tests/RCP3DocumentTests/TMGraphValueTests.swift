@@ -34,6 +34,19 @@ import RCP3Document
         #expect(falseValue == .bool(false))
     }
 
+    @Test func parsesTypedNumberContainers() {
+        // Typed numeric containers from __type_index.tm_meta fold into .number.
+        let double = TMGraphValue(valueObject: object([
+            ("__type", .string("tm_double")), ("double", .number("2.5")),
+        ]))
+        #expect(double == .number(2.5))
+
+        let float = TMGraphValue(valueObject: object([
+            ("__type", .string("tm_float")), ("float", .number("1.5")),
+        ]))
+        #expect(float == .number(1.5))
+    }
+
     @Test func parsesString() {
         // Observed shape (string.realitycomposerpro): { __type: "tm_string", string: "…" }.
         let value = TMGraphValue(valueObject: object([

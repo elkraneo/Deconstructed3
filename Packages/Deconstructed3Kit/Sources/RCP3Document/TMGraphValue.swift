@@ -57,6 +57,17 @@ public enum TMGraphValue: Equatable, Sendable {
             self = .string(valueObject["string"]?.stringValue ?? "")
             return
         }
+        // Typed numeric containers from `__type_index.tm_meta`: `tm_double { double }`,
+        // `tm_float { float }`. Folded into `.number` — they're all numbers.
+        if valueObject.type == "tm_double", let number = valueObject["double"]?.doubleValue {
+            self = .number(number)
+            return
+        }
+        if valueObject.type == "tm_float", let number = valueObject["float"]?.doubleValue {
+            self = .number(number)
+            return
+        }
+        // The editor's own scalar literal: a bare `{ value: <number> }` (no `__type`).
         if let number = valueObject["value"]?.doubleValue {
             self = .number(number)
             return

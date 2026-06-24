@@ -215,25 +215,29 @@ equals that prototype uuid**. Resolution = scan the bundle dir for
 
 The inner `data: { … }` value object, by value kind. Modeled as one closed
 ``TMGraphValue`` (so adding a kind is one case + one row here, not a new field).
-**Only observed shapes are implemented; the rest are pending a capture and must not
-be guessed** (clean-room).
 
-| Value kind | Observed `data: { … }` shape | Status |
+**The value types are self-describing in `__type_index.tm_meta`** — every `tm_*`
+type lists its `properties[]` (name + type). So the member layout below is read
+straight from the index (observed file data, clean-room — no per-type capture, no
+disassembly needed). A *capture* only confirms WHICH container a given pin actually
+serializes (e.g. `bool`/`string` confirmed below); until confirmed, "usage" stays
+unverified rather than guessed.
+
+| Value kind | `data: { … }` shape (from type index) | Status |
 |--|--|--|
-| Number (int/double) | `{ value: <number> }` | ✅ observed |
-| Variable reference | `{ __type: "tm_graph_variable_ref", name: "<var>", ref: "<uuid>" }` | ✅ observed |
-| Component type | `{ type: "<murmur64a hex>" }` (named-value hash, no `value`) | ✅ observed (read-only) |
-| Boolean | `{ __type: "tm_bool", bool: <true\|false> }` | ✅ observed (`bool.realitycomposerpro`) |
-| String | `{ __type: "tm_string", string: "<text>" }` | ✅ observed (`string.realitycomposerpro`) |
-| Enum (switch case / gesture phase) | `script_graph_enum` / `script_graph_enum_associated_value` — members? | ⬜ pending capture |
-| Vector2/3/4 | `{ … }` | ⬜ pending capture |
-| Color | `{ … }` | ⬜ pending capture |
-| Entity / asset reference | `{ … }` | ⬜ pending capture |
+| Number / double / float | `{ value: <number> }` (editor scalar); also typed `tm_double { double }` / `tm_float { float }` | ✅ confirmed (number); typed forms folded to number |
+| Variable reference | `{ __type: "tm_graph_variable_ref", name, ref }` | ✅ confirmed |
+| Component type | `{ type: "<murmur64a hex>" }` (named-value hash) | ✅ confirmed (read-only) |
+| Boolean | `{ __type: "tm_bool", bool: <true\|false> }` | ✅ confirmed (`bool.realitycomposerpro`) |
+| String | `{ __type: "tm_string", string: "<text>" }` | ✅ confirmed (`string.realitycomposerpro`) |
+| Enum | `script_graph_enum { type: uint64, case: string, associated_values: [...] }` **or** `sg_enum { enum_type: uint64, enum_value: string }` | 🟡 schema known; capture to confirm which a pin uses |
+| Asset reference | `tm_asset_reference { asset: <reference> }` | 🟡 schema known; capture to confirm |
+| Integer | no distinct `tm_int` found in the index → numbers are double-typed | ✅ covered by number |
+| Vector / Color | not yet located as a single value container (vectors are typically `make_vector*` with scalar component pins) | ⬜ to investigate |
 
-**To fill a pending row:** in RCP, set that input to a constant on a node, save, and
-read the matching `data[]` entry's inner `data: { … }` from the `.tm_script_graph`
-(or the entity's `re_scripting_source_graph`). Record the shape here, then add the
-`TMGraphValue` case + parser branch + write-back writer + inspector affordance.
+**To confirm a 🟡 row:** set that input on a node in RCP, save, and read the
+`data[]` entry's inner `data: { … }`. Then add the `TMGraphValue` case + parser
+branch + write-back writer + inspector affordance.
 - **Pins** are referenced by `connector_hash = MurmurHash64A(pin_name, seed 0,
   m = 0xc6a4a7935bd1e995)` — the **same hash** the type index uses for type names, and
   **uniform for both input (`to_connector_hash`) and output (`from_connector_hash`)
