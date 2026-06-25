@@ -520,7 +520,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 toAssetWithRootUUID: asset.id,
                 in: editor.bundle.url
             )
-            store.send(.scriptGraphOpened(asset.id))
+            // The file now exists on disk; let the store re-read its owned asset list
+            // (so the browser + picker list it) and open it.
+            store.send(.scriptGraphMaterialized(id: asset.id))
             centerMode = .graph
         } catch {
             assertionFailure("create-from-sample failed: \(error)")

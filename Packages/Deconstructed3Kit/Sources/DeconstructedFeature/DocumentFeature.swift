@@ -16,11 +16,14 @@ public struct DocumentFeature: Sendable {
     public struct State: Equatable, Sendable {
         /// The active editing session, or `nil` until a bundle is opened.
         public var editor: RCP3Editor?
-        /// Bumped whenever the bundle's asset FILES change (create / rename) — the
-        /// observation token that invalidates `scriptGraphAssets` (a disk scan, which
-        /// editing the in-memory editor doesn't otherwise touch), so the Project
-        /// Browser reflects new/renamed graphs.
-        public var assetsRevision = 0
+        /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by name).
+        /// A reducer-OWNED snapshot of the on-disk asset files: the reducer is the sole
+        /// writer, refreshing it whenever asset files change (open / create / rename /
+        /// delete / materialize-sample). Editing the in-memory `editor` doesn't touch the
+        /// asset files, so this can't be derived from `editor` alone — keeping it as real
+        /// observed State (instead of a disk scan behind a manual token) is what lets the
+        /// Project Browser AND the inspector's Script picker stay in sync automatically.
+        public var scriptGraphAssets: [RCP3ScriptGraphAsset] = []
         /// The selected entity's `RCP3Entity.id` (uuid), bridged to tree + viewport.
         public var selection: RCP3Entity.ID?
         /// The id (asset root `__uuid`) of the script-graph asset opened directly from
@@ -48,6 +51,7 @@ public struct DocumentFeature: Sendable {
             self.selection = selection
             self.openAssetGraphID = openScriptGraphID
             self.errorMessage = errorMessage
+            self.scriptGraphAssets = editor?.scriptGraphAssets() ?? []
         }
 
         /// The id keying the open graph in the center column: the loaded example's id
@@ -110,24 +114,17 @@ public struct DocumentFeature: Sendable {
         /// The live input for a canonical Play/Simulate run: the scene, every scripted
         /// entity's graph, and a preview fallback (open/selected graph). Read live so
         /// the running preview reflects graphs added/assigned during Play (the host
-        /// re-keys the Play view on `.signature`). Depends on `assetsRevision` so an
-        /// assignment that scans disk re-derives.
+        /// re-keys the Play view on `.signature`). Reads `scriptGraphAssets` so a newly
+        /// materialized/assigned graph re-derives the scene (assignment also mutates
+        /// `editor`, which this reads too).
         public var canonicalPlayScene: CanonicalPlayScene {
-            _ = assetsRevision
+            _ = scriptGraphAssets
             return CanonicalPlayScene(
                 scene: sceneGraph,
                 scripts: editor?.scriptedEntities() ?? [],
                 previewGraph: openScriptGraph ?? selectedScriptGraph,
                 previewEntityID: selection
             )
-        }
-
-        /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by
-        /// name), empty when no project is open. The sidebar lists these so a user can
-        /// open a graph editor directly.
-        public var scriptGraphAssets: [RCP3ScriptGraphAsset] {
-            _ = assetsRevision // establish an observation dependency on file changes
-            return editor?.scriptGraphAssets() ?? []
         }
 
         /// The graph currently open in the center column: the loaded example graph (if
@@ -177,6 +174,10 @@ public struct DocumentFeature: Sendable {
         /// User created a new Script Graph asset (browser "+"). Writes a new
         /// `*.tm_script_graph` to the bundle and opens it in the editor.
         case newScriptGraphTapped
+        /// A curated sample was materialized into a new `.tm_script_graph` (root `__uuid`)
+        /// host-side (the write-back is `@MainActor`). Refreshes the owned asset list and
+        /// opens the asset. See `DocumentView.createScriptGraph(fromSample:)`.
+        case scriptGraphMaterialized(id: String)
         /// User renamed a script-graph asset (by root `__uuid`) in the Project Browser.
         case renameScriptGraph(id: String, to: String)
         /// User deleted a script-graph asset (by root `__uuid`) from the Project Browser.
@@ -199,6 +200,14 @@ public struct DocumentFeature: Sendable {
 
     public init() {}
 
+    /// Re-reads the open bundle's `*.tm_script_graph` asset files into the owned
+    /// `scriptGraphAssets` snapshot. The single point that syncs State to the on-disk
+    /// asset set — called after any action that creates, renames, deletes, or
+    /// materializes an asset file.
+    private static func refreshScriptGraphAssets(_ state: inout State) {
+        state.scriptGraphAssets = state.editor?.scriptGraphAssets() ?? []
+    }
+
     public var body: some Reducer<State, Action> {
         Reduce { state, action in
             switch action {
@@ -213,11 +222,12 @@ public struct DocumentFeature: Sendable {
                 state.editor = editor
                 state.selection = editor.entity.id
                 // A fresh bundle has its own assets — drop any graph open from the last
-                // (asset or example).
+                // (asset or example) and read the new bundle's asset list.
                 state.openAssetGraphID = nil
                 state.loadedExample = nil
                 state.loadedExampleID = nil
                 state.errorMessage = nil
+                Self.refreshScriptGraphAssets(&state)
                 return .none
 
             case let .opened(.failure(error)):
@@ -307,21 +317,31 @@ public struct DocumentFeature: Sendable {
                 guard let asset = try? editor.createScriptGraphAsset(makeUUID: makeUUID) else {
                     return .none
                 }
-                // Open the new asset; bump the token so the Project Browser re-scans.
-                state.assetsRevision += 1
+                // A new asset FILE exists on disk — refresh the owned snapshot so the
+                // browser + picker list it, then open it.
+                Self.refreshScriptGraphAssets(&state)
                 state.openAssetGraphID = asset.id
                 state.loadedExample = nil
                 state.loadedExampleID = nil
                 return .none
 
+            case let .scriptGraphMaterialized(id):
+                // A curated sample was written to a new `.tm_script_graph` host-side
+                // (the write-back is `@MainActor`, so the view does the file I/O). The
+                // store still OWNS the asset list, so re-read it here and open the asset.
+                Self.refreshScriptGraphAssets(&state)
+                state.openAssetGraphID = id
+                state.loadedExample = nil
+                state.loadedExampleID = nil
+                return .none
+
             case let .renameScriptGraph(id, newName):
-                guard let renamed = try? state.editor?.renameScriptGraphAsset(id: id, to: newName) else {
+                guard (try? state.editor?.renameScriptGraphAsset(id: id, to: newName)) != nil else {
                     return .none
                 }
-                // Filename changed on disk but no in-memory editor state did — bump the
-                // token so the browser list reflects the new name.
-                state.assetsRevision += 1
-                _ = renamed
+                // The filename changed on disk but no in-memory editor state did — refresh
+                // the owned snapshot so the browser reflects the new name.
+                Self.refreshScriptGraphAssets(&state)
                 return .none
 
             case let .addComponent(componentType):
@@ -330,17 +350,17 @@ public struct DocumentFeature: Sendable {
                 let makeUUID = { uuid().uuidString.lowercased() }
                 // Only the scripting component is wired today; the picker lists it
                 // under Gameplay (more components slot in as they're supported).
+                // Mutates `editor` (observed) — no asset files change, so no refresh.
                 if componentType == "re_scripting_component" {
                     state.editor?.addScriptingComponent(toEntityID: id, makeUUID: makeUUID)
-                    state.assetsRevision += 1
                 }
                 return .none
 
             case let .assignScriptGraph(assetRootUUID):
                 guard let id = state.selection else { return .none }
+                // Mutates `editor`, which `canonicalPlayScene` + the picker read, so the
+                // live play scene and inspector re-derive without a manual nudge.
                 state.editor?.assignScriptGraph(toEntityID: id, assetRootUUID: assetRootUUID)
-                // Bump so the live play scene (and any preview) re-derives the scripts.
-                state.assetsRevision += 1
                 return .none
 
             case let .deleteScriptGraph(id):
@@ -351,13 +371,13 @@ public struct DocumentFeature: Sendable {
                 if state.openAssetGraphID == id {
                     state.openAssetGraphID = nil
                 }
-                state.assetsRevision += 1
+                Self.refreshScriptGraphAssets(&state)
                 return .none
 
             case .removeScriptingComponent:
                 guard let id = state.selection else { return .none }
+                // Mutates `editor` (observed) — no asset files change, so no refresh.
                 state.editor?.removeScriptingComponent(fromEntityID: id)
-                state.assetsRevision += 1
                 return .none
 
             case .saveTapped:

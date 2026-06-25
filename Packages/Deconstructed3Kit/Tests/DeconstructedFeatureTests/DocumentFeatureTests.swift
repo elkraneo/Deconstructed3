@@ -129,6 +129,41 @@ import Testing
         #expect(store.state.openScriptGraph == nil)
     }
 
+    // MARK: asset list stays in sync with create / rename / delete
+
+    @Test func scriptGraphAssetsTrackCreateRenameDelete() async throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TestStore(initialState: DocumentFeature.State()) {
+            DocumentFeature()
+        } withDependencies: {
+            $0.documentClient = .live
+            $0.uuid = .incrementing
+        }
+        store.exhaustivity = .off
+
+        await store.send(.openTapped(dir))
+        await store.receive(\.opened.success)
+        #expect(store.state.scriptGraphAssets.isEmpty)
+
+        // CREATE → the owned snapshot lists the new asset and it's opened.
+        await store.send(.newScriptGraphTapped)
+        #expect(store.state.scriptGraphAssets.count == 1)
+        let created = try #require(store.state.scriptGraphAssets.first)
+        #expect(store.state.openAssetGraphID == created.id)
+
+        // RENAME → same id, new name reflected in the snapshot.
+        await store.send(.renameScriptGraph(id: created.id, to: "Spin"))
+        #expect(store.state.scriptGraphAssets.map(\.name) == ["Spin"])
+        #expect(store.state.scriptGraphAssets.first?.id == created.id)
+
+        // DELETE → snapshot empties and the open graph closes.
+        await store.send(.deleteScriptGraph(id: created.id))
+        #expect(store.state.scriptGraphAssets.isEmpty)
+        #expect(store.state.openAssetGraphID == nil)
+    }
+
     // MARK: open → select → nameEdited → saveTapped → reopen
 
     @Test func openEditSaveRoundTripsToDisk() async throws {
