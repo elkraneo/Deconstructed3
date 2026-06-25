@@ -110,6 +110,22 @@ extension RCP3Bundle {
         return RCP3ScriptGraphAsset(id: id, name: name)
     }
 
+    /// Deletes the `*.tm_script_graph` asset with this root `__uuid` from the bundle.
+    /// Throws `RCP3ScriptGraphAssetError.notFound` when no file has that id. Entities
+    /// still referencing it keep their (now-dangling) prototype link — the caller is
+    /// responsible for clearing assignments first if desired.
+    public func deleteScriptGraphAsset(id: String) throws {
+        let fileManager = FileManager.default
+        let entries = (try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+        let sourceURL = entries.first { fileURL in
+            fileURL.pathExtension == "tm_script_graph"
+                && (try? String(contentsOf: fileURL, encoding: .utf8))
+                    .flatMap { try? TM.parse($0).objectValue }?.uuid == id
+        }
+        guard let sourceURL else { throw RCP3ScriptGraphAssetError.notFound(id: id) }
+        try fileManager.removeItem(at: sourceURL)
+    }
+
     /// The observed on-disk shape of an empty script-graph asset:
     /// `re_scripting_source_graph { graph: tm_graph { nodes: [], interface },
     /// validation_settings, __asset_uuid }`.

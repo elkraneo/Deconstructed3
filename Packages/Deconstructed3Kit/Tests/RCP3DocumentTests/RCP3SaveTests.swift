@@ -226,4 +226,24 @@ import RCP3Document
             try bundle.renameScriptGraphAsset(id: "nope", to: "X")
         }
     }
+
+    @Test func deleteScriptGraphAssetRemovesFileAndUnlistsIt() throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bundle = try RCP3Bundle.open(dir)
+
+        let keep = try bundle.createScriptGraphAsset(named: "Keep")
+        let drop = try bundle.createScriptGraphAsset(named: "Drop")
+        #expect(Set(bundle.scriptGraphAssets().map(\.id)) == [keep.id, drop.id])
+
+        try bundle.deleteScriptGraphAsset(id: drop.id)
+
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: "Drop.tm_script_graph").path))
+        #expect(bundle.scriptGraphAssets().map(\.id) == [keep.id])
+
+        // Unknown id throws notFound.
+        #expect(throws: RCP3ScriptGraphAssetError.notFound(id: "nope")) {
+            try bundle.deleteScriptGraphAsset(id: "nope")
+        }
+    }
 }

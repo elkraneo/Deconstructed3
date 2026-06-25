@@ -88,6 +88,22 @@ public extension RCP3Editor {
         return apply { $0 = updated }
     }
 
+    /// Removes the entity's `re_scripting_component` entirely — the RCP "Remove
+    /// Component" action. Scans both `components` and `components__instantiated`.
+    /// Returns `false` when the entity has no scripting component.
+    @discardableResult
+    mutating func removeScriptingComponent(
+        fromEntityID id: RCP3Entity.ID
+    ) -> Bool {
+        let (updated, removed) = RCP3EntityTreeWriteBack.removingComponent(
+            ofType: "re_scripting_component",
+            fromEntityID: id,
+            in: root
+        )
+        guard removed else { return false }
+        return apply { $0 = updated }
+    }
+
     /// Whether the entity with `id` carries a `re_scripting_component`.
     func hasScriptingComponent(entityID id: RCP3Entity.ID) -> Bool {
         scriptingComponent(entityID: id) != nil
@@ -121,9 +137,11 @@ public extension RCP3Editor {
 
     private func scriptingComponent(entityID id: RCP3Entity.ID) -> TMObject? {
         guard let entity = RCP3Bundle.findEntity(id: id, in: root) else { return nil }
-        for value in entity["components"]?.arrayValue ?? [] {
-            if let component = value.objectValue, component.type == "re_scripting_component" {
-                return component
+        for key in ["components", "components__instantiated"] {
+            for value in entity[key]?.arrayValue ?? [] {
+                if let component = value.objectValue, component.type == "re_scripting_component" {
+                    return component
+                }
             }
         }
         return nil
@@ -182,6 +200,41 @@ enum RCP3EntityTreeWriteBack {
             guard let child = value.objectValue else { continue }
             let (updatedChild, added) = addingComponent(component, toEntityID: id, in: child)
             if added {
+                updatedChildren[index] = .object(updatedChild)
+                var updated = object
+                updated.set(.array(updatedChildren), forKey: "children")
+                return (updated, true)
+            }
+        }
+        return (object, false)
+    }
+
+    /// Removes the first component of `__type` from the entity with `id`, searching the
+    /// tree recursively and both `components` and `components__instantiated`. No-op when
+    /// the entity has no such component. Returns `(updated, didRemove)`.
+    static func removingComponent(
+        ofType type: String,
+        fromEntityID id: RCP3Entity.ID,
+        in object: TMObject
+    ) -> (TMObject, Bool) {
+        if matches(object, id: id) {
+            for key in ["components", "components__instantiated"] {
+                guard let existing = object[key]?.arrayValue,
+                      existing.contains(where: { $0.objectValue?.type == type })
+                else { continue }
+                let filtered = existing.filter { $0.objectValue?.type != type }
+                var updated = object
+                updated.set(.array(filtered), forKey: key)
+                return (updated, true)
+            }
+            return (object, false)
+        }
+        guard let children = object["children"]?.arrayValue else { return (object, false) }
+        var updatedChildren = children
+        for (index, value) in children.enumerated() {
+            guard let child = value.objectValue else { continue }
+            let (updatedChild, removed) = removingComponent(ofType: type, fromEntityID: id, in: child)
+            if removed {
                 updatedChildren[index] = .object(updatedChild)
                 var updated = object
                 updated.set(.array(updatedChildren), forKey: "children")

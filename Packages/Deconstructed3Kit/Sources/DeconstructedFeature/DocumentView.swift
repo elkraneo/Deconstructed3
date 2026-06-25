@@ -137,6 +137,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     },
                     onRename: { id, newName in
                         store.send(.renameScriptGraph(id: id, to: newName))
+                    },
+                    onDelete: { id in
+                        store.send(.deleteScriptGraph(id: id))
                     }
                 )
                 .frame(minHeight: 120, idealHeight: 160)
@@ -893,6 +896,9 @@ private struct ComponentInspectorView: View {
                                 Text(asset.name).tag(String?.some(asset.id))
                             }
                         }
+                        Button("Remove Component", systemImage: "trash", role: .destructive) {
+                            store.send(.removeScriptingComponent)
+                        }
                     }
                 }
             }
@@ -971,6 +977,9 @@ struct EntityInspectorView: View {
                             Text(asset.name).tag(String?.some(asset.id))
                         }
                     }
+                    Button("Remove Component", systemImage: "trash", role: .destructive) {
+                        store.send(.removeScriptingComponent)
+                    }
                 }
             }
 
@@ -1027,10 +1036,13 @@ private struct ProjectBrowserPanel: View {
     let onNewFromSample: (ScriptGraphExample) -> Void
     let onOpenGraph: (String) -> Void
     let onRename: (String, String) -> Void
+    let onDelete: (String) -> Void
 
     /// The asset being renamed (drives the rename alert) and its edit buffer.
     @State private var renamingAssetID: String?
     @State private var renameText = ""
+    /// The asset pending deletion (drives the confirmation alert).
+    @State private var deletingAsset: RCP3ScriptGraphAsset?
 
     private var isRenaming: Binding<Bool> {
         Binding(get: { renamingAssetID != nil }, set: { if !$0 { renamingAssetID = nil } })
@@ -1094,6 +1106,10 @@ private struct ProjectBrowserPanel: View {
                                 renameText = asset.name
                                 renamingAssetID = asset.id
                             }
+                            Divider()
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                deletingAsset = asset
+                            }
                         }
                     }
                 }
@@ -1108,6 +1124,18 @@ private struct ProjectBrowserPanel: View {
                 renamingAssetID = nil
             }
             Button("Cancel", role: .cancel) { renamingAssetID = nil }
+        }
+        .alert(
+            "Delete “\(deletingAsset?.name ?? "")”?",
+            isPresented: Binding(get: { deletingAsset != nil }, set: { if !$0 { deletingAsset = nil } })
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = deletingAsset?.id { onDelete(id) }
+                deletingAsset = nil
+            }
+            Button("Cancel", role: .cancel) { deletingAsset = nil }
+        } message: {
+            Text("This removes the Script Graph from the project. Entities referencing it will lose their assignment.")
         }
     }
 }

@@ -179,6 +179,10 @@ public struct DocumentFeature: Sendable {
         case newScriptGraphTapped
         /// User renamed a script-graph asset (by root `__uuid`) in the Project Browser.
         case renameScriptGraph(id: String, to: String)
+        /// User deleted a script-graph asset (by root `__uuid`) from the Project Browser.
+        case deleteScriptGraph(id: String)
+        /// User removed the selected entity's scripting component ("Remove Component").
+        case removeScriptingComponent
         /// User added a component (by `__type`) to the selected entity, via the
         /// shared Add Component picker. Today only `re_scripting_component` is wired.
         case addComponent(String)
@@ -336,6 +340,23 @@ public struct DocumentFeature: Sendable {
                 guard let id = state.selection else { return .none }
                 state.editor?.assignScriptGraph(toEntityID: id, assetRootUUID: assetRootUUID)
                 // Bump so the live play scene (and any preview) re-derives the scripts.
+                state.assetsRevision += 1
+                return .none
+
+            case let .deleteScriptGraph(id):
+                guard (try? state.editor?.deleteScriptGraphAsset(id: id)) != nil else {
+                    return .none
+                }
+                // Close the editor if it was showing the deleted asset.
+                if state.openAssetGraphID == id {
+                    state.openAssetGraphID = nil
+                }
+                state.assetsRevision += 1
+                return .none
+
+            case .removeScriptingComponent:
+                guard let id = state.selection else { return .none }
+                state.editor?.removeScriptingComponent(fromEntityID: id)
                 state.assetsRevision += 1
                 return .none
 

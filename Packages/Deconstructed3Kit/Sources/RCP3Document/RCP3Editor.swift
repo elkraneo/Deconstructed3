@@ -65,6 +65,12 @@ public struct RCP3Editor: Sendable, Equatable {
         try bundle.renameScriptGraphAsset(id: id, to: newName)
     }
 
+    /// Deletes the script-graph asset with this root `__uuid` from the backing bundle
+    /// (the RCP "Delete" action in the Project Browser). Removes the file from disk.
+    public func deleteScriptGraphAsset(id: String) throws {
+        try bundle.deleteScriptGraphAsset(id: id)
+    }
+
     /// Loads and parses the bundle's `*.tm_script_graph` asset with this id (the
     /// asset's root `__uuid`).
     public func scriptGraph(assetID: String) -> RCP3ScriptGraph? {

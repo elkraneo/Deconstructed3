@@ -352,6 +352,23 @@ import TMFormat
         #expect(editor.scriptedEntities().isEmpty)
     }
 
+    @Test func removeScriptingComponentDropsItAndIsNoOpWhenAbsent() throws {
+        var editor = try RCP3Editor.open(Self.makeTempBundle())
+        defer { try? FileManager.default.removeItem(at: editor.bundle.url) }
+        let boxID = try #require(editor.entity.children.first?.id)
+
+        // No component yet → remove is a no-op.
+        let removedWhenAbsent = editor.removeScriptingComponent(fromEntityID: boxID)
+        #expect(removedWhenAbsent == false)
+
+        editor.addScriptingComponent(toEntityID: boxID)
+        #expect(editor.hasScriptingComponent(entityID: boxID))
+
+        let removed = editor.removeScriptingComponent(fromEntityID: boxID)
+        #expect(removed)
+        #expect(!editor.hasScriptingComponent(entityID: boxID))
+    }
+
     @Test func scriptedEntitiesListsInlineNonEmptyGraphs() throws {
         // A scene saved by RCP carries the graph INLINE in `source.graph` (with nodes),
         // not as a prototype reference. This is the "scene already had components before
