@@ -49,9 +49,85 @@ public extension RCP3Editor {
         guard let duplicatedID, apply({ $0 = updated }) else { return nil }
         return duplicatedID
     }
+
+    /// Adds an (unassigned) `re_scripting_component` to the entity with `id` — the RCP
+    /// "Add Component → Scripting" action. The component is the type index's DEFAULT
+    /// shape (a `source` with an empty `graph`/`interface` and `validation_settings`,
+    /// no prototype link yet); assigning a script-graph asset to it is a separate step.
+    /// Returns `false` if the entity isn't found or already has one.
+    @discardableResult
+    mutating func addScriptingComponent(
+        toEntityID id: RCP3Entity.ID,
+        makeUUID: () -> String = { UUID().uuidString.lowercased() }
+    ) -> Bool {
+        let component = RCP3EntityTreeWriteBack.scriptingComponentDefault(makeUUID: makeUUID)
+        let (updated, added) = RCP3EntityTreeWriteBack.addingComponent(component, toEntityID: id, in: root)
+        guard added else { return false }
+        return apply { $0 = updated }
+    }
 }
 
 enum RCP3EntityTreeWriteBack {
+    /// The DEFAULT-shaped `re_scripting_component` (from `__type_index.tm_meta`'s
+    /// `default`): a `source` (`re_scripting_source_graph`) holding an empty `graph`
+    /// (with an `interface`) and `validation_settings { path: "" }`. No prototype link
+    /// — that's added when a script-graph asset is assigned.
+    static func scriptingComponentDefault(makeUUID: () -> String) -> TMObject {
+        var interface = TMObject()
+        interface.set(.string(makeUUID()), forKey: "__uuid")
+
+        var graph = TMObject()
+        graph.set(.string(makeUUID()), forKey: "__uuid")
+        graph.set(.object(interface), forKey: "interface")
+
+        var validation = TMObject()
+        validation.set(.string(makeUUID()), forKey: "__uuid")
+        validation.set(.string(""), forKey: "path")
+
+        var source = TMObject()
+        source.set(.string(makeUUID()), forKey: "__uuid")
+        source.set(.object(graph), forKey: "graph")
+        source.set(.object(validation), forKey: "validation_settings")
+
+        var component = TMObject()
+        component.set(.string("re_scripting_component"), forKey: "__type")
+        component.set(.string(makeUUID()), forKey: "__uuid")
+        component.set(.object(source), forKey: "source")
+        return component
+    }
+
+    /// Appends `component` to the `components` array of the entity with `id` (creating
+    /// the array if absent), searching the tree recursively. No-op when the entity
+    /// already carries a component of the same `__type`. Returns `(updated, didAdd)`.
+    static func addingComponent(
+        _ component: TMObject,
+        toEntityID id: RCP3Entity.ID,
+        in object: TMObject
+    ) -> (TMObject, Bool) {
+        if matches(object, id: id) {
+            let existing = object["components"]?.arrayValue ?? []
+            let newType = component.type
+            let alreadyPresent = existing.contains { $0.objectValue?.type == newType }
+            guard !alreadyPresent else { return (object, false) }
+            var updated = object
+            updated.set(.array(existing + [.object(component)]), forKey: "components")
+            return (updated, true)
+        }
+        guard let children = object["children"]?.arrayValue else { return (object, false) }
+        var updatedChildren = children
+        for (index, value) in children.enumerated() {
+            guard let child = value.objectValue else { continue }
+            let (updatedChild, added) = addingComponent(component, toEntityID: id, in: child)
+            if added {
+                updatedChildren[index] = .object(updatedChild)
+                var updated = object
+                updated.set(.array(updatedChildren), forKey: "children")
+                return (updated, true)
+            }
+        }
+        return (object, false)
+    }
+
     static func primitiveInstance(
         _ kind: RCP3PrimitiveKind,
         in bundleURL: URL,

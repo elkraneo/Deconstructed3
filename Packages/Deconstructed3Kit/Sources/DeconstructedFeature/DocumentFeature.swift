@@ -140,6 +140,9 @@ public struct DocumentFeature: Sendable {
         /// User created a new Script Graph asset (browser "+"). Writes a new
         /// `*.tm_script_graph` to the bundle and opens it in the editor.
         case newScriptGraphTapped
+        /// User added a component (by `__type`) to the selected entity, via the
+        /// shared Add Component picker. Today only `re_scripting_component` is wired.
+        case addComponent(String)
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -263,6 +266,17 @@ public struct DocumentFeature: Sendable {
                 state.openAssetGraphID = asset.id
                 state.loadedExample = nil
                 state.loadedExampleID = nil
+                return .none
+
+            case let .addComponent(componentType):
+                guard let id = state.selection else { return .none }
+                @Dependency(\.uuid) var uuid
+                let makeUUID = { uuid().uuidString.lowercased() }
+                // Only the scripting component is wired today; the picker lists it
+                // under Gameplay (more components slot in as they're supported).
+                if componentType == "re_scripting_component" {
+                    state.editor?.addScriptingComponent(toEntityID: id, makeUUID: makeUUID)
+                }
                 return .none
 
             case .saveTapped:

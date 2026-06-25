@@ -52,6 +52,10 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// Component-row selection in the outliner. The viewport/entity selection remains
     /// `store.selection`; this only decides which inspector surface is shown.
     @State private var selectedOutlinerComponent: EntityOutlinerComponentSelection?
+    /// Whether the shared Add Component picker is presented. Opened from any of the
+    /// three RCP entry points (sidebar menu, outliner context menu, inspector button);
+    /// it adds to the current `store.selection`.
+    @State private var showingAddComponent = false
 
     // MARK: Play mode (canonical, inline)
 
@@ -143,6 +147,18 @@ public struct DocumentView<CanonicalPlay: View>: View {
         } detail: {
             detailColumn
         }
+        // The shared Add Component picker (categorized + search), opened from the
+        // sidebar menu, the outliner context menu, or the inspector button. Adds to
+        // the current selection.
+        .sheet(isPresented: $showingAddComponent) {
+            AddComponentPicker(
+                onSelect: { type in
+                    store.send(.addComponent(type))
+                    showingAddComponent = false
+                },
+                onCancel: { showingAddComponent = false }
+            )
+        }
     }
 
     /// The detail (inspector) column. In Graph mode with a node selected it shows the
@@ -160,7 +176,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
                   let entity = store.selectedEntity {
             ComponentInspectorView(store: store, entity: entity, component: selection.component)
         } else if let entity = store.selectedEntity {
-            EntityInspectorView(store: store, entity: entity)
+            EntityInspectorView(store: store, entity: entity, showingAddComponent: $showingAddComponent)
         } else {
             ContentUnavailableView("Nothing selected", systemImage: "cube")
         }
@@ -184,7 +200,8 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     store: store,
                     entity: root,
                     rootID: root.id,
-                    expandedEntityIDs: $expandedEntityIDs
+                    expandedEntityIDs: $expandedEntityIDs,
+                    showingAddComponent: $showingAddComponent
                 )
 
                 // Script graphs as first-class, browsable assets: open the editor
@@ -527,12 +544,18 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     store.send(.newScriptGraphTapped)
                     centerMode = .graph
                 }
+                if store.selection != nil {
+                    Divider()
+                    Button("Add Component…", systemImage: "puzzlepiece.extension") {
+                        showingAddComponent = true
+                    }
+                }
             } label: {
                 Label("New", systemImage: "plus")
             }
             .menuIndicator(.hidden)
             .disabled(store.rootEntity == nil)
-            .help("Create a new asset")
+            .help("Create an asset or add a component to the selected entity")
         }
         ToolbarItem {
             Button("Open…", systemImage: "folder") { presentOpenPanel() }
@@ -649,6 +672,7 @@ private struct EntityOutlineRows: View {
     let entity: RCP3Entity
     let rootID: RCP3Entity.ID
     @Binding var expandedEntityIDs: Set<RCP3Entity.ID>
+    @Binding var showingAddComponent: Bool
 
     private var components: [EntityOutlinerComponent] { entity.outlinerComponents }
     private var hasChildren: Bool { !components.isEmpty || !entity.children.isEmpty }
@@ -666,7 +690,8 @@ private struct EntityOutlineRows: View {
                         store: store,
                         entity: child,
                         rootID: rootID,
-                        expandedEntityIDs: $expandedEntityIDs
+                        expandedEntityIDs: $expandedEntityIDs,
+                        showingAddComponent: $showingAddComponent
                     )
                 }
             } label: {
@@ -720,8 +745,10 @@ private struct EntityOutlineRows: View {
             }
         }
 
-        Button("Add Component...") {}
-            .disabled(true)
+        Button("Add Component...") {
+            store.send(.selected(entity.id))
+            showingAddComponent = true
+        }
         Button("Frame Selection") {}
             .disabled(true)
         Button("Replace With Asset...") {}
@@ -865,6 +892,7 @@ private struct ComponentInspectorView: View {
 struct EntityInspectorView: View {
     @Bindable var store: StoreOf<DocumentFeature>
     let entity: RCP3Entity
+    @Binding var showingAddComponent: Bool
 
     var body: some View {
         Form {
@@ -900,6 +928,14 @@ struct EntityInspectorView: View {
                 ScriptGraphSection(graph: graph)
             }
 
+            // RCP's bottom "Add Component" button — opens the shared component picker.
+            Section {
+                Button("Add Component", systemImage: "puzzlepiece.extension") {
+                    showingAddComponent = true
+                }
+                .frame(maxWidth: .infinity)
+            }
+
             Section {
                 Menu("Add", systemImage: "plus") {
                     Button("Box", systemImage: "cube") {
@@ -926,6 +962,89 @@ struct EntityInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
+    }
+}
+
+// MARK: - Add Component picker (shared across entry points)
+
+/// One component the Add Component picker can offer, grouped by `category`. Only
+/// `isSupported` items are addable today; the rest are shown disabled (RCP lists the
+/// full catalog). `type` is the on-disk `__type` written when added.
+private struct AddComponentItem: Identifiable, Sendable {
+    let id: String          // component `__type`
+    let name: String
+    let category: String
+    let systemImage: String
+    let isSupported: Bool
+}
+
+private enum ComponentCatalog {
+    /// The components the picker lists. Categories mirror RCP's grouping; only the
+    /// ones Deconstructed 3 can author today are enabled. More enable as supported.
+    static let all: [AddComponentItem] = [
+        .init(id: "re_scripting_component", name: "Scripting", category: "Gameplay",
+              systemImage: "chevron.left.forwardslash.chevron.right", isSupported: true),
+    ]
+}
+
+/// The shared, searchable, categorized component picker — the same floating menu RCP
+/// opens from its sidebar, outliner context menu, and inspector button.
+private struct AddComponentPicker: View {
+    let onSelect: (String) -> Void
+    let onCancel: () -> Void
+    @State private var query = ""
+
+    private var groups: [(category: String, items: [AddComponentItem])] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let items = ComponentCatalog.all.filter {
+            q.isEmpty || $0.name.localizedCaseInsensitiveContains(q)
+        }
+        return Dictionary(grouping: items, by: \.category)
+            .map { (category: $0.key, items: $0.value.sorted { $0.name < $1.name }) }
+            .sorted { $0.category < $1.category }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Add Component").font(.headline)
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+            }
+            .padding(12)
+
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search", text: $query).textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            List {
+                if groups.isEmpty {
+                    Text("No components match \u{201C}\(query)\u{201D}")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(groups, id: \.category) { group in
+                    Section(group.category.uppercased()) {
+                        ForEach(group.items) { item in
+                            Button {
+                                onSelect(item.id)
+                            } label: {
+                                Label(item.name, systemImage: item.systemImage)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!item.isSupported)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 320, minHeight: 360)
     }
 }
 

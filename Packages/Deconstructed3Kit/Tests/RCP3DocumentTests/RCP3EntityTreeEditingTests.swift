@@ -251,6 +251,39 @@ import TMFormat
         #expect(!deleted)
         #expect(!editor.hasUnsavedChanges)
     }
+
+    // MARK: Add Scripting Component
+
+    @Test func addsScriptingComponentInDefaultShapeAndIsIdempotent() throws {
+        let root = try #require(try TM.parse(Self.world).objectValue)
+        var counter = 0
+        let makeUUID = { counter += 1; return "uuid-\(counter)" }
+        let component = RCP3EntityTreeWriteBack.scriptingComponentDefault(makeUUID: makeUUID)
+
+        // The default shape: a source with an empty graph (+interface) and
+        // validation_settings { path: "" }, and NO prototype link (unassigned).
+        #expect(component.type == "re_scripting_component")
+        let source = try #require(component["source"]?.objectValue)
+        #expect(source["__prototype_uuid"] == nil)
+        #expect(source["graph"]?.objectValue?["interface"] != nil)
+        #expect(source["validation_settings"]?.objectValue?["path"]?.stringValue == "")
+
+        // Added to the box's components array.
+        let boxID = "11111111-1111-1111-1111-111111111111"
+        let (updated, added) = RCP3EntityTreeWriteBack.addingComponent(component, toEntityID: boxID, in: root)
+        #expect(added)
+        let box = try #require(RCP3Bundle.findEntity(id: boxID, in: updated))
+        let types = (box["components"]?.arrayValue ?? []).compactMap { $0.objectValue?.type }
+        #expect(types.contains("re_scripting_component"))
+
+        // Idempotent: a second add is a no-op (one component of that type).
+        let (again, addedAgain) = RCP3EntityTreeWriteBack.addingComponent(component, toEntityID: boxID, in: updated)
+        #expect(!addedAgain)
+        let box2 = try #require(RCP3Bundle.findEntity(id: boxID, in: again))
+        let scriptingCount = (box2["components"]?.arrayValue ?? [])
+            .filter { $0.objectValue?.type == "re_scripting_component" }.count
+        #expect(scriptingCount == 1)
+    }
 }
 
 private func childSortChildren(in object: TMObject) -> [String] {
