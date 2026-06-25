@@ -188,8 +188,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
            let nodeID = model.selectedNodeID,
            model.node(nodeID) != nil {
             NodeInspectorView(model: model, nodeID: nodeID)
-        } else if let selection = selectedOutlinerComponent,
-                  selection.entityID == store.selection,
+        } else if let selection = validComponentSelection,
                   let entity = store.selectedEntity {
             ComponentInspectorView(store: store, entity: entity, component: selection.component)
         } else if let entity = store.selectedEntity {
@@ -197,6 +196,19 @@ public struct DocumentView<CanonicalPlay: View>: View {
         } else {
             ContentUnavailableView("Nothing selected", systemImage: "cube")
         }
+    }
+
+    /// The outliner component-row selection, but ONLY while the selected entity still
+    /// carries that component. Derived from the live entity, so removing a component
+    /// (e.g. "Remove Component") makes the now-stale selection fall back to the entity
+    /// inspector — the component row's "parent" — instead of rendering a gone component.
+    private var validComponentSelection: EntityOutlinerComponentSelection? {
+        guard let selection = selectedOutlinerComponent,
+              selection.entityID == store.selection,
+              let entity = store.selectedEntity,
+              entity.outlinerComponents.contains(where: { $0.id == selection.component.id })
+        else { return nil }
+        return selection
     }
 
     // MARK: Sidebar
@@ -258,7 +270,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
     private var outlineSelection: Binding<String?> {
         Binding(
             get: {
-                if let component = selectedOutlinerComponent, component.entityID == store.selection {
+                if let component = validComponentSelection {
                     return OutlineSelectionID.component(
                         entityID: component.entityID,
                         componentID: component.component.id
