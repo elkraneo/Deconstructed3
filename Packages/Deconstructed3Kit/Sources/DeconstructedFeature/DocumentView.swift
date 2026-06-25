@@ -125,25 +125,40 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 .toolbar { sidebarToolbar }
                 .frame(minWidth: 240)
         } content: {
-            centerColumn
-                .frame(minWidth: 320)
-                .toolbar { centerToolbar }
-                // Fall back to the viewport whenever there's nothing to show in the
-                // graph canvas (no open asset and the selection has no graph), so the
-                // mode can't get stuck on an empty canvas.
-                .onChange(of: store.openScriptGraphID == nil && store.selectedScriptGraph == nil) { _, empty in
-                    if empty { centerMode = .viewport }
-                }
-                // Opening a graph asset from the sidebar switches the center to it.
-                .onChange(of: store.openScriptGraphID) { _, id in
-                    if id != nil { centerMode = .graph }
-                }
-                // RUN / PREVIEW: compile + run the shown graph on the RCP3 runtime.
-                .sheet(isPresented: $showsPreview) {
-                    if let graph = previewableGraph {
-                        ScriptGraphPreviewView(graph: graph)
+            // Center column over a RCP-style Project Browser bottom panel (resizable).
+            VSplitView {
+                centerColumn
+                    .frame(minWidth: 320, minHeight: 220)
+                ProjectBrowserPanel(
+                    store: store,
+                    onNewGraph: {
+                        store.send(.newScriptGraphTapped)
+                        centerMode = .graph
+                    },
+                    onOpenGraph: { id in
+                        store.send(.scriptGraphOpened(id))
+                        centerMode = .graph
                     }
+                )
+                .frame(minHeight: 120, idealHeight: 160)
+            }
+            .toolbar { centerToolbar }
+            // Fall back to the viewport whenever there's nothing to show in the
+            // graph canvas (no open asset and the selection has no graph), so the
+            // mode can't get stuck on an empty canvas.
+            .onChange(of: store.openScriptGraphID == nil && store.selectedScriptGraph == nil) { _, empty in
+                if empty { centerMode = .viewport }
+            }
+            // Opening a graph asset switches the center to it.
+            .onChange(of: store.openScriptGraphID) { _, id in
+                if id != nil { centerMode = .graph }
+            }
+            // RUN / PREVIEW: compile + run the shown graph on the RCP3 runtime.
+            .sheet(isPresented: $showsPreview) {
+                if let graph = previewableGraph {
+                    ScriptGraphPreviewView(graph: graph)
                 }
+            }
         } detail: {
             detailColumn
         }
@@ -203,44 +218,8 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     expandedEntityIDs: $expandedEntityIDs,
                     showingAddComponent: $showingAddComponent
                 )
-
-                // Script graphs as first-class, browsable documents — the library
-                // where isolated graphs are created, seen, and opened (so a scripting
-                // component has something to point at). ALWAYS shown (with an empty
-                // state + inline "+") so there's a persistent home for them, not just
-                // when some already exist. Buttons (not selectable rows) so they don't
-                // fight the entity tree's selection binding.
-                Section {
-                    if store.scriptGraphAssets.isEmpty {
-                        Text("No script graphs — tap + to create one.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(store.scriptGraphAssets) { asset in
-                        Button {
-                            store.send(.scriptGraphOpened(asset.id))
-                            centerMode = .graph
-                        } label: {
-                            Label(asset.name, systemImage: "point.3.connected.trianglepath.dotted")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
-                    }
-                } header: {
-                    HStack {
-                        Text("Script Graphs")
-                        Spacer()
-                        Button {
-                            store.send(.newScriptGraphTapped)
-                            centerMode = .graph
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.plain)
-                        .help("New Script Graph")
-                        .accessibilityLabel("New Script Graph")
-                    }
-                }
+                // Script-graph documents live in the bottom Project Browser panel
+                // (RCP-style), not in this entity outliner.
             }
             .listStyle(.sidebar)
             .onAppear { expandRootIfNeeded(root) }
@@ -1025,6 +1004,69 @@ struct EntityInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(entity.displayName)
+    }
+}
+
+// MARK: - Project Browser (bottom panel)
+
+/// The RCP-style **Project Browser**: a bottom panel listing the project's
+/// script-graph documents (Name / Kind), with a `+` to create one. Selecting a row
+/// opens it in the center canvas. This is the home for *isolated* script graphs —
+/// the documents a scripting component points at.
+private struct ProjectBrowserPanel: View {
+    @Bindable var store: StoreOf<DocumentFeature>
+    let onNewGraph: () -> Void
+    let onOpenGraph: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Label("Project Browser", systemImage: "tray.full")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Button(action: onNewGraph) {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("New Script Graph")
+                .accessibilityLabel("New Script Graph")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            Divider()
+
+            if store.scriptGraphAssets.isEmpty {
+                VStack(spacing: 4) {
+                    Text("No assets").foregroundStyle(.secondary)
+                    Text("Tap + to create a Script Graph.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(store.scriptGraphAssets) { asset in
+                        Button {
+                            onOpenGraph(asset.id)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Label(asset.name, systemImage: "point.3.connected.trianglepath.dotted")
+                                Spacer()
+                                Text("Script Graph")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(.background)
     }
 }
 
