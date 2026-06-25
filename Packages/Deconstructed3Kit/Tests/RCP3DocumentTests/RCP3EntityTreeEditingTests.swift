@@ -70,6 +70,54 @@ import TMFormat
     ]
     """
 
+    /// A world whose box carries an INLINE, non-empty `re_scripting_component`
+    /// (`source.graph` with a node) — how RCP saves an assigned/edited graph.
+    static let scriptedWorld = """
+    __type: "tm_entity"
+    __uuid: "7a000000-0000-0000-0000-000000000001"
+    name: "world"
+    children: [
+      {
+        __uuid: "7a000000-0000-0000-0000-0000000000b0"
+        name: "box"
+        components: [
+          {
+            __type: "re_scripting_component"
+            __uuid: "7a000000-0000-0000-0000-0000000000c0"
+            source: {
+              __uuid: "7a000000-0000-0000-0000-0000000000c1"
+              graph: {
+                __uuid: "7a000000-0000-0000-0000-0000000000c2"
+                nodes: [
+                  {
+                    __uuid: "7a000000-0000-0000-0000-0000000000c3"
+                    type: "tm_on_added_to_scene"
+                  }
+                ]
+                interface: {
+                  __uuid: "7a000000-0000-0000-0000-0000000000c4"
+                }
+              }
+            }
+          }
+        ]
+      }
+      {
+        __uuid: "7a000000-0000-0000-0000-0000000000d0"
+        name: "plain"
+      }
+    ]
+    """
+
+    static func makeScriptedBundle() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "rcp3-scripted-\(UUID().uuidString).realitycomposerpro")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir.appending(path: "project.rcp").path, contents: Data())
+        try scriptedWorld.write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
+        return dir
+    }
+
     static func makeTempBundle() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appending(path: "rcp3-tree-edit-\(UUID().uuidString).realitycomposerpro")
@@ -285,7 +333,7 @@ import TMFormat
         #expect(scriptingCount == 1)
     }
 
-    @Test func scriptedEntitiesListsOnlyAssignedScriptingComponents() throws {
+    @Test func scriptedEntitiesListsOnlyEntitiesWithRunnableGraphs() throws {
         var editor = try RCP3Editor.open(Self.makeTempBundle())
         defer { try? FileManager.default.removeItem(at: editor.bundle.url) }
         let boxID = try #require(editor.entity.children.first?.id)
@@ -293,14 +341,28 @@ import TMFormat
         // No scripts initially.
         #expect(editor.scriptedEntities().isEmpty)
 
-        // An UNASSIGNED scripting component contributes no script (no resolvable graph).
+        // An UNASSIGNED scripting component resolves to an EMPTY graph (a no-op), so it
+        // is NOT listed — only graphs with nodes actually run.
         editor.addScriptingComponent(toEntityID: boxID)
         #expect(editor.scriptedEntities().isEmpty)
 
-        // After assigning an asset, the box runs that graph.
+        // Assigning an empty asset is still a no-op (0 nodes) → not listed.
         let asset = try editor.createScriptGraphAsset()
         editor.assignScriptGraph(toEntityID: boxID, assetRootUUID: asset.id)
-        #expect(editor.scriptedEntities().map(\.entityID) == [boxID])
+        #expect(editor.scriptedEntities().isEmpty)
+    }
+
+    @Test func scriptedEntitiesListsInlineNonEmptyGraphs() throws {
+        // A scene saved by RCP carries the graph INLINE in `source.graph` (with nodes),
+        // not as a prototype reference. This is the "scene already had components before
+        // opening" case — it must run.
+        let bundle = try Self.makeScriptedBundle()
+        let editor = try RCP3Editor.open(bundle)
+        defer { try? FileManager.default.removeItem(at: bundle) }
+
+        let scripted = editor.scriptedEntities()
+        #expect(scripted.map(\.entityID) == ["7a000000-0000-0000-0000-0000000000b0"])
+        #expect(scripted.first?.graph.nodes.isEmpty == false)
     }
 
     @Test func canonicalPlaySceneSignatureReflectsScriptChanges() {

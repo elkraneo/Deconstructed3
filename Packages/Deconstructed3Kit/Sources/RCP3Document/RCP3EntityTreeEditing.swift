@@ -106,10 +106,11 @@ public extension RCP3Editor {
     public func scriptedEntities() -> [EntityScriptBinding] {
         var bindings: [EntityScriptBinding] = []
         func visit(_ node: RCP3Entity) {
-            // Only ASSIGNED components contribute (an unassigned "(none)" component
-            // resolves to its empty inline graph, which would just be a no-op).
-            if assignedScriptGraphAssetID(entityID: node.id) != nil,
-               let graph = scriptGraph(forEntityID: node.id) {
+            // Include any entity whose resolved graph has nodes — i.e. actually does
+            // something. Covers inline-override graphs AND asset-referenced ones, and in
+            // either `components` or `components__instantiated`. An unassigned/empty
+            // component resolves to a no-op (0 nodes) and is skipped.
+            if let graph = scriptGraph(forEntityID: node.id), !graph.nodes.isEmpty {
                 bindings.append(EntityScriptBinding(entityID: node.id, graph: graph))
             }
             for child in node.children { visit(child) }

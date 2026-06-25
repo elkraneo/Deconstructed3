@@ -166,14 +166,24 @@ extension RCP3Bundle {
            let instanceGraph = source["graph"]?.objectValue {
             // Recover the prototype graph's node types so `nodes__instantiated`
             // entries (which carry no `type`) can resolve theirs.
+            let prototypeUUID = source.prototypeUUID
             let prototypeNodeTypes: [String: String]
-            if let prototypeUUID = source.prototypeUUID,
+            if let prototypeUUID,
                let prototype = scriptGraphPrototypeGraph(prototypeUUID: prototypeUUID) {
                 prototypeNodeTypes = Self.nodeTypes(in: prototype)
             } else {
                 prototypeNodeTypes = [:]
             }
-            return RCP3ScriptGraph(tmGraph: instanceGraph, prototypeNodeTypes: prototypeNodeTypes)
+            let parsed = RCP3ScriptGraph(tmGraph: instanceGraph, prototypeNodeTypes: prototypeNodeTypes)
+            // An EMPTY inline override with an assigned prototype (our "assign asset"
+            // flow sets only the prototype link, not inline nodes) → run the referenced
+            // asset's graph. A non-empty inline override is the user's edits and wins.
+            if parsed.nodes.isEmpty,
+               let prototypeUUID,
+               let assetGraph = scriptGraph(prototypeUUID: prototypeUUID) {
+                return assetGraph
+            }
+            return parsed
         }
 
         // Pure reference: load the standalone prototype asset as-is.
