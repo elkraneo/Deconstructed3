@@ -99,6 +99,25 @@ public extension RCP3Editor {
         scriptingComponent(entityID: id)?["source"]?.objectValue?["__prototype_uuid"]?.stringValue
     }
 
+    /// Every entity (depth-first) that carries a `re_scripting_component` with a
+    /// resolvable graph, paired with that graph — the scripts a Play/Simulate run
+    /// executes (each on its own entity), mirroring RCP. Unassigned components
+    /// ("(none)") resolve to no graph and are skipped.
+    public func scriptedEntities() -> [EntityScriptBinding] {
+        var bindings: [EntityScriptBinding] = []
+        func visit(_ node: RCP3Entity) {
+            // Only ASSIGNED components contribute (an unassigned "(none)" component
+            // resolves to its empty inline graph, which would just be a no-op).
+            if assignedScriptGraphAssetID(entityID: node.id) != nil,
+               let graph = scriptGraph(forEntityID: node.id) {
+                bindings.append(EntityScriptBinding(entityID: node.id, graph: graph))
+            }
+            for child in node.children { visit(child) }
+        }
+        visit(entity)
+        return bindings
+    }
+
     private func scriptingComponent(entityID id: RCP3Entity.ID) -> TMObject? {
         guard let entity = RCP3Bundle.findEntity(id: id, in: root) else { return nil }
         for value in entity["components"]?.arrayValue ?? [] {

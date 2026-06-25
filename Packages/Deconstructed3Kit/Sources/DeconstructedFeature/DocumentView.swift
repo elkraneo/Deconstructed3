@@ -61,28 +61,21 @@ public struct DocumentView<CanonicalPlay: View>: View {
 
     /// Whether the canonical Play view is filling the center column instead of the
     /// viewport/graph. Pure presentation state. Pressing ▶ Play sets it; Stop clears
-    /// it and returns to the normal viewport. The graph it runs is captured at the
-    /// moment Play starts, so a selection change while playing doesn't swap targets.
+    /// it. Play reads the LIVE scene (`store.canonicalPlayScene`) and the view is
+    /// re-`id`'d on its signature, so adding/assigning a graph during Play rebuilds and
+    /// runs it.
     @State private var isPlaying = false
-    /// The graph the in-flight canonical Play is running, captured when Play begins so
-    /// the canonical view's identity is stable across body passes. `nil` when stopped.
-    @State private var playingGraph: RCP3ScriptGraph?
-    /// The scene captured at Play start (frozen so edits mid-run don't disturb it) and
-    /// the id of the entity the graph attaches to. `nil` when stopped.
-    @State private var playingScene: RCP3SceneNode?
-    @State private var playingSelectionID: RCP3Entity.ID?
 
-    /// Builds the canonical Play view for a graph, the captured scene, and the selected
-    /// entity id: the **app** injects its concrete `CanonicalPlayView` here (it owns the
-    /// presentation + links the binary `RealityKitScripting` framework). The tested
-    /// library never names that view, so `swift test` stays free of the binary
-    /// dependency. The default returns `EmptyView`, so previews/tests construct
-    /// `DocumentView` with no canonical view.
-    private let canonicalPlay: (RCP3ScriptGraph, RCP3SceneNode?, RCP3Entity.ID?) -> CanonicalPlay
+    /// Builds the canonical Play view from the live `CanonicalPlayScene`: the **app**
+    /// injects its concrete `CanonicalPlayView` here (it owns the presentation + links
+    /// the binary `RealityKitScripting` framework). The tested library never names that
+    /// view, so `swift test` stays free of the binary dependency. The default returns
+    /// `EmptyView`, so previews/tests construct `DocumentView` with no canonical view.
+    private let canonicalPlay: (CanonicalPlayScene) -> CanonicalPlay
 
     public init(
         store: StoreOf<DocumentFeature>,
-        @ViewBuilder canonicalPlay: @escaping (RCP3ScriptGraph, RCP3SceneNode?, RCP3Entity.ID?) -> CanonicalPlay
+        @ViewBuilder canonicalPlay: @escaping (CanonicalPlayScene) -> CanonicalPlay
     ) {
         self.store = store
         self.canonicalPlay = canonicalPlay
@@ -115,7 +108,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// independent of which entity is selected or the center mode — same availability
     /// as Run Preview.
     private var canPlay: Bool {
-        previewableGraph != nil
+        store.canonicalPlayScene.hasRunnable
     }
 
     public var body: some View {
@@ -312,13 +305,15 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// distinct mode, and StageView rebuilds cleanly when Play stops.)
     @ViewBuilder
     private var centerColumn: some View {
-        if isPlaying, let graph = playingGraph {
+        if isPlaying {
             // CANONICAL PLAY (inline): the app injects its concrete play view here,
-            // reconstructing the captured scene and attaching the graph to the selected
-            // entity. Fills the column; `.id(playKey)` keeps identity stable for the run.
-            canonicalPlay(graph, playingScene, playingSelectionID)
+            // reconstructing the LIVE scene and attaching every scripted entity's graph.
+            // `.id(signature)` rebuilds the run when the set of scripts changes (a graph
+            // added/assigned during Play), so the preview reflects it.
+            let playScene = store.canonicalPlayScene
+            canonicalPlay(playScene)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .id(playKey)
+                .id(playScene.signature)
         } else {
             viewportColumn
         }
@@ -394,14 +389,6 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// genuinely different graph as before.
     private func graphKey(for graph: RCP3ScriptGraph) -> String {
         store.state.canvasKey(forShownGraph: graph)
-    }
-
-    /// The key for the graph the Run/Play affordance would run, for `.id(_:)` stability
-    /// of the inline canonical Play view across body passes. Same derivation as
-    /// `graphKey(for:)`, off the previewable graph; falls back to a constant when nothing
-    /// is runnable (the Play view isn't shown then).
-    private var playKey: String {
-        previewableGraph.map { graphKey(for: $0) } ?? "graph"
     }
 
     /// The canvas over the host-owned model for `graph`, (re)building the model when the
@@ -539,16 +526,12 @@ public struct DocumentView<CanonicalPlay: View>: View {
 
     // MARK: Play lifecycle (canonical, inline)
 
-    /// Starts the inline canonical Play: captures the graph to run and swaps the
-    /// center column to the app-injected canonical view. A no-op if already playing
-    /// or there's nothing runnable.
+    /// Starts the inline canonical Play, swapping the center column to the app-injected
+    /// canonical view. It reads the LIVE `store.canonicalPlayScene`, so no capture is
+    /// needed — edits during Play re-key the view and rebuild. No-op if already playing
+    /// or nothing is runnable.
     private func startPlaying() {
-        guard !isPlaying, let graph = previewableGraph else { return }
-        playingGraph = graph
-        // Capture the scene + selection so the graph attaches to the selected entity;
-        // held for the whole run so a selection/edit change mid-play doesn't disturb it.
-        playingScene = store.sceneGraph
-        playingSelectionID = store.selection
+        guard !isPlaying, store.canonicalPlayScene.hasRunnable else { return }
         isPlaying = true
     }
 
@@ -556,9 +539,6 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// its `RealityView`/runtime) and returns the center column to the viewport.
     private func stopPlaying() {
         isPlaying = false
-        playingGraph = nil
-        playingScene = nil
-        playingSelectionID = nil
     }
 
     @ToolbarContentBuilder
@@ -870,7 +850,7 @@ public extension DocumentView where CanonicalPlay == EmptyView {
     /// load the binary `RealityKitScripting` framework); the real app always provides
     /// a concrete canonical view via the designated `@ViewBuilder` init.
     init(store: StoreOf<DocumentFeature>) {
-        self.init(store: store) { _, _, _ in EmptyView() }
+        self.init(store: store) { _ in EmptyView() }
     }
 }
 

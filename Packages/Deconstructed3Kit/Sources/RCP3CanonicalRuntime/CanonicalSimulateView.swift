@@ -26,14 +26,10 @@ import simd
 /// small collapsible OVERLAY rather than a fixed panel that would dominate the view.
 @MainActor
 public struct CanonicalPlayView: View {
-    /// The compiled JavaScript (computed once from the graph).
-    private let source: String
-    /// The captured scene root to reconstruct, or `nil` when no project is open (a
-    /// neutral box stands in). Frozen at Play start so edits mid-run don't disturb it.
-    private let scene: RCP3SceneNode?
-    /// The id of the selected entity to attach the script to. Falls back to the scene
-    /// root when `nil` or not found.
-    private let selectedID: String?
+    /// The scene to reconstruct + the per-entity scripts to run. Driven LIVE by the
+    /// host and the view is re-`id`'d on `input.signature`, so adding/assigning a graph
+    /// to any entity during Play rebuilds and runs it (RCP-like scene simulation).
+    private let input: CanonicalPlayScene
     @State private var validationError: String?
     /// Whether the runtime-log console overlay is shown. Collapsed by default so the
     /// inline 3D viewport isn't dominated; a small toolbar button toggles it.
@@ -44,10 +40,20 @@ public struct CanonicalPlayView: View {
     /// JSContext behind. Weak: this view must never keep the scene/context alive.
     @State private var session = PlaySession()
 
-    public init(graph: RCP3ScriptGraph, scene: RCP3SceneNode? = nil, selectedID: String? = nil) {
-        self.source = CanonicalScriptGraphCompiler().compile(graph)
-        self.scene = scene
-        self.selectedID = selectedID
+    public init(_ input: CanonicalPlayScene) {
+        self.input = input
+    }
+
+    /// Compiles a graph to the public-runtime JavaScript.
+    private static func compile(_ graph: RCP3ScriptGraph) -> String {
+        CanonicalScriptGraphCompiler().compile(graph)
+    }
+
+    /// A representative compiled source for pre-run validation: the first entity
+    /// script, else the preview graph, else `nil`.
+    private var representativeSource: String? {
+        if let first = input.scripts.first { return Self.compile(first.graph) }
+        return input.previewGraph.map(Self.compile)
     }
 
     /// Reconstructs `node` (and its subtree) into RealityKit entities — the same
@@ -115,28 +121,39 @@ public struct CanonicalPlayView: View {
             // entities (idempotent).
             try? CanonicalRuntime.initializeOnce()
 
-            // Reconstruct the captured scene and attach the script to the SELECTED
-            // entity — like RCP, where the scripting component lives on the entity.
-            // The compiled script binds to `this.entity`, so it drives whatever entity
-            // it's attached to, in the context of the rest of the scene.
+            // Reconstruct the scene and attach EACH entity's compiled script to its
+            // entity — like RCP, where every scripting component runs. The compiled
+            // script binds to `this.entity`, so it drives the entity it's attached to.
             let container = Entity()
-            let scriptHost: Entity
-            if let scene {
-                let built = Self.reconstruct(scene)
+            if let sceneRoot = input.scene {
+                let built = Self.reconstruct(sceneRoot)
                 container.addChild(built.root)
-                scriptHost = selectedID.flatMap { built.byID[$0] } ?? built.root
+                if input.scripts.isEmpty {
+                    // No entity-attached scripts: preview the open/example graph on the
+                    // selected entity (or the scene root) so ▶-on-a-graph still works.
+                    if let previewGraph = input.previewGraph {
+                        let host = input.previewEntityID.flatMap { built.byID[$0] } ?? built.root
+                        host.components.set(ScriptingComponent(source: Self.compile(previewGraph)))
+                    }
+                } else {
+                    for binding in input.scripts {
+                        guard let host = built.byID[binding.entityID] else { continue }
+                        host.components.set(ScriptingComponent(source: Self.compile(binding.graph)))
+                    }
+                }
             } else {
                 // No project open (e.g. an example graph): a neutral box stands in so
-                // the graph still runs and can be exercised.
+                // the preview graph still runs and can be exercised.
                 let box = ModelEntity(
                     mesh: .generateBox(size: 1),
                     materials: [SimpleMaterial(color: .gray, isMetallic: false)]
                 )
                 box.name = "entity"
                 container.addChild(box)
-                scriptHost = box
+                if let previewGraph = input.previewGraph {
+                    box.components.set(ScriptingComponent(source: Self.compile(previewGraph)))
+                }
             }
-            scriptHost.components.set(ScriptingComponent(source: source))
             content.add(container)
             // Frame the reconstructed scene for the inline orbit camera.
             Self.normalizeForFraming(container)
@@ -180,8 +197,8 @@ public struct CanonicalPlayView: View {
             }
         }
         .animation(.default, value: showsConsole)
-        .task {
-            validationError = CanonicalRuntime.validationError(in: source)
+        .task(id: input.signature) {
+            validationError = representativeSource.flatMap(CanonicalRuntime.validationError(in:))
         }
     }
 }

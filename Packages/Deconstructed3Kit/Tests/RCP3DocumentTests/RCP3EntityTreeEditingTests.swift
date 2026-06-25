@@ -285,6 +285,38 @@ import TMFormat
         #expect(scriptingCount == 1)
     }
 
+    @Test func scriptedEntitiesListsOnlyAssignedScriptingComponents() throws {
+        var editor = try RCP3Editor.open(Self.makeTempBundle())
+        defer { try? FileManager.default.removeItem(at: editor.bundle.url) }
+        let boxID = try #require(editor.entity.children.first?.id)
+
+        // No scripts initially.
+        #expect(editor.scriptedEntities().isEmpty)
+
+        // An UNASSIGNED scripting component contributes no script (no resolvable graph).
+        editor.addScriptingComponent(toEntityID: boxID)
+        #expect(editor.scriptedEntities().isEmpty)
+
+        // After assigning an asset, the box runs that graph.
+        let asset = try editor.createScriptGraphAsset()
+        editor.assignScriptGraph(toEntityID: boxID, assetRootUUID: asset.id)
+        #expect(editor.scriptedEntities().map(\.entityID) == [boxID])
+    }
+
+    @Test func canonicalPlaySceneSignatureReflectsScriptChanges() {
+        let g = RCP3ScriptGraph(id: "graph-1", nodes: [], wires: [], data: [])
+        let empty = CanonicalPlayScene(scene: nil, scripts: [], previewGraph: nil, previewEntityID: nil)
+        let withScript = CanonicalPlayScene(
+            scene: nil,
+            scripts: [EntityScriptBinding(entityID: "e1", graph: g)],
+            previewGraph: nil,
+            previewEntityID: nil
+        )
+        #expect(!empty.hasRunnable)
+        #expect(withScript.hasRunnable)
+        #expect(empty.signature != withScript.signature)
+    }
+
     @Test func assigningScriptGraphWiresAndClearsSourcePrototype() throws {
         // A box already carrying an (unassigned) scripting component.
         let root = try #require(try TM.parse(Self.world).objectValue)

@@ -107,6 +107,21 @@ public struct DocumentFeature: Sendable {
             return editor.assignedScriptGraphAssetID(entityID: selection)
         }
 
+        /// The live input for a canonical Play/Simulate run: the scene, every scripted
+        /// entity's graph, and a preview fallback (open/selected graph). Read live so
+        /// the running preview reflects graphs added/assigned during Play (the host
+        /// re-keys the Play view on `.signature`). Depends on `assetsRevision` so an
+        /// assignment that scans disk re-derives.
+        public var canonicalPlayScene: CanonicalPlayScene {
+            _ = assetsRevision
+            return CanonicalPlayScene(
+                scene: sceneGraph,
+                scripts: editor?.scriptedEntities() ?? [],
+                previewGraph: openScriptGraph ?? selectedScriptGraph,
+                previewEntityID: selection
+            )
+        }
+
         /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by
         /// name), empty when no project is open. The sidebar lists these so a user can
         /// open a graph editor directly.
@@ -313,12 +328,15 @@ public struct DocumentFeature: Sendable {
                 // under Gameplay (more components slot in as they're supported).
                 if componentType == "re_scripting_component" {
                     state.editor?.addScriptingComponent(toEntityID: id, makeUUID: makeUUID)
+                    state.assetsRevision += 1
                 }
                 return .none
 
             case let .assignScriptGraph(assetRootUUID):
                 guard let id = state.selection else { return .none }
                 state.editor?.assignScriptGraph(toEntityID: id, assetRootUUID: assetRootUUID)
+                // Bump so the live play scene (and any preview) re-derives the scripts.
+                state.assetsRevision += 1
                 return .none
 
             case .saveTapped:

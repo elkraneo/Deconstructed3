@@ -20,10 +20,10 @@ public struct AppRootView<CanonicalPlay: View>: View {
 
     /// Builds the inline canonical Play view for a graph, the captured scene, and the
     /// selected entity id. Threaded straight through to `DocumentView`'s seam.
-    private let canonicalPlay: (RCP3ScriptGraph, RCP3SceneNode?, RCP3Entity.ID?) -> CanonicalPlay
+    private let canonicalPlay: (CanonicalPlayScene) -> CanonicalPlay
 
     public init(
-        @ViewBuilder canonicalPlay: @escaping (RCP3ScriptGraph, RCP3SceneNode?, RCP3Entity.ID?) -> CanonicalPlay
+        @ViewBuilder canonicalPlay: @escaping (CanonicalPlayScene) -> CanonicalPlay
     ) {
         self.canonicalPlay = canonicalPlay
     }
@@ -37,7 +37,7 @@ public extension AppRootView where CanonicalPlay == EmptyView {
     /// Constructs an `AppRootView` with NO canonical Play view (previews/tests). The
     /// real app provides a concrete view via the designated `@ViewBuilder` init.
     init() {
-        self.init { _, _, _ in EmptyView() }
+        self.init { _ in EmptyView() }
     }
 }
 
