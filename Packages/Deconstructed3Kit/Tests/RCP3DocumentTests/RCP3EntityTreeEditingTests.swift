@@ -284,6 +284,42 @@ import TMFormat
             .filter { $0.objectValue?.type == "re_scripting_component" }.count
         #expect(scriptingCount == 1)
     }
+
+    @Test func assigningScriptGraphWiresAndClearsSourcePrototype() throws {
+        // A box already carrying an (unassigned) scripting component.
+        let root = try #require(try TM.parse(Self.world).objectValue)
+        let boxID = "11111111-1111-1111-1111-111111111111"
+        var n = 0
+        let component = RCP3EntityTreeWriteBack.scriptingComponentDefault(makeUUID: { n += 1; return "u\(n)" })
+        let (withComponent, _) = RCP3EntityTreeWriteBack.addingComponent(component, toEntityID: boxID, in: root)
+
+        func source(in tree: TMObject) throws -> TMObject {
+            let box = try #require(RCP3Bundle.findEntity(id: boxID, in: tree))
+            let comp = try #require((box["components"]?.arrayValue ?? [])
+                .compactMap(\.objectValue).first { $0.type == "re_scripting_component" })
+            return try #require(comp["source"]?.objectValue)
+        }
+
+        // Assign → source + source.graph carry the prototype links.
+        let (assigned, ok) = RCP3EntityTreeWriteBack.assigningScriptGraph(
+            toEntityID: boxID, assetRootUUID: "asset-root", graphUUID: "asset-graph", in: withComponent
+        )
+        #expect(ok)
+        let assignedSource = try source(in: assigned)
+        #expect(assignedSource["__prototype_type"]?.stringValue == "re_scripting_source_graph")
+        #expect(assignedSource["__prototype_uuid"]?.stringValue == "asset-root")
+        #expect(assignedSource["graph"]?.objectValue?["__prototype_type"]?.stringValue == "tm_graph")
+        #expect(assignedSource["graph"]?.objectValue?["__prototype_uuid"]?.stringValue == "asset-graph")
+
+        // Clear ((none)) → the prototype links are removed.
+        let (cleared, okClear) = RCP3EntityTreeWriteBack.assigningScriptGraph(
+            toEntityID: boxID, assetRootUUID: nil, graphUUID: nil, in: assigned
+        )
+        #expect(okClear)
+        let clearedSource = try source(in: cleared)
+        #expect(clearedSource["__prototype_uuid"] == nil)
+        #expect(clearedSource["graph"]?.objectValue?["__prototype_uuid"] == nil)
+    }
 }
 
 private func childSortChildren(in object: TMObject) -> [String] {

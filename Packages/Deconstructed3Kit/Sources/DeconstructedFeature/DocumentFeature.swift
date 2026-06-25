@@ -88,6 +88,20 @@ public struct DocumentFeature: Sendable {
             return editor.scriptGraph(forEntityID: selection)
         }
 
+        /// Whether the selected entity carries a `re_scripting_component` — drives the
+        /// inspector's Scripting Component section + its script-graph picker.
+        public var selectedEntityHasScriptingComponent: Bool {
+            guard let editor, let selection else { return false }
+            return editor.hasScriptingComponent(entityID: selection)
+        }
+
+        /// The script-graph asset root `__uuid` assigned to the selected entity's
+        /// scripting component, or `nil` for `(none)`. The picker's current value.
+        public var assignedScriptGraphAssetID: String? {
+            guard let editor, let selection else { return nil }
+            return editor.assignedScriptGraphAssetID(entityID: selection)
+        }
+
         /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by
         /// name), empty when no project is open. The sidebar lists these so a user can
         /// open a graph editor directly.
@@ -143,6 +157,9 @@ public struct DocumentFeature: Sendable {
         /// User added a component (by `__type`) to the selected entity, via the
         /// shared Add Component picker. Today only `re_scripting_component` is wired.
         case addComponent(String)
+        /// User assigned a script-graph asset (by root `__uuid`) to the selected
+        /// entity's scripting component, or cleared it with `nil` ("(none)").
+        case assignScriptGraph(String?)
         /// User invoked Save (toolbar / ⌘S).
         case saveTapped
         /// `documentClient.save` finished (success or failure).
@@ -277,6 +294,11 @@ public struct DocumentFeature: Sendable {
                 if componentType == "re_scripting_component" {
                     state.editor?.addScriptingComponent(toEntityID: id, makeUUID: makeUUID)
                 }
+                return .none
+
+            case let .assignScriptGraph(assetRootUUID):
+                guard let id = state.selection else { return .none }
+                state.editor?.assignScriptGraph(toEntityID: id, assetRootUUID: assetRootUUID)
                 return .none
 
             case .saveTapped:

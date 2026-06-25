@@ -894,6 +894,15 @@ struct EntityInspectorView: View {
     let entity: RCP3Entity
     @Binding var showingAddComponent: Bool
 
+    /// The scripting component's assigned asset (root `__uuid`), or `nil` for `(none)`.
+    /// Writing sends `.assignScriptGraph`, which wires the component's `source`.
+    private var scriptGraphAssignment: Binding<String?> {
+        Binding(
+            get: { store.assignedScriptGraphAssetID },
+            set: { store.send(.assignScriptGraph($0)) }
+        )
+    }
+
     var body: some View {
         Form {
             TextField(
@@ -920,6 +929,19 @@ struct EntityInspectorView: View {
                     ForEach(secondaryComponents) { component in
                         Label(component.displayName, systemImage: component.symbolName)
                             .foregroundStyle(component.tint)
+                    }
+                }
+            }
+
+            // RCP's Scripting Component: a Script picker (Prototype dropdown) listing
+            // the project's script-graph assets, applied to this entity's component.
+            if store.selectedEntityHasScriptingComponent {
+                Section("Scripting Component") {
+                    Picker("Script", selection: scriptGraphAssignment) {
+                        Text("(none)").tag(String?.none)
+                        ForEach(store.scriptGraphAssets) { asset in
+                            Text(asset.name).tag(String?.some(asset.id))
+                        }
                     }
                 }
             }

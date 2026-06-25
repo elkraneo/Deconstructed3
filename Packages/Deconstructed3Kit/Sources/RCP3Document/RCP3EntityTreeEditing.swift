@@ -65,6 +65,49 @@ public extension RCP3Editor {
         guard added else { return false }
         return apply { $0 = updated }
     }
+
+    /// Assigns a script-graph asset to the entity's `re_scripting_component` — the RCP
+    /// "Script → Prototype" dropdown. Points the component's `source` at the asset
+    /// (`source.__prototype_uuid` = `assetRootUUID`, `source.graph.__prototype_uuid` =
+    /// the asset's `tm_graph` uuid). `nil` clears it back to `(none)`. Returns `false`
+    /// when the entity has no scripting component.
+    @discardableResult
+    mutating func assignScriptGraph(
+        toEntityID id: RCP3Entity.ID,
+        assetRootUUID: String?
+    ) -> Bool {
+        // The asset's inner `tm_graph` __uuid, for the graph-level prototype link.
+        let graphUUID = assetRootUUID.flatMap { bundle.scriptGraph(assetID: $0)?.id }
+        let (updated, ok) = RCP3EntityTreeWriteBack.assigningScriptGraph(
+            toEntityID: id,
+            assetRootUUID: assetRootUUID,
+            graphUUID: graphUUID,
+            in: root
+        )
+        guard ok else { return false }
+        return apply { $0 = updated }
+    }
+
+    /// Whether the entity with `id` carries a `re_scripting_component`.
+    func hasScriptingComponent(entityID id: RCP3Entity.ID) -> Bool {
+        scriptingComponent(entityID: id) != nil
+    }
+
+    /// The asset root `__uuid` currently assigned to the entity's scripting component
+    /// (`source.__prototype_uuid`), or `nil` when there's no component or it is `(none)`.
+    func assignedScriptGraphAssetID(entityID id: RCP3Entity.ID) -> String? {
+        scriptingComponent(entityID: id)?["source"]?.objectValue?["__prototype_uuid"]?.stringValue
+    }
+
+    private func scriptingComponent(entityID id: RCP3Entity.ID) -> TMObject? {
+        guard let entity = RCP3Bundle.findEntity(id: id, in: root) else { return nil }
+        for value in entity["components"]?.arrayValue ?? [] {
+            if let component = value.objectValue, component.type == "re_scripting_component" {
+                return component
+            }
+        }
+        return nil
+    }
 }
 
 enum RCP3EntityTreeWriteBack {
@@ -119,6 +162,68 @@ enum RCP3EntityTreeWriteBack {
             guard let child = value.objectValue else { continue }
             let (updatedChild, added) = addingComponent(component, toEntityID: id, in: child)
             if added {
+                updatedChildren[index] = .object(updatedChild)
+                var updated = object
+                updated.set(.array(updatedChildren), forKey: "children")
+                return (updated, true)
+            }
+        }
+        return (object, false)
+    }
+
+    /// Points the entity's `re_scripting_component.source` at a script-graph asset
+    /// (or clears it when `assetRootUUID == nil`), searching the tree recursively.
+    /// Sets `source.__prototype_{type,uuid}` (= `re_scripting_source_graph` / asset
+    /// root) and `source.graph.__prototype_{type,uuid}` (= `tm_graph` / asset graph),
+    /// mirroring the observed assigned shape. Returns `(updated, didAssign)`.
+    static func assigningScriptGraph(
+        toEntityID id: RCP3Entity.ID,
+        assetRootUUID: String?,
+        graphUUID: String?,
+        in object: TMObject
+    ) -> (TMObject, Bool) {
+        if matches(object, id: id) {
+            var components = object["components"]?.arrayValue ?? []
+            guard let index = components.firstIndex(where: {
+                $0.objectValue?.type == "re_scripting_component"
+            }), var component = components[index].objectValue,
+                var source = component["source"]?.objectValue else {
+                return (object, false)
+            }
+
+            if let assetRootUUID {
+                source.set(.string("re_scripting_source_graph"), forKey: "__prototype_type")
+                source.set(.string(assetRootUUID), forKey: "__prototype_uuid")
+                if var graph = source["graph"]?.objectValue {
+                    graph.set(.string("tm_graph"), forKey: "__prototype_type")
+                    if let graphUUID { graph.set(.string(graphUUID), forKey: "__prototype_uuid") }
+                    source.set(.object(graph), forKey: "graph")
+                }
+            } else {
+                source.remove(key: "__prototype_type")
+                source.remove(key: "__prototype_uuid")
+                if var graph = source["graph"]?.objectValue {
+                    graph.remove(key: "__prototype_type")
+                    graph.remove(key: "__prototype_uuid")
+                    source.set(.object(graph), forKey: "graph")
+                }
+            }
+
+            component.set(.object(source), forKey: "source")
+            components[index] = .object(component)
+            var updated = object
+            updated.set(.array(components), forKey: "components")
+            return (updated, true)
+        }
+
+        guard let children = object["children"]?.arrayValue else { return (object, false) }
+        var updatedChildren = children
+        for (index, value) in children.enumerated() {
+            guard let child = value.objectValue else { continue }
+            let (updatedChild, ok) = assigningScriptGraph(
+                toEntityID: id, assetRootUUID: assetRootUUID, graphUUID: graphUUID, in: child
+            )
+            if ok {
                 updatedChildren[index] = .object(updatedChild)
                 var updated = object
                 updated.set(.array(updatedChildren), forKey: "children")
