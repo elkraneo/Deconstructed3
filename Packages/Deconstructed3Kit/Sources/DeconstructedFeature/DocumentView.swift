@@ -135,6 +135,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
                         store.send(.newScriptGraphTapped)
                         centerMode = .graph
                     },
+                    onNewFromSample: { example in
+                        createScriptGraph(fromSample: example)
+                    },
                     onOpenGraph: { id in
                         store.send(.scriptGraphOpened(id))
                         centerMode = .graph
@@ -507,6 +510,28 @@ public struct DocumentView<CanonicalPlay: View>: View {
     private func loadExample(_ example: ScriptGraphExample) {
         store.send(.exampleSelected(id: example.id, graph: example.graph))
         centerMode = .graph
+    }
+
+    /// Materializes a curated SAMPLE into a real `.tm_script_graph` document in the
+    /// project, then opens it. Unlike `loadExample` (an ephemeral in-memory graph),
+    /// this writes a proper asset file — so a scripting component can point at it.
+    /// Done host-side (MainActor) like `save()`: create the empty asset, then write the
+    /// sample's nodes/connections/data into it via the proven write-back path.
+    private func createScriptGraph(fromSample example: ScriptGraphExample) {
+        guard let editor = store.editor else { return }
+        do {
+            let asset = try editor.createScriptGraphAsset(named: example.name)
+            let model = ScriptGraphEditorModel(graph: example.graph)
+            try ScriptGraphWriteBack.write(
+                model: model,
+                toAssetWithRootUUID: asset.id,
+                in: editor.bundle.url
+            )
+            store.send(.scriptGraphOpened(asset.id))
+            centerMode = .graph
+        } catch {
+            assertionFailure("create-from-sample failed: \(error)")
+        }
     }
 
     // MARK: Play lifecycle (canonical, inline)
@@ -1016,6 +1041,7 @@ struct EntityInspectorView: View {
 private struct ProjectBrowserPanel: View {
     @Bindable var store: StoreOf<DocumentFeature>
     let onNewGraph: () -> Void
+    let onNewFromSample: (ScriptGraphExample) -> Void
     let onOpenGraph: (String) -> Void
 
     var body: some View {
@@ -1024,11 +1050,21 @@ private struct ProjectBrowserPanel: View {
                 Label("Project Browser", systemImage: "tray.full")
                     .font(.caption.weight(.semibold))
                 Spacer()
-                Button(action: onNewGraph) {
+                // "+" creates a blank Script Graph, or materializes a curated SAMPLE
+                // into a real `.tm_script_graph` document (so it's assignable).
+                Menu {
+                    Button("Empty Script Graph", systemImage: "doc") { onNewGraph() }
+                    Divider()
+                    Section("Samples") {
+                        ForEach(ScriptGraphExamples.all) { example in
+                            Button(example.name) { onNewFromSample(example) }
+                        }
+                    }
+                } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.borderless)
-                .help("New Script Graph")
+                .menuIndicator(.hidden)
+                .help("New Script Graph (blank or from a sample)")
                 .accessibilityLabel("New Script Graph")
             }
             .padding(.horizontal, 10)

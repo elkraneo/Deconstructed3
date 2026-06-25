@@ -1196,4 +1196,35 @@ import RCP3Document
             try ScriptGraphWriteBack.write(model: model, toEntityWithID: "nope", rootFileURL: rootURL)
         }
     }
+
+    // MARK: Materialize a sample into a real asset
+
+    /// Creating an empty Script Graph asset and writing a sample graph's nodes into it
+    /// yields a real, reopenable `.tm_script_graph` document carrying those nodes — the
+    /// "+ → sample" Project Browser action (so a scripting component can point at it).
+    @Test func materializeSampleGraphCreatesReopenableAsset() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "rcp3-sample-\(UUID().uuidString).realitycomposerpro")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        FileManager.default.createFile(atPath: dir.appending(path: "project.rcp").path, contents: Data())
+        try "__type: \"tm_entity\"\n__uuid: \"w\"\nname: \"world\""
+            .write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
+        let bundle = try RCP3Bundle.open(dir)
+
+        // 1. Create the empty asset, 2. write a sample graph's nodes into it.
+        let asset = try bundle.createScriptGraphAsset(named: "Spin")
+        let update = RCP3ScriptGraph.Node(id: "a", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "b", type: "tm_set_component", label: "Set")
+        let exec = RCP3ScriptGraph.Wire(id: "w", from: "a", to: "b")
+        let model = ScriptGraphEditorModel(graph: RCP3ScriptGraph(nodes: [update, set], wires: [exec], data: []))
+        try ScriptGraphWriteBack.write(model: model, toAssetWithRootUUID: asset.id, in: bundle.url)
+
+        // Reopen: the document is enumerable and carries the sample's nodes.
+        let reopened = try RCP3Bundle.open(dir)
+        #expect(reopened.scriptGraphAssets().contains { $0.id == asset.id && $0.name == "Spin" })
+        let loaded = try #require(reopened.scriptGraph(assetID: asset.id))
+        #expect(loaded.nodes.count == 2)
+        #expect(loaded.nodes.contains { $0.type == "tm_update" })
+    }
 }
