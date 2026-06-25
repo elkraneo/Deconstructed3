@@ -58,6 +58,13 @@ public struct RCP3Editor: Sendable, Equatable {
         try bundle.createScriptGraphAsset(named: base, makeUUID: makeUUID)
     }
 
+    /// Renames the script-graph asset with this root `__uuid` (filename only; the uuid
+    /// and any component assignment are preserved). Returns the renamed asset.
+    @discardableResult
+    public func renameScriptGraphAsset(id: String, to newName: String) throws -> RCP3ScriptGraphAsset {
+        try bundle.renameScriptGraphAsset(id: id, to: newName)
+    }
+
     /// Loads and parses the bundle's `*.tm_script_graph` asset with this id (the
     /// asset's root `__uuid`).
     public func scriptGraph(assetID: String) -> RCP3ScriptGraph? {

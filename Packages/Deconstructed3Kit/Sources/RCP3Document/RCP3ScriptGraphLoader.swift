@@ -20,6 +20,12 @@ public struct RCP3ScriptGraphAsset: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Errors from script-graph asset file operations.
+public enum RCP3ScriptGraphAssetError: Error, Equatable {
+    /// No `*.tm_script_graph` in the bundle has the given root `__uuid`.
+    case notFound(id: String)
+}
+
 extension RCP3Bundle {
     /// Every `*.tm_script_graph` asset in this bundle, as browsable assets sorted by
     /// name. Scans `url` non-recursively, parsing each file's root and pairing its
@@ -69,6 +75,39 @@ extension RCP3Bundle {
             encoding: .utf8
         )
         return RCP3ScriptGraphAsset(id: asset.uuid ?? name, name: name)
+    }
+
+    /// Renames a script-graph asset's file (found by its root `__uuid`) to `newName`,
+    /// de-duplicating with a numeric suffix. Only the FILENAME changes — the root
+    /// `__uuid` is untouched, so an entity's scripting component (which points at the
+    /// uuid, not the name) stays assigned. Returns the renamed asset. Throws
+    /// `RCP3ScriptGraphAssetError.notFound` when no file has that id.
+    @discardableResult
+    public func renameScriptGraphAsset(id: String, to newName: String) throws -> RCP3ScriptGraphAsset {
+        let fileManager = FileManager.default
+        let entries = (try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+        let sourceURL = entries.first { fileURL in
+            fileURL.pathExtension == "tm_script_graph"
+                && (try? String(contentsOf: fileURL, encoding: .utf8))
+                    .flatMap { try? TM.parse($0).objectValue }?.uuid == id
+        }
+        guard let sourceURL else { throw RCP3ScriptGraphAssetError.notFound(id: id) }
+
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Script Graph" : trimmed
+        func target(_ name: String) -> URL { url.appending(path: "\(name).tm_script_graph") }
+
+        var name = base
+        var suffix = 1
+        // De-dup, but the source file's own name is not a collision (no-op rename).
+        while target(name) != sourceURL, fileManager.fileExists(atPath: target(name).path) {
+            name = "\(base) \(suffix)"
+            suffix += 1
+        }
+        if target(name) != sourceURL {
+            try fileManager.moveItem(at: sourceURL, to: target(name))
+        }
+        return RCP3ScriptGraphAsset(id: id, name: name)
     }
 
     /// The observed on-disk shape of an empty script-graph asset:

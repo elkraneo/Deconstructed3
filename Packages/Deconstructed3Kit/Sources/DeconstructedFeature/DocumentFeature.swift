@@ -16,6 +16,11 @@ public struct DocumentFeature: Sendable {
     public struct State: Equatable, Sendable {
         /// The active editing session, or `nil` until a bundle is opened.
         public var editor: RCP3Editor?
+        /// Bumped whenever the bundle's asset FILES change (create / rename) — the
+        /// observation token that invalidates `scriptGraphAssets` (a disk scan, which
+        /// editing the in-memory editor doesn't otherwise touch), so the Project
+        /// Browser reflects new/renamed graphs.
+        public var assetsRevision = 0
         /// The selected entity's `RCP3Entity.id` (uuid), bridged to tree + viewport.
         public var selection: RCP3Entity.ID?
         /// The id (asset root `__uuid`) of the script-graph asset opened directly from
@@ -105,7 +110,10 @@ public struct DocumentFeature: Sendable {
         /// The browsable `*.tm_script_graph` assets in the open bundle (sorted by
         /// name), empty when no project is open. The sidebar lists these so a user can
         /// open a graph editor directly.
-        public var scriptGraphAssets: [RCP3ScriptGraphAsset] { editor?.scriptGraphAssets() ?? [] }
+        public var scriptGraphAssets: [RCP3ScriptGraphAsset] {
+            _ = assetsRevision // establish an observation dependency on file changes
+            return editor?.scriptGraphAssets() ?? []
+        }
 
         /// The graph currently open in the center column: the loaded example graph (if
         /// any) takes precedence; otherwise the asset opened from the sidebar (by
@@ -154,6 +162,8 @@ public struct DocumentFeature: Sendable {
         /// User created a new Script Graph asset (browser "+"). Writes a new
         /// `*.tm_script_graph` to the bundle and opens it in the editor.
         case newScriptGraphTapped
+        /// User renamed a script-graph asset (by root `__uuid`) in the Project Browser.
+        case renameScriptGraph(id: String, to: String)
         /// User added a component (by `__type`) to the selected entity, via the
         /// shared Add Component picker. Today only `re_scripting_component` is wired.
         case addComponent(String)
@@ -278,11 +288,21 @@ public struct DocumentFeature: Sendable {
                 guard let asset = try? editor.createScriptGraphAsset(makeUUID: makeUUID) else {
                     return .none
                 }
-                // Open the new asset in the editor (re-scans the bundle on render, so
-                // it also appears in the sidebar's Script Graphs list).
+                // Open the new asset; bump the token so the Project Browser re-scans.
+                state.assetsRevision += 1
                 state.openAssetGraphID = asset.id
                 state.loadedExample = nil
                 state.loadedExampleID = nil
+                return .none
+
+            case let .renameScriptGraph(id, newName):
+                guard let renamed = try? state.editor?.renameScriptGraphAsset(id: id, to: newName) else {
+                    return .none
+                }
+                // Filename changed on disk but no in-memory editor state did — bump the
+                // token so the browser list reflects the new name.
+                state.assetsRevision += 1
+                _ = renamed
                 return .none
 
             case let .addComponent(componentType):

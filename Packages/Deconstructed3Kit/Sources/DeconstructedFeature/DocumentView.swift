@@ -141,6 +141,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     onOpenGraph: { id in
                         store.send(.scriptGraphOpened(id))
                         centerMode = .graph
+                    },
+                    onRename: { id, newName in
+                        store.send(.renameScriptGraph(id: id, to: newName))
                     }
                 )
                 .frame(minHeight: 120, idealHeight: 160)
@@ -1043,6 +1046,15 @@ private struct ProjectBrowserPanel: View {
     let onNewGraph: () -> Void
     let onNewFromSample: (ScriptGraphExample) -> Void
     let onOpenGraph: (String) -> Void
+    let onRename: (String, String) -> Void
+
+    /// The asset being renamed (drives the rename alert) and its edit buffer.
+    @State private var renamingAssetID: String?
+    @State private var renameText = ""
+
+    private var isRenaming: Binding<Bool> {
+        Binding(get: { renamingAssetID != nil }, set: { if !$0 { renamingAssetID = nil } })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1097,12 +1109,26 @@ private struct ProjectBrowserPanel: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
+                        .contextMenu {
+                            Button("Rename…", systemImage: "pencil") {
+                                renameText = asset.name
+                                renamingAssetID = asset.id
+                            }
+                        }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity)
         .background(.background)
+        .alert("Rename Script Graph", isPresented: isRenaming) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let id = renamingAssetID { onRename(id, renameText) }
+                renamingAssetID = nil
+            }
+            Button("Cancel", role: .cancel) { renamingAssetID = nil }
+        }
     }
 }
 

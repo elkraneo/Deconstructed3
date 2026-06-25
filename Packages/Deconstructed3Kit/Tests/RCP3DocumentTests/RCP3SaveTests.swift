@@ -199,4 +199,31 @@ import RCP3Document
         #expect(second.name == "Script Graph 1")
         #expect(bundle.scriptGraphAssets().count == 2)
     }
+
+    @Test func renameScriptGraphAssetMovesFileAndPreservesID() throws {
+        let dir = try Self.makeTempBundle(world: Self.minimalWorld)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bundle = try RCP3Bundle.open(dir)
+
+        let asset = try bundle.createScriptGraphAsset()       // "Script Graph"
+        let renamed = try bundle.renameScriptGraphAsset(id: asset.id, to: "Spin")
+
+        // Same root uuid (so a component assignment survives), new filename on disk.
+        #expect(renamed.id == asset.id)
+        #expect(renamed.name == "Spin")
+        #expect(!FileManager.default.fileExists(atPath: dir.appending(path: "Script Graph.tm_script_graph").path))
+        #expect(FileManager.default.fileExists(atPath: dir.appending(path: "Spin.tm_script_graph").path))
+        #expect(bundle.scriptGraphAssets().map(\.id) == [asset.id])
+        #expect(bundle.scriptGraph(assetID: asset.id) != nil)
+
+        // Renaming onto an existing name de-duplicates.
+        let other = try bundle.createScriptGraphAsset(named: "Other")
+        let collided = try bundle.renameScriptGraphAsset(id: other.id, to: "Spin")
+        #expect(collided.name == "Spin 1")
+
+        // Unknown id throws notFound.
+        #expect(throws: RCP3ScriptGraphAssetError.notFound(id: "nope")) {
+            try bundle.renameScriptGraphAsset(id: "nope", to: "X")
+        }
+    }
 }
