@@ -204,21 +204,41 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     showingAddComponent: $showingAddComponent
                 )
 
-                // Script graphs as first-class, browsable assets: open the editor
-                // directly here instead of hunting for which entity references one.
-                // Buttons (not selectable rows) so they don't fight the entity tree's
-                // selection binding.
-                if !store.scriptGraphAssets.isEmpty {
-                    Section("Script Graphs") {
-                        ForEach(store.scriptGraphAssets) { asset in
-                            Button {
-                                store.send(.scriptGraphOpened(asset.id))
-                            } label: {
-                                Label(asset.name, systemImage: "point.3.connected.trianglepath.dotted")
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
+                // Script graphs as first-class, browsable documents — the library
+                // where isolated graphs are created, seen, and opened (so a scripting
+                // component has something to point at). ALWAYS shown (with an empty
+                // state + inline "+") so there's a persistent home for them, not just
+                // when some already exist. Buttons (not selectable rows) so they don't
+                // fight the entity tree's selection binding.
+                Section {
+                    if store.scriptGraphAssets.isEmpty {
+                        Text("No script graphs — tap + to create one.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(store.scriptGraphAssets) { asset in
+                        Button {
+                            store.send(.scriptGraphOpened(asset.id))
+                            centerMode = .graph
+                        } label: {
+                            Label(asset.name, systemImage: "point.3.connected.trianglepath.dotted")
                         }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(asset.id == store.openScriptGraphID ? Color.accentColor : .primary)
+                    }
+                } header: {
+                    HStack {
+                        Text("Script Graphs")
+                        Spacer()
+                        Button {
+                            store.send(.newScriptGraphTapped)
+                            centerMode = .graph
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.plain)
+                        .help("New Script Graph")
+                        .accessibilityLabel("New Script Graph")
                     }
                 }
             }
@@ -876,10 +896,31 @@ private struct ComponentInspectorView: View {
         case let .other(type):
             Form {
                 LabeledContent("Type", value: type)
+                // RCP's Scripting Component shows its Script → Prototype picker right
+                // here when the component row is selected.
+                if type == "re_scripting_component" {
+                    Section("Script") {
+                        Picker("Prototype", selection: scriptGraphAssignment) {
+                            Text("(none)").tag(String?.none)
+                            ForEach(store.scriptGraphAssets) { asset in
+                                Text(asset.name).tag(String?.some(asset.id))
+                            }
+                        }
+                    }
+                }
             }
             .formStyle(.grouped)
             .navigationTitle(component.displayName)
         }
+    }
+
+    /// Binding for the scripting component's assigned asset; writing sends
+    /// `.assignScriptGraph`. Shared semantics with the entity inspector's picker.
+    private var scriptGraphAssignment: Binding<String?> {
+        Binding(
+            get: { store.assignedScriptGraphAssetID },
+            set: { store.send(.assignScriptGraph($0)) }
+        )
     }
 }
 
