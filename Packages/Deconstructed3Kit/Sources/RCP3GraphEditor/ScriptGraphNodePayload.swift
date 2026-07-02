@@ -92,7 +92,7 @@ public enum ScriptGraphNodeRole: String, Sendable, Hashable, CaseIterable {
     /// Events / triggers — gesture, collision, lifecycle (`tm_gesture_event_*`,
     /// `tm_update`, `tm_did_*`, `tm_will_*`, `*_event_*`).
     case event
-    /// State-mutating actions (`tm_set_*`, `tm_add_*`, `tm_remove_*`, `tm_clone`,
+    /// State-mutating actions (`tm_set_*`, `tm_add_*`, `tm_remove_*`,
     /// `tm_send_*`, `tm_play_*`, …).
     case action
     /// Value producers / readers (`tm_get_*`, `tm_break_*`, constants, `tm_make_*`).
