@@ -206,7 +206,10 @@ equals that prototype uuid**. Resolution = scan the bundle dir for
 - **`connections[]`** — `{ __uuid, from_node, to_node, from_connector_hash?, to_connector_hash? }`.
   `from_node`/`to_node` are **node `__uuid`s**. A connection with **no** connector
   hashes is an **exec / control-flow** wire; one **with** both hashes is a **data**
-  wire (`fromPin → toPin`).
+  wire (`fromPin → toPin`). The **unnamed** exec pin's connector name is the empty
+  string, whose hash is the member's default value and is therefore **omitted** on
+  disk — so a **named exec output wired to the unnamed exec input** (e.g.
+  Delay.`once` → Set Transform) carries **only `from_connector_hash`**.
 - **`data[]`** — `{ __uuid, to_node, to_connector_hash, data }`: a constant input
   bound to a node's pin; `data` is a typed object (`__type`). The inner `data: { … }`
   value object's shape per value kind is the **value-format table** below.
