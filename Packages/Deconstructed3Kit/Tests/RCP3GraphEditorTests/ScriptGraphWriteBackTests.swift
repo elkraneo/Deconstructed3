@@ -1238,7 +1238,7 @@ import RCP3Document
             .write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
         let bundle = try RCP3Bundle.open(dir)
 
-        var expectedNodeCounts: [String: Int] = [:]
+        var expectedByAssetID: [String: ScriptGraphExample] = [:]
         for example in ScriptGraphExamples.all {
             let asset = try bundle.createScriptGraphAsset(named: example.name)
             try ScriptGraphWriteBack.write(
@@ -1246,16 +1246,74 @@ import RCP3Document
                 toAssetWithRootUUID: asset.id,
                 in: bundle.url
             )
-            expectedNodeCounts[asset.id] = example.graph.nodes.count
+            expectedByAssetID[asset.id] = example
         }
 
         let reopened = try RCP3Bundle.open(dir)
         let assets = reopened.scriptGraphAssets()
         #expect(assets.count == ScriptGraphExamples.all.count)
         for asset in assets {
+            let example = try #require(expectedByAssetID[asset.id])
             let graph = try #require(reopened.scriptGraph(assetID: asset.id))
-            #expect(graph.nodes.count == expectedNodeCounts[asset.id])
-            #expect(!graph.nodes.isEmpty)
+            assertStructurallyEqual(graph, to: example.graph, corpus: example.name)
         }
+    }
+
+    /// The automated half of the certification procedure's "reopen intact" gate:
+    /// a reopened materialized graph must carry the SAME structure as its source —
+    /// every node (type, label, position), every wire's connectivity including pin
+    /// hashes, every authored data literal's value, and the variable table.
+    private func assertStructurallyEqual(
+        _ reopened: RCP3ScriptGraph,
+        to source: RCP3ScriptGraph,
+        corpus name: String
+    ) {
+        let sourceNodes = Dictionary(uniqueKeysWithValues: source.nodes.map { ($0.id, $0) })
+        let reopenedNodes = Dictionary(uniqueKeysWithValues: reopened.nodes.map { ($0.id, $0) })
+        #expect(Set(reopenedNodes.keys) == Set(sourceNodes.keys), "\(name): node identities")
+        for (id, expected) in sourceNodes {
+            guard let actual = reopenedNodes[id] else { continue }
+            #expect(actual.type == expected.type, "\(name)/\(id): type")
+            #expect(actual.label == expected.label, "\(name)/\(id): label")
+            #expect(actual.x == expected.x && actual.y == expected.y, "\(name)/\(id): position")
+            #expect(actual.variableName == expected.variableName, "\(name)/\(id): variableName")
+            #expect(
+                actual.variableRefUUID == expected.variableRefUUID,
+                "\(name)/\(id): variableRefUUID"
+            )
+        }
+
+        // Wire and literal identities are serialization details; connectivity and
+        // authored values are the structure that must survive.
+        struct Connection: Hashable {
+            let from: String
+            let to: String
+            let fromPin: UInt64?
+            let toPin: UInt64?
+        }
+        let sourceWires = Set(source.wires.map {
+            Connection(from: $0.from, to: $0.to, fromPin: $0.fromPin, toPin: $0.toPin)
+        })
+        let reopenedWires = Set(reopened.wires.map {
+            Connection(from: $0.from, to: $0.to, fromPin: $0.fromPin, toPin: $0.toPin)
+        })
+        #expect(reopenedWires == sourceWires, "\(name): wire connectivity")
+
+        struct Literal: Hashable {
+            let toNode: String
+            let toPin: UInt64
+            let value: TMGraphValue?
+        }
+        let sourceLiterals = Set(source.data.map {
+            Literal(toNode: $0.toNode, toPin: $0.toPin, value: $0.value)
+        })
+        let reopenedLiterals = Set(reopened.data.map {
+            Literal(toNode: $0.toNode, toPin: $0.toPin, value: $0.value)
+        })
+        #expect(reopenedLiterals == sourceLiterals, "\(name): data literals")
+
+        let sourceVariables = Set(source.variables.map { "\($0.uuid)|\($0.name)" })
+        let reopenedVariables = Set(reopened.variables.map { "\($0.uuid)|\($0.name)" })
+        #expect(reopenedVariables == sourceVariables, "\(name): variable table")
     }
 }

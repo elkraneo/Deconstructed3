@@ -29,6 +29,28 @@ import RCP3Document
         #expect(model.connections.contains { !$0.isExec && $0.label == "translation" })
     }
 
+    /// A named exec output wired to the UNNAMED exec input serializes with only
+    /// `from_connector_hash` (the unnamed pin's hash is the omitted default), so it
+    /// parses as `(fromPin, nil)`. Seeding must carry it as a named-exec connection —
+    /// this shape used to fall through both wire lanes and vanish from the canvas.
+    @Test func namedExecOutToUnnamedExecInSeedsAConnection() {
+        let delay = RCP3ScriptGraph.Node(id: "delay", type: "tm_delay")
+        let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_component")
+        let once = RCP3ScriptGraph.Wire(
+            id: "w", from: "delay", to: "set",
+            fromPin: TMHash.murmur64a("once"), toPin: nil
+        )
+        let model = ScriptGraphEditorModel(
+            graph: RCP3ScriptGraph(nodes: [delay, set], wires: [once], data: [])
+        )
+        let conn = model.connections.first
+        #expect(model.connections.count == 1)
+        #expect(conn?.isExec == true)
+        #expect(conn?.label == "once")
+        #expect(conn?.from.pinID == "exec.out." + TMHash.hex(TMHash.murmur64a("once")))
+        #expect(conn?.to.pinID == "exec.in")
+    }
+
     @Test func connectionRules() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let dragExecOut = GraphPortRef(nodeID: "n1", pinID: "exec.out")

@@ -85,4 +85,7 @@ The corpus is declared by `ScriptGraphExamples.all`. Automated tests enforce:
 - complete certification metadata;
 - explicit observable outcomes and manual steps;
 - a declared editor `NodeSpec` for every used node type;
-- coverage for newly added control-flow and constructor behavior.
+- coverage for newly added control-flow and constructor behavior;
+- materialize → reopen structural equality for every example: node identities,
+  types, labels, positions, variable references, wire connectivity including
+  connector hashes, authored data-literal values, and the variable table.

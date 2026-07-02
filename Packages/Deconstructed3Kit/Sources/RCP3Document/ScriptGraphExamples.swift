@@ -652,12 +652,15 @@ public enum ScriptGraphExamples {
             ],
             wires: [
                 exec("e1", from: "tap", to: "delay"),
+                // Named exec out → the UNNAMED exec in: the unnamed pin's connector
+                // hash is the serializer's default (omitted on disk), so it is
+                // authored as nil — the same shape the parser reads back.
                 RCP3ScriptGraph.Wire(
                     id: "e2",
                     from: "delay",
                     to: "set",
                     fromPin: pin("once"),
-                    toPin: pin("")
+                    toPin: nil
                 ),
                 data("d", from: "position", "vec3", to: "set", "translation"),
             ],
@@ -690,12 +693,13 @@ public enum ScriptGraphExamples {
             ],
             wires: [
                 exec("e1", from: "tap", to: "once"),
+                // Named exec out → the unnamed exec in (see Delayed Move).
                 RCP3ScriptGraph.Wire(
                     id: "e2",
                     from: "once",
                     to: "set",
                     fromPin: pin("once"),
-                    toPin: pin("")
+                    toPin: nil
                 ),
                 data("d", from: "position", "vec3", to: "set", "translation"),
             ],

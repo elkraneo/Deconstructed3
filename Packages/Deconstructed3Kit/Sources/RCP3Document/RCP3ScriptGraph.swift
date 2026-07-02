@@ -343,6 +343,8 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         "contacts", "deltaTime", "simulationRootEntity", "playbackController",
         "source", "parent", "child", "children", "preservingWorldTransform",
         "name", "recursive", "isEnabled", "matrix",
+        // Named exec outputs of the control-flow nodes.
+        "always", "once", "true", "false", "step", "end",
     ]
 
     /// `[hash: name]` built from `knownPinNames`.

@@ -241,9 +241,14 @@ public final class ScriptGraphEditorModel {
                     isExec: true,
                     label: "exec"
                 ))
-            } else if let fromPin = wire.fromPin, let toPin = wire.toPin {
-                let execFromID = ScriptGraphPinResolver.execOutputHandleID(forHash: fromPin)
-                let execToID = ScriptGraphPinResolver.execInputHandleID(forHash: toPin)
+            } else {
+                // A wire with at least one connector hash. It is an exec wire when both
+                // ends resolve to exec handles the payloads declare — a missing hash is
+                // the UNNAMED exec pin (its connector name is the empty string, hash 0,
+                // which the serializer omits as the member's default). Delay.once →
+                // Set Transform is the canonical shape: named from, unnamed to.
+                let execFromID = ScriptGraphPinResolver.execOutputHandleID(forHash: wire.fromPin)
+                let execToID = ScriptGraphPinResolver.execInputHandleID(forHash: wire.toPin)
                 if pinIDsByNode[wire.from]?.contains(execFromID) == true,
                    pinIDsByNode[wire.to]?.contains(execToID) == true {
                     conns.append(GraphConnection(
@@ -251,10 +256,11 @@ public final class ScriptGraphEditorModel {
                         from: GraphPortRef(nodeID: wire.from, pinID: execFromID),
                         to: GraphPortRef(nodeID: wire.to, pinID: execToID),
                         isExec: true,
-                        label: RCP3ScriptGraph.label(forHash: fromPin)
+                        label: RCP3ScriptGraph.label(forHash: wire.fromPin ?? wire.toPin)
                     ))
                     continue
                 }
+                guard let fromPin = wire.fromPin, let toPin = wire.toPin else { continue }
                 conns.append(GraphConnection(
                     id: wire.id,
                     from: GraphPortRef(nodeID: wire.from, pinID: "out." + TMHash.hex(fromPin)),
