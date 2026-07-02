@@ -907,6 +907,16 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("Math3D.\(interp.function)(\(a.code), \(b.code), \(factor.code))", isVector: true)
             }
 
+            // Break (destructure) family. A break node has a single input `source` and one
+            // output per property of the value type; reading an output emits a member access
+            // on the source, `(<source>).<property>`. Component properties are scalars.
+            if Self.breakOutputNames(for: node.type) != nil {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen)
+                let property = outputPin.flatMap { Self.breakPropertyName(forHash: $0) }
+                    ?? outputPin.map { TMHash.hex($0) } ?? "value"
+                return Expr("(\(source.code)).\(property)")
+            }
+
             // Multiply family (vector/quaternion/matrix * operand). All three emit the
             // SAME `Math3D.multiply(a, b)` call — the runtime's vector-math `multiply`
             // dispatches on the operand types. Operands are the two pins `a`/`b`; the
@@ -1566,6 +1576,38 @@ public struct CanonicalScriptGraphCompiler {
             default:                   return nil
             }
         }
+
+        /// The Break (destructure) node types we lower, mapped to their value type's
+        /// property (= output pin) names. A break node reads its single `source` input and
+        /// exposes one output per property; the emission is `(<source>).<property>`. Only
+        /// the value types whose schema properties are the canonical component names (and
+        /// match the corresponding Make constructor inputs) are listed — quaternion, matrix,
+        /// entity, and the component/material breaks are deferred until their exact property
+        /// names are confirmed.
+        static func breakOutputNames(for type: String) -> [String]? {
+            switch type {
+            case "tm_break_vector2": return ["x", "y"]
+            case "tm_break_vector3": return ["x", "y", "z"]
+            case "tm_break_vector4": return ["x", "y", "z", "w"]
+            case "tm_break_cgpoint": return ["x", "y"]
+            case "tm_break_cgsize":  return ["width", "height"]
+            case "tm_break_color", "tm_break_cgcolor": return ["red", "green", "blue", "alpha"]
+            default: return nil
+            }
+        }
+
+        /// Reverse map from an output-pin hash to a break property name, for the union of
+        /// all `breakOutputNames`.
+        static func breakPropertyName(forHash hash: UInt64) -> String? {
+            breakPropertyNamesByHash[hash]
+        }
+
+        static let breakPropertyNamesByHash: [UInt64: String] = {
+            let names = ["x", "y", "z", "w", "width", "height", "red", "green", "blue", "alpha"]
+            var map: [UInt64: String] = [:]
+            for name in names { map[TMHash.murmur64a(name)] = name }
+            return map
+        }()
 
         /// The multiply family (`multiply_by_scalar`/`_by_quaternion`/`_by_matrix`), all
         /// of which lower to `Math3D.multiply(a, b)`.

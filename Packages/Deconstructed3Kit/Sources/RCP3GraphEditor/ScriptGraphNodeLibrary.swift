@@ -302,6 +302,14 @@ public enum ScriptGraphNodeLibrary {
         "tm_make_color": "Color",
         "tm_make_cgsize": "CGSize",
         "tm_make_edge_insets": "Edge Insets",
+        // Break
+        "tm_break_vector2": "Break Vector2",
+        "tm_break_vector3": "Break Vector3",
+        "tm_break_vector4": "Break Vector4",
+        "tm_break_cgpoint": "Break CGPoint",
+        "tm_break_cgsize": "Break CGSize",
+        "tm_break_color": "Break Color",
+        "tm_break_cgcolor": "Break CGColor",
         // String
         "tm_string_has_prefix": "Has Prefix",
         "tm_string_has_suffix": "Has Suffix",
@@ -718,6 +726,19 @@ public enum ScriptGraphNodeLibrary {
         "tm_make_color": NodeSpec(inputs: [data("red", "Red"), data("green", "Green"), data("blue", "Blue"), data("alpha", "Alpha")], outputs: [data("color", "Color")], category: .make),
         "tm_make_cgsize": NodeSpec(inputs: [data("width", "Width"), data("height", "Height")], outputs: [data("size", "Size")], category: .make),
         "tm_make_edge_insets": NodeSpec(inputs: [data("top", "Top"), data("left", "Left"), data("bottom", "Bottom"), data("right", "Right")], outputs: [data("insets", "Insets")], category: .make),
+
+        // MARK: Break
+        //
+        // Data-only destructurers: the inverse of Make. A single `source` input and one
+        // output per property of the value type (the observed pin is named `source`; the
+        // outputs are the type's component property names).
+        "tm_break_vector2": NodeSpec(inputs: [data("source", "Source")], outputs: [data("x", "X"), data("y", "Y")], category: .make),
+        "tm_break_vector3": NodeSpec(inputs: [data("source", "Source")], outputs: [data("x", "X"), data("y", "Y"), data("z", "Z")], category: .make),
+        "tm_break_vector4": NodeSpec(inputs: [data("source", "Source")], outputs: [data("x", "X"), data("y", "Y"), data("z", "Z"), data("w", "W")], category: .make),
+        "tm_break_cgpoint": NodeSpec(inputs: [data("source", "Source")], outputs: [data("x", "X"), data("y", "Y")], category: .make),
+        "tm_break_cgsize":  NodeSpec(inputs: [data("source", "Source")], outputs: [data("width", "Width"), data("height", "Height")], category: .make),
+        "tm_break_color":   NodeSpec(inputs: [data("source", "Source")], outputs: [data("red", "Red"), data("green", "Green"), data("blue", "Blue"), data("alpha", "Alpha")], category: .make),
+        "tm_break_cgcolor": NodeSpec(inputs: [data("source", "Source")], outputs: [data("red", "Red"), data("green", "Green"), data("blue", "Blue"), data("alpha", "Alpha")], category: .make),
 
         // MARK: String
         //

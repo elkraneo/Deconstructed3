@@ -356,6 +356,25 @@ The module names above are runtime JavaScript bindings. In particular, matrix
 constructors use the runtime's `Math3D` module; this is distinct from native Swift
 code that imports Apple's `Spatial` framework.
 
+**Break (destructure).** The inverse of Make: a single input **`source`** (the composite
+value) and one output per property of the value type, each named by the property. Reading
+an output emits a member access on the source, `(<source>).<property>`. The output property
+names are the value type's component names (the same schema the Make constructors read).
+
+| type | input | outputs |
+| --- | --- | --- |
+| `tm_break_vector2` | `source` | `x`, `y` |
+| `tm_break_vector3` | `source` | `x`, `y`, `z` |
+| `tm_break_vector4` | `source` | `x`, `y`, `z`, `w` |
+| `tm_break_cgpoint` | `source` | `x`, `y` |
+| `tm_break_cgsize` | `source` | `width`, `height` |
+| `tm_break_color` | `source` | `red`, `green`, `blue`, `alpha` |
+| `tm_break_cgcolor` | `source` | `red`, `green`, `blue`, `alpha` |
+
+Break nodes for quaternion, matrix, entity/scene, and the component/material/audio/collision
+value types exist but are **deferred** until each type's exact property names are confirmed
+(their component names are not the canonical `x/y/z`-style names).
+
 **String.**
 
 | type | inputs | outputs |

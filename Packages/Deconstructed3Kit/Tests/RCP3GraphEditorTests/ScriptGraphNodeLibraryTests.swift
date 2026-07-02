@@ -159,6 +159,9 @@ struct ScriptGraphNodeLibraryTests {
             "tm_make_vector4_with_vector3", "tm_make_matrix2x2", "tm_make_matrix3x3",
             "tm_make_matrix4x4", "tm_make_cgcolor", "tm_make_color", "tm_make_cgsize",
             "tm_make_edge_insets",
+            // Break
+            "tm_break_vector2", "tm_break_vector3", "tm_break_vector4",
+            "tm_break_cgpoint", "tm_break_cgsize", "tm_break_color", "tm_break_cgcolor",
             // String
             "tm_string_has_prefix", "tm_string_has_suffix", "tm_string_contains",
             "tm_string_length", "tm_string_prefix", "tm_string_suffix",

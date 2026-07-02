@@ -1057,6 +1057,35 @@ import RCP3Runtime
         #expect(wrong.contains("/* x unwired */") || wrong.contains("0 /* x"))
     }
 
+    /// `On Update → Set Transform.translation.<axis> = break(source).<axis>` — wires a
+    /// Make Vector3 into a Break Vector3 and pulls one component output into a scalar sink,
+    /// returning the compiled JS. Uses `tm_math_add` (scalar) as the sink so the break
+    /// output must appear as a member access.
+    static func breakJS(type: String, outputPin: String) -> String {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let src = RCP3ScriptGraph.Node(id: "src", type: "tm_make_vector3")
+        let brk = RCP3ScriptGraph.Node(id: "b", type: type)
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(id: "wsrc", from: "src", to: "b", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("source")),
+            RCP3ScriptGraph.Wire(id: "out", from: "b", to: "s", fromPin: TMHash.murmur64a(outputPin), toPin: TMHash.murmur64a("translation")),
+        ]
+        return CanonicalScriptGraphCompiler().compile(
+            RCP3ScriptGraph(nodes: [update, set, src, brk], wires: wires, data: [])
+        )
+    }
+
+    @Test func breakNodesEmitMemberAccessOnSource() {
+        // Each break output is a member access on the destructured source value.
+        #expect(Self.breakJS(type: "tm_break_vector3", outputPin: "y").contains(").y"))
+        #expect(Self.breakJS(type: "tm_break_vector4", outputPin: "w").contains(").w"))
+        #expect(Self.breakJS(type: "tm_break_color", outputPin: "green").contains(").green"))
+        #expect(Self.breakJS(type: "tm_break_cgsize", outputPin: "width").contains(").width"))
+        // No unsupported path on a fully-wired break.
+        #expect(!Self.breakJS(type: "tm_break_vector3", outputPin: "x").contains("unsupported"))
+    }
+
     // MARK: - Phase 0: comparisons / logic / bitwise / deg-rad / string / vector2-4
 
     /// Builds `On Update → Set Transform.translation = <op>(<two constant inputs>)`,
