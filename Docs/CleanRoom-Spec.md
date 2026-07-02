@@ -272,6 +272,19 @@ for input (`to_connector_hash`) and output (`from_connector_hash`) pins. The pin
 below are the observed connector identifiers (the hashed values); a node's display
 title is separate from its pin names.
 
+**Where the value-type pin names come from.** The runtime is Apple's public
+`apple/realitykitscripting` (MIT). A type is exposed to scripts via a `TypeSchema`
+declared as `TypeSchema<T>("Name") { StoredProperty("x", keyPath: \.x); Constructor { … } }`
+(see the package's `overview.md` and its compiler-plugin source). A value type's
+**properties are its `StoredProperty` names**, and for macro-exposed types those names
+are the Swift property identifiers verbatim. This is the single rule behind the value
+families: a **Make** node's inputs, a **Break** node's outputs, and a **Modify** node's
+per-property pins are all that type's property names, and the runtime modules are
+`RealityKit` / `Math3D` / `Foundation` / `CoreGraphics`. So `SIMD3<Float>` → `x, y, z`,
+a color → `red, green, blue, alpha`, a size → `width, height` — matching the tables
+below. (Depending on / grounding emitted JS in this public package is intended, not a
+clean-room concern.)
+
 The constant nodes have **no inputs** and a single named output; the rest list inputs →
 outputs.
 
