@@ -483,6 +483,9 @@ deferred); the unary operators take a single `a`; a few take a named auxiliary i
 | `tm_math_bitwise_not` | `a` | `result` |
 | `tm_math_pow` | `a`, `exponent` | `result` |
 | `tm_math_clamp` | `a`, `min`, `max` | `result` |
+| `tm_math_lerp` | `a`, `b`, `t` | `result` |
+| `tm_math_slerp` | `a`, `b`, `t` | `result` |
+| `tm_math_smoothstep` | `a`, `b`, `x` | `result` |
 | `tm_math_multiply_by_scalar` | `a`, `b` | `result` |
 | `tm_math_multiply_by_quaternion` | `a`, `b` | `result` |
 | `tm_math_multiply_by_matrix` | `a`, `b` | `result` |
@@ -503,13 +506,20 @@ ones read pin `a`.
 | `tm_math_multiply_by_scalar` | `Math3D.multiply(a, b)` | vector |
 | `tm_math_multiply_by_quaternion` | `Math3D.multiply(a, b)` | vector/quaternion |
 | `tm_math_multiply_by_matrix` | `Math3D.multiply(a, b)` | vector |
+| `tm_math_lerp` | `Math3D.lerp(a, b, t)` | vector/scalar |
+| `tm_math_slerp` | `Math3D.slerp(a, b, t)` | vector/quaternion |
+| `tm_math_smoothstep` | `Math3D.smoothstep(a, b, x)` | vector/scalar |
 
 `tm_math_normal` is the **normalize** node; its emitted function is literally `normal`
 (not `normalize`). The whole multiply-by-X family emits the same `Math3D.multiply(a, b)`
-(the runtime's `multiply` dispatches on the operand types). The interpolation nodes
-`tm_math_lerp`/`tm_math_slerp`/`tm_math_smoothstep` and a `tm_math_clamp` object/pin
-form are **deferred** until their operand pin names are confirmed; `tm_math_distance`
-is **not a node** (a distance is composed from `length` of a difference).
+(the runtime's `multiply` dispatches on the operand types). The interpolation nodes take
+two operands `a`/`b` plus a named factor — **`t`** for `tm_math_lerp`/`tm_math_slerp`,
+**`x`** for `tm_math_smoothstep` (matching the usual `smoothstep(edge0, edge1, x)`) — and
+emit `Math3D.<name>(a, b, factor)`. `tm_math_clamp` reads pins `a`/`min`/`max` and its
+observed emission is `Math3D.clamp(a, min, max)` (the in-house compiler currently lowers
+it to the scalar-safe `Math.min(Math.max(a, min), max)`, equivalent for scalars).
+`tm_math_distance` is **not a node** (a distance is composed from `length` of a
+difference), and `tm_math_remap` has **no node form** (only an internal op).
 
 **Math — Constant** (literal). One additional constant node carries its literal value
 in node **settings** rather than on a pin: it has no inputs and a single `value` output.

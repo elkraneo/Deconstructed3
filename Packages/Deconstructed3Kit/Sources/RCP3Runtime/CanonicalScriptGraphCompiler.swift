@@ -895,6 +895,18 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("Math.min(Math.max(\(a.code), \(lo.code)), \(hi.code))")
             }
 
+            // Interpolation ops → `Math3D.<fn>(a, b, factor)`, the observed emission (same
+            // `Math3D.<name>` convention as the dot/cross/normal vector ops above). The
+            // factor pin is `t` for lerp/slerp and `x` for smoothstep. Result can be a
+            // vector/quaternion, so it propagates as a vector.
+            if let interp = Self.interpolationOp(for: node.type) {
+                usesMath3D = true
+                let a = inputExpression(into: node, pinName: "a", context: context, seen: &seen)
+                let b = inputExpression(into: node, pinName: "b", context: context, seen: &seen)
+                let factor = inputExpression(into: node, pinName: interp.factorPin, context: context, seen: &seen)
+                return Expr("Math3D.\(interp.function)(\(a.code), \(b.code), \(factor.code))", isVector: true)
+            }
+
             // Multiply family (vector/quaternion/matrix * operand). All three emit the
             // SAME `Math3D.multiply(a, b)` call — the runtime's vector-math `multiply`
             // dispatches on the operand types. Operands are the two pins `a`/`b`; the
@@ -1535,6 +1547,23 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_math_length":  return VectorMathOp(function: "length", unary: true, resultIsVector: false)
             case "tm_math_normal":  return VectorMathOp(function: "normal", unary: true, resultIsVector: true)
             default:                return nil
+            }
+        }
+
+        /// An interpolation op that lowers to `Math3D.<function>(a, b, factor)`. The
+        /// factor pin is `t` for lerp/slerp and `x` for smoothstep.
+        struct InterpolationOp {
+            var function: String
+            var factorPin: String
+        }
+
+        /// The `Math3D` interpolation op for a node type, or `nil` if it is not one.
+        static func interpolationOp(for type: String) -> InterpolationOp? {
+            switch type {
+            case "tm_math_lerp":       return InterpolationOp(function: "lerp", factorPin: "t")
+            case "tm_math_slerp":      return InterpolationOp(function: "slerp", factorPin: "t")
+            case "tm_math_smoothstep": return InterpolationOp(function: "smoothstep", factorPin: "x")
+            default:                   return nil
             }
         }
 

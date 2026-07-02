@@ -1016,6 +1016,47 @@ import RCP3Runtime
         #expect(!Self.vectorOpJS(type: "tm_math_normal", binary: false).contains("normalize"))
     }
 
+    /// `On Update → Set Transform.translation = interp(a, b, factor)` with `a`/`b` from
+    /// vectors and the factor from a scalar constant, returning the compiled JS.
+    static func interpolationJS(type: String, factorPin: String) -> String {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let op = RCP3ScriptGraph.Node(id: "m", type: type)
+        let va = RCP3ScriptGraph.Node(id: "va", type: "tm_make_vector3")
+        let vb = RCP3ScriptGraph.Node(id: "vb", type: "tm_make_vector3")
+        let t = RCP3ScriptGraph.Node(id: "t", type: "tm_constant")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "s"),
+            RCP3ScriptGraph.Wire(id: "wa", from: "va", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("a")),
+            RCP3ScriptGraph.Wire(id: "wb", from: "vb", to: "m", fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("b")),
+            RCP3ScriptGraph.Wire(id: "wt", from: "t", to: "m", fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a(factorPin)),
+            RCP3ScriptGraph.Wire(id: "out", from: "m", to: "s", fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("translation")),
+        ]
+        return CanonicalScriptGraphCompiler().compile(
+            RCP3ScriptGraph(nodes: [update, set, op, va, vb, t], wires: wires, data: [])
+        )
+    }
+
+    @Test func interpolationOpsEmitFaithfulMath3DCalls() {
+        // lerp/slerp read the factor pin `t`; smoothstep reads `x`. All emit
+        // `Math3D.<fn>(a, b, factor)` (the observed emission) with the Math3D module.
+        for (type, fn, factorPin) in [
+            ("tm_math_lerp", "lerp", "t"),
+            ("tm_math_slerp", "slerp", "t"),
+            ("tm_math_smoothstep", "smoothstep", "x"),
+        ] {
+            let js = Self.interpolationJS(type: type, factorPin: factorPin)
+            #expect(js.contains("const Math3D = require(\"Math3D\")"))
+            // a and b are the two vector operands; the factor is the third argument.
+            #expect(js.contains("Math3D.\(fn)(new Math3D.Vector3("), "\(type) call shape")
+            #expect(!js.contains("unsupported"), "\(type) must not lower to unsupported")
+        }
+        // smoothstep's factor pin is `x`, so a value wired to `t` must NOT satisfy it —
+        // guards against the earlier wrong `t`-for-all-three assumption.
+        let wrong = Self.interpolationJS(type: "tm_math_smoothstep", factorPin: "t")
+        #expect(wrong.contains("/* x unwired */") || wrong.contains("0 /* x"))
+    }
+
     // MARK: - Phase 0: comparisons / logic / bitwise / deg-rad / string / vector2-4
 
     /// Builds `On Update → Set Transform.translation = <op>(<two constant inputs>)`,

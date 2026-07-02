@@ -183,6 +183,7 @@ struct ScriptGraphNodeLibraryTests {
             "tm_math_log", "tm_math_log2", "tm_math_abs", "tm_math_ceil",
             "tm_math_floor", "tm_math_round", "tm_math_trunc", "tm_math_length",
             "tm_math_normal", "tm_math_bitwise_not", "tm_math_pow", "tm_math_clamp",
+            "tm_math_lerp", "tm_math_slerp", "tm_math_smoothstep",
             "tm_math_multiply_by_scalar", "tm_math_multiply_by_quaternion",
             "tm_math_multiply_by_matrix",
             // Math — Constant (literal)
