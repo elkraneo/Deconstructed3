@@ -1227,4 +1227,35 @@ import RCP3Document
         #expect(loaded.nodes.count == 2)
         #expect(loaded.nodes.contains { $0.type == "tm_update" })
     }
+
+    @Test func completeExampleCorpusMaterializesAndReopens() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "rcp3-corpus-\(UUID().uuidString).realitycomposerpro")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        FileManager.default.createFile(atPath: dir.appending(path: "project.rcp").path, contents: Data())
+        try "__type: \"tm_entity\"\n__uuid: \"w\"\nname: \"world\""
+            .write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
+        let bundle = try RCP3Bundle.open(dir)
+
+        var expectedNodeCounts: [String: Int] = [:]
+        for example in ScriptGraphExamples.all {
+            let asset = try bundle.createScriptGraphAsset(named: example.name)
+            try ScriptGraphWriteBack.write(
+                model: ScriptGraphEditorModel(graph: example.graph),
+                toAssetWithRootUUID: asset.id,
+                in: bundle.url
+            )
+            expectedNodeCounts[asset.id] = example.graph.nodes.count
+        }
+
+        let reopened = try RCP3Bundle.open(dir)
+        let assets = reopened.scriptGraphAssets()
+        #expect(assets.count == ScriptGraphExamples.all.count)
+        for asset in assets {
+            let graph = try #require(reopened.scriptGraph(assetID: asset.id))
+            #expect(graph.nodes.count == expectedNodeCounts[asset.id])
+            #expect(!graph.nodes.isEmpty)
+        }
+    }
 }

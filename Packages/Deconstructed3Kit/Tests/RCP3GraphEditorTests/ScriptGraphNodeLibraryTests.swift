@@ -11,6 +11,16 @@ import RCP3Document
 @Suite("ScriptGraphNodeLibrary parity")
 struct ScriptGraphNodeLibraryTests {
 
+    @Test("Every corpus node is authorable with a declared interface")
+    func everyCorpusNodeHasANodeSpec() {
+        for type in ScriptGraphExamples.coveredNodeTypes {
+            #expect(
+                ScriptGraphNodeLibrary.spec(for: type) != nil,
+                "Corpus uses \(type), but the editor cannot author it"
+            )
+        }
+    }
+
     /// Resolves a payload for every node in `graph`, keyed by node id.
     static func payloads(for graph: RCP3ScriptGraph) -> [String: ScriptGraphNodePayload] {
         Dictionary(

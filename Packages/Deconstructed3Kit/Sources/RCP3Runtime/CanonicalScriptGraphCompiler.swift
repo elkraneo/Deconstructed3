@@ -93,6 +93,10 @@ public struct CanonicalScriptGraphCompiler {
         var usesMath3D = false
         /// Set when an emitted statement/handler referenced the `RealityKit` module.
         var usesRealityKit = false
+        /// Set when a value constructor references the `Foundation` runtime module.
+        var usesFoundation = false
+        /// Set when a value constructor references the `CoreGraphics` runtime module.
+        var usesCoreGraphics = false
         /// Nodes folded into a handler/statement, so leftovers become honest no-ops.
         var handledNodeIDs: Set<String> = []
 
@@ -117,6 +121,8 @@ public struct CanonicalScriptGraphCompiler {
             var lines = header
             if usesRealityKit { lines.append("const RealityKit = require(\"RealityKit\");") }
             if usesMath3D { lines.append("const Math3D = require(\"Math3D\");") }
+            if usesFoundation { lines.append("const Foundation = require(\"Foundation\");") }
+            if usesCoreGraphics { lines.append("const CoreGraphics = require(\"CoreGraphics\");") }
             lines.append(contentsOf: handlerBlocks)
 
             // 3. Any node we did not fold into a handler: honest no-op.
@@ -999,6 +1005,22 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("new Math3D.Quaternion(\(angle.code), \(axis.code))", isVector: true)
             }
 
+            if node.type == "tm_make_look_at_rotation" {
+                usesMath3D = true
+                let at = inputExpression(into: node, pinName: "at", context: context, seen: &seen)
+                let from = inputExpression(into: node, pinName: "from", context: context, seen: &seen)
+                let upVector = inputExpression(
+                    into: node,
+                    pinName: "upVector",
+                    context: context,
+                    seen: &seen
+                )
+                return Expr(
+                    "new Math3D.Quaternion(\(at.code), \(from.code), \(upVector.code))",
+                    isVector: true
+                )
+            }
+
             if node.type == "tm_math_euler_to_quaternion" {
                 usesMath3D = true
                 let angles = inputExpression(into: node, pinName: "angles", context: context, seen: &seen)
@@ -1054,6 +1076,63 @@ public struct CanonicalScriptGraphCompiler {
                 let w = inputExpression(into: node, pinName: "w", context: context, seen: &seen)
                 return Expr(
                     "(() => { const xyz = \(xyz.code); return new Math3D.Vector4(xyz.x, xyz.y, xyz.z, \(w.code)); })()",
+                    isVector: true
+                )
+            }
+
+            if node.type == "tm_make_color" {
+                usesFoundation = true
+                let red = inputExpression(into: node, pinName: "red", context: context, seen: &seen)
+                let green = inputExpression(into: node, pinName: "green", context: context, seen: &seen)
+                let blue = inputExpression(into: node, pinName: "blue", context: context, seen: &seen)
+                let alpha = inputExpression(into: node, pinName: "alpha", context: context, seen: &seen)
+                return Expr(
+                    "new Foundation.Color(\(red.code), \(green.code), \(blue.code), \(alpha.code))"
+                )
+            }
+
+            if node.type == "tm_make_cgsize" {
+                usesCoreGraphics = true
+                let width = inputExpression(into: node, pinName: "width", context: context, seen: &seen)
+                let height = inputExpression(into: node, pinName: "height", context: context, seen: &seen)
+                return Expr("new CoreGraphics.CGSize(\(width.code), \(height.code))")
+            }
+
+            if node.type == "tm_make_cgcolor" {
+                usesCoreGraphics = true
+                let red = inputExpression(into: node, pinName: "red", context: context, seen: &seen)
+                let green = inputExpression(into: node, pinName: "green", context: context, seen: &seen)
+                let blue = inputExpression(into: node, pinName: "blue", context: context, seen: &seen)
+                let alpha = inputExpression(into: node, pinName: "alpha", context: context, seen: &seen)
+                return Expr(
+                    "new CoreGraphics.CGColor(\(red.code), \(green.code), \(blue.code), \(alpha.code))"
+                )
+            }
+
+            if node.type == "tm_make_edge_insets" {
+                usesFoundation = true
+                let top = inputExpression(into: node, pinName: "top", context: context, seen: &seen)
+                let left = inputExpression(into: node, pinName: "left", context: context, seen: &seen)
+                let bottom = inputExpression(into: node, pinName: "bottom", context: context, seen: &seen)
+                let right = inputExpression(into: node, pinName: "right", context: context, seen: &seen)
+                return Expr(
+                    "new Foundation.EdgeInsets(\(top.code), \(left.code), \(bottom.code), \(right.code))"
+                )
+            }
+
+            if ["tm_make_matrix2x2", "tm_make_matrix3x3", "tm_make_matrix4x4"].contains(node.type) {
+                usesMath3D = true
+                let dimension = Int(node.type.dropFirst("tm_make_matrix".count).prefix(1)) ?? 2
+                let columns = (0..<dimension).map { column in
+                    inputExpression(
+                        into: node,
+                        pinName: "col\(column)",
+                        context: context,
+                        seen: &seen
+                    ).code
+                }
+                return Expr(
+                    "new Math3D.Matrix\(dimension)x\(dimension)(\(columns.joined(separator: ", ")))",
                     isVector: true
                 )
             }

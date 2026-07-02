@@ -1,6 +1,44 @@
 import Foundation
 import TMFormat
 
+public enum ScriptGraphExampleProvenance: String, Sendable, CaseIterable {
+    case nativeRCP3
+    case appleSample
+    case unityPattern
+    case unrealPattern
+}
+
+public enum ScriptGraphExampleCertificationStatus: Sendable, Equatable {
+    /// Static graph, compiler, and host-runtime checks pass.
+    case automated
+    /// Automated checks pass; the documented RCP3 manual procedure is still pending.
+    case manualPending
+    /// The materialized graph was opened, saved, and executed in this RCP3 build.
+    case rcp3Certified(build: String, date: String)
+}
+
+public struct ScriptGraphExampleCertification: Sendable {
+    public let provenance: ScriptGraphExampleProvenance
+    public let capabilities: [String]
+    public let expectedOutcome: String
+    public let manualSteps: [String]
+    public let status: ScriptGraphExampleCertificationStatus
+
+    public init(
+        provenance: ScriptGraphExampleProvenance,
+        capabilities: [String],
+        expectedOutcome: String,
+        manualSteps: [String],
+        status: ScriptGraphExampleCertificationStatus = .manualPending
+    ) {
+        self.provenance = provenance
+        self.capabilities = capabilities
+        self.expectedOutcome = expectedOutcome
+        self.manualSteps = manualSteps
+        self.status = status
+    }
+}
+
 /// A curated, clean-room gallery of canonical script-graph examples the editor can
 /// LOAD onto the canvas (see + edit) and PLAY on Apple's real `RealityKitScripting`
 /// runtime, driving the box geometry.
@@ -50,21 +88,30 @@ public struct ScriptGraphExample: Identifiable, Sendable {
     public let summary: String
     /// The example graph, built from library node types with faithful pins.
     public let graph: RCP3ScriptGraph
+    /// Provenance, coverage intent, observable result, and RCP3 certification state.
+    public let certification: ScriptGraphExampleCertification
     /// `true` when the canonical compiler lowers the wired path to working runtime JS
     /// today (no `unsupported` on that path); `false` when it needs variable-name
     /// authoring first (see the type doc).
     public let runsToday: Bool
 
+    /// Node types this example contributes to corpus coverage.
+    public var requiredNodeTypes: Set<String> {
+        Set(graph.nodes.map(\.type))
+    }
+
     public init(
         id: String,
         name: String,
         summary: String,
+        certification: ScriptGraphExampleCertification,
         graph: RCP3ScriptGraph,
         runsToday: Bool
     ) {
         self.id = id
         self.name = name
         self.summary = summary
+        self.certification = certification
         // Stamp the example's stable id onto its graph identity, so the editor can key
         // the canvas on the SHOWN graph's identity (not a coupled selection) and a loaded
         // example reads back its own id from `graph.id`. The example graphs are built with
@@ -96,11 +143,19 @@ public enum ScriptGraphExamples {
         sineBob,
         orbit,
         dragMomentum,
+        lookAtTarget,
+        delayedMove,
+        oneShotTap,
     ]
 
     /// Look up an example by id (the synthetic open-graph key).
     public static func example(id: String) -> ScriptGraphExample? {
         all.first { $0.id == id }
+    }
+
+    /// Union of node types exercised by at least one curated scenario.
+    public static var coveredNodeTypes: Set<String> {
+        all.reduce(into: []) { $0.formUnion($1.requiredNodeTypes) }
     }
 
     // MARK: Pin-hash helpers (faithful connectors)
@@ -128,6 +183,25 @@ public enum ScriptGraphExamples {
         RCP3ScriptGraph.DataLiteral(id: id, toNode: node, toPin: pin(pinName), scalarValue: value)
     }
 
+    private static func certification(
+        _ provenance: ScriptGraphExampleProvenance,
+        capabilities: [String],
+        expected: String,
+        action: String
+    ) -> ScriptGraphExampleCertification {
+        ScriptGraphExampleCertification(
+            provenance: provenance,
+            capabilities: capabilities,
+            expectedOutcome: expected,
+            manualSteps: [
+                "Create a Script Graph from this sample and save the project.",
+                "Open the graph in Reality Composer Pro 3; confirm all nodes, pins, literals, and wires load without repair.",
+                action,
+                "Save in Reality Composer Pro 3, reopen in Deconstructed3, and confirm the graph remains structurally intact.",
+            ]
+        )
+    }
+
     // MARK: - RUNS TODAY
 
     /// On Drag → Set Transform.translation = `sceneTranslation`. The documented
@@ -136,6 +210,12 @@ public enum ScriptGraphExamples {
         id: "example.drag-to-move",
         name: "Drag to Move",
         summary: "Drag the box and it follows your pointer in scene space.",
+        certification: certification(
+            .nativeRCP3,
+            capabilities: ["gesture.drag", "transform.translation"],
+            expected: "The entity follows the drag position in scene space.",
+            action: "Enter preview, drag the entity, and verify it follows continuously."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "drag", type: "tm_gesture_event_drag", x: 0, y: 0),
@@ -158,6 +238,12 @@ public enum ScriptGraphExamples {
         id: "example.drag-with-offset",
         name: "Drag with Offset",
         summary: "Drag, plus a baked +0.5 X offset via add(sceneTranslation, Vector3). (The offset is a baked data literal; in-editor literal authoring is next.)",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.drag", "math.vector-add", "literal.scalar"],
+            expected: "The entity follows the drag position with a constant +0.5 X offset.",
+            action: "Enter preview, drag the entity, and verify the center remains offset along X."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "drag", type: "tm_gesture_event_drag", x: 0, y: 0),
@@ -185,6 +271,12 @@ public enum ScriptGraphExamples {
         id: "example.drift",
         name: "Drift",
         summary: "Each frame, move the box along X by deltaTime, reading its current position via Get Transform.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["event.update", "component.get", "transform.translation"],
+            expected: "The entity moves steadily along positive X using frame delta time.",
+            action: "Enter preview and verify smooth frame-rate-independent movement along X."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -212,6 +304,12 @@ public enum ScriptGraphExamples {
         id: "example.tap-to-grow",
         name: "Tap to Grow",
         summary: "Tap the box to grow it by 0.2 each tap: scale = Get scale + Vector3(0.2, 0.2, 0.2). (Growth is a baked data literal; in-editor authoring is next.)",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.tap", "component.get", "transform.scale"],
+            expected: "Each tap increases all three scale components by 0.2.",
+            action: "Enter preview, tap three times, and verify monotonic uniform growth."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
@@ -243,6 +341,12 @@ public enum ScriptGraphExamples {
         id: "example.snap-on-add",
         name: "Snap on Add",
         summary: "When the box is added, snap its position to (0.3, 0.3, 0). (Coordinates are baked data literals; in-editor authoring is next.)",
+        certification: certification(
+            .nativeRCP3,
+            capabilities: ["lifecycle.did-add", "transform.translation"],
+            expected: "The entity moves to (0.3, 0.3, 0) when added.",
+            action: "Enter preview or re-add the entity and verify its initial position."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "added", type: "tm_did_add", x: 0, y: 0),
@@ -269,6 +373,12 @@ public enum ScriptGraphExamples {
         id: "example.squash-by-sin",
         name: "Squash by Sin",
         summary: "Vertical scale = 1 + 0.5·sin(t), accumulating t += deltaTime each frame so the box pulses smoothly. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["event.update", "variable.local", "math.sin", "transform.scale"],
+            expected: "The entity repeatedly squashes and stretches along Y without drift.",
+            action: "Enter preview and observe at least two complete scale oscillations."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -317,6 +427,12 @@ public enum ScriptGraphExamples {
         id: "example.spin",
         name: "Spin",
         summary: "Accumulate angle += deltaTime each frame, build a quaternion around the Y axis, and assign orientation.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["event.update", "variable.local", "rotation.axis-angle"],
+            expected: "The entity rotates continuously around its Y axis.",
+            action: "Enter preview and verify continuous stable rotation around Y."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -350,6 +466,12 @@ public enum ScriptGraphExamples {
         id: "example.sine-bob",
         name: "Sine Bob",
         summary: "Bob the box up and down with sin(t), accumulating t += deltaTime. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["event.update", "variable.local", "math.sin", "transform.translation"],
+            expected: "The entity oscillates vertically around its origin.",
+            action: "Enter preview and observe at least two complete vertical oscillations."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -381,6 +503,12 @@ public enum ScriptGraphExamples {
         id: "example.orbit",
         name: "Orbit",
         summary: "Orbit the box in the XZ plane with Vector3(cos(t), 0, sin(t)), accumulating t += deltaTime. Compiles to a real local variable slot (this.variable_<slot>); runtime is user-confirmed on Play.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["event.update", "variable.local", "math.sin-cos", "transform.translation"],
+            expected: "The entity follows a stable circular path in the XZ plane.",
+            action: "Enter preview and observe one complete orbit without vertical movement."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 .init(id: "update", type: "tm_update", x: 0, y: 0),
@@ -416,6 +544,12 @@ public enum ScriptGraphExamples {
         id: "example.drag-momentum",
         name: "Drag Momentum",
         summary: "Flick the box to spin it: drag sets angularVelocity; each frame angle += angVel and angVel *= 0.95 friction, so it coasts to a stop (inertia) after you let go.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.drag", "event.update", "variable.local", "math.decay", "rotation.axis-angle"],
+            expected: "Dragging starts rotation that decays smoothly after release.",
+            action: "Enter preview, drag once, release, and verify rotation coasts and slows."
+        ),
         graph: RCP3ScriptGraph(
             nodes: [
                 // Handler 1: a drag kick sets the angular velocity.
@@ -455,6 +589,118 @@ public enum ScriptGraphExamples {
                 lit("lit.angularVelocity", node: "setVel", pin: "value", 0.05),
                 lit("lit.axisY", node: "axis", pin: "y", 1),
                 lit("lit.friction", node: "frictionMul", pin: "b", 0.95),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A common camera/turret recipe: continuously orient from one point toward
+    /// another using the runtime's three-argument look-at quaternion constructor.
+    public static let lookAtTarget = ScriptGraphExample(
+        id: "example.look-at-target",
+        name: "Look At Target",
+        summary: "Continuously orient from the origin toward a fixed target using Look-at Rotation.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["event.update", "rotation.look-at", "transform.rotation"],
+            expected: "The entity faces the fixed target at (1, 0, -1) with Y as up.",
+            action: "Enter preview and verify the entity faces the target without rolling."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "update", type: "tm_update", x: 0, y: 0),
+                .init(id: "target", type: "tm_make_vector3", label: "Target", x: 0, y: 220),
+                .init(id: "origin", type: "tm_make_vector3", label: "Origin", x: 0, y: 360),
+                .init(id: "up", type: "tm_make_vector3", label: "Up", x: 0, y: 500),
+                .init(id: "rotation", type: "tm_make_look_at_rotation", label: "Look-at Rotation", x: 360, y: 260),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 720, y: 0),
+            ],
+            wires: [
+                exec("e", from: "update", to: "set"),
+                data("d1", from: "target", "vec3", to: "rotation", "at"),
+                data("d2", from: "origin", "vec3", to: "rotation", "from"),
+                data("d3", from: "up", "vec3", to: "rotation", "upVector"),
+                data("d4", from: "rotation", "new", to: "set", "rotation"),
+            ],
+            data: [
+                lit("target.x", node: "target", pin: "x", 1),
+                lit("target.z", node: "target", pin: "z", -1),
+                lit("up.y", node: "up", pin: "y", 1),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A delayed interaction recipe commonly used for doors, pickups, and staged
+    /// feedback: tap, wait, then apply the visible state change.
+    public static let delayedMove = ScriptGraphExample(
+        id: "example.delayed-move",
+        name: "Delayed Move",
+        summary: "Tap the entity; after half a second it moves upward.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["gesture.tap", "control.delay", "transform.translation"],
+            expected: "Nothing moves immediately; after 0.5 seconds the entity moves to Y = 0.5.",
+            action: "Enter preview, tap once, and verify the move occurs after the visible delay."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "delay", type: "tm_delay", x: 280, y: 0),
+                .init(id: "position", type: "tm_make_vector3", label: "Position", x: 560, y: 180),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 840, y: 0),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "delay"),
+                RCP3ScriptGraph.Wire(
+                    id: "e2",
+                    from: "delay",
+                    to: "set",
+                    fromPin: pin("once"),
+                    toPin: pin("")
+                ),
+                data("d", from: "position", "vec3", to: "set", "translation"),
+            ],
+            data: [
+                lit("seconds", node: "delay", pin: "seconds", 0.5),
+                lit("position.y", node: "position", pin: "y", 0.5),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A Do Once gate adapted from common Unity/Unreal pickup and tutorial-trigger
+    /// graphs. Repeated taps reach the gate, but only the first changes the transform.
+    public static let oneShotTap = ScriptGraphExample(
+        id: "example.one-shot-tap",
+        name: "One-shot Tap",
+        summary: "Only the first tap moves the entity; later taps are ignored by Do Once.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.tap", "control.do-once", "transform.translation"],
+            expected: "The first tap moves the entity to X = 0.5; subsequent taps do not execute the move again.",
+            action: "Enter preview, tap at least three times, and verify only the first tap changes state."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "once", type: "tm_do_once", x: 280, y: 0),
+                .init(id: "position", type: "tm_make_vector3", label: "Position", x: 560, y: 180),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 840, y: 0),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "once"),
+                RCP3ScriptGraph.Wire(
+                    id: "e2",
+                    from: "once",
+                    to: "set",
+                    fromPin: pin("once"),
+                    toPin: pin("")
+                ),
+                data("d", from: "position", "vec3", to: "set", "translation"),
+            ],
+            data: [
+                lit("position.x", node: "position", pin: "x", 0.5),
             ]
         ),
         runsToday: true

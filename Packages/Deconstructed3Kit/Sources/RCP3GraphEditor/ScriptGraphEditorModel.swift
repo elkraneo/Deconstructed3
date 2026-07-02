@@ -152,6 +152,14 @@ public final class ScriptGraphEditorModel {
     /// value is reflected in Play.
     public private(set) var literals: [LiteralKey: TMGraphValue]
 
+    /// Typed literals the editor does not expose as editable scalar/bool/string
+    /// values yet, but which are structurally required by RCP3. The important current
+    /// case is `re_scripting_graph_component_type` bound to a Set/Get Component
+    /// node's `component_type` pin. Existing assets preserve these through write-back;
+    /// fresh materialized graphs need the model to carry them so they can be emitted
+    /// into an otherwise-empty `data[]` array.
+    public private(set) var unmodeledLiterals: [RCP3ScriptGraph.DataLiteral]
+
     /// The numeric subset of `literals`, for the scalar write-back/compiler paths still
     /// keyed on `Double`. A read-only bridge over the unified store.
     public var scalarLiterals: [LiteralKey: Double] {
@@ -262,12 +270,16 @@ public final class ScriptGraphEditorModel {
         // value (number / bool / string) on a pin becomes an authored value the
         // inspector can edit and write-back can persist.
         var seeded: [LiteralKey: TMGraphValue] = [:]
+        var unmodeled: [RCP3ScriptGraph.DataLiteral] = []
         for literal in graph.data {
             if let value = literal.value {
                 seeded[LiteralKey(nodeID: literal.toNode, pinConnectorHash: literal.toPin)] = value
+            } else {
+                unmodeled.append(literal)
             }
         }
         literals = seeded
+        unmodeledLiterals = unmodeled
 
         // Seed the variable table and the per-node variable references from the graph.
         variables = graph.variables

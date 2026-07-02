@@ -299,6 +299,7 @@ Observed JS emission for the rotation nodes implemented in the canonical compile
 | type | emitted expression |
 | --- | --- |
 | `tm_make_rotation` | `new Math3D.Quaternion(angle, axis)` |
+| `tm_make_look_at_rotation` | `new Math3D.Quaternion(at, from, upVector)` |
 | `tm_math_euler_to_quaternion` | `Math3D.eulerAnglesToQuaternion(angles)` |
 | `tm_math_quaternion_to_euler` | `Math3D.quaternionToEulerAngles(quaternion)` |
 
@@ -333,6 +334,24 @@ Observed JS emission for the rotation nodes implemented in the canonical compile
 | `tm_make_color` | `red`, `green`, `blue`, `alpha` | `color` |
 | `tm_make_cgsize` | `width`, `height` | `size` |
 | `tm_make_edge_insets` | `top`, `left`, `bottom`, `right` | `insets` |
+
+Make nodes use a shared constructor-emission model: bind the value type's runtime
+module, collect the node's inputs in connector order, and return a newly constructed
+value. Confirmed constructor forms:
+
+| type | emitted expression |
+| --- | --- |
+| `tm_make_cgcolor` | `new CoreGraphics.CGColor(red, green, blue, alpha)` |
+| `tm_make_color` | `new Foundation.Color(red, green, blue, alpha)` |
+| `tm_make_cgsize` | `new CoreGraphics.CGSize(width, height)` |
+| `tm_make_edge_insets` | `new Foundation.EdgeInsets(top, left, bottom, right)` |
+| `tm_make_matrix2x2` | `new Math3D.Matrix2x2(col0, col1)` |
+| `tm_make_matrix3x3` | `new Math3D.Matrix3x3(col0, col1, col2)` |
+| `tm_make_matrix4x4` | `new Math3D.Matrix4x4(col0, col1, col2, col3)` |
+
+The module names above are runtime JavaScript bindings. In particular, matrix
+constructors use the runtime's `Math3D` module; this is distinct from native Swift
+code that imports Apple's `Spatial` framework.
 
 **String.**
 

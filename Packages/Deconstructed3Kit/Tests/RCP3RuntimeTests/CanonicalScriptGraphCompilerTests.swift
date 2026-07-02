@@ -570,6 +570,52 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func makeLookAtRotationCompilesToThreeArgumentQuaternionConstructor() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let at = RCP3ScriptGraph.Node(id: "at", type: "tm_make_vector3")
+        let from = RCP3ScriptGraph.Node(id: "from", type: "tm_make_vector3")
+        let up = RCP3ScriptGraph.Node(id: "up", type: "tm_make_vector3")
+        let rotation = RCP3ScriptGraph.Node(id: "r", type: "tm_make_look_at_rotation")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, at, from, up, rotation, set],
+            wires: [
+                RCP3ScriptGraph.Wire(id: "exec", from: "u", to: "s"),
+                RCP3ScriptGraph.Wire(
+                    id: "atWire", from: "at", to: "r",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("at")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "fromWire", from: "from", to: "r",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("from")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "upWire", from: "up", to: "r",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("upVector")
+                ),
+                RCP3ScriptGraph.Wire(
+                    id: "rotationWire", from: "r", to: "s",
+                    fromPin: TMHash.murmur64a("new"), toPin: TMHash.murmur64a("rotation")
+                ),
+            ],
+            data: [
+                RCP3ScriptGraph.DataLiteral(id: "atX", toNode: "at", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+                RCP3ScriptGraph.DataLiteral(id: "fromY", toNode: "from", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+                RCP3ScriptGraph.DataLiteral(id: "upY", toNode: "up", toPin: TMHash.murmur64a("y"), scalarValue: 1),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("const Math3D = require(\"Math3D\")"))
+        #expect(js.contains(
+            "new Math3D.Quaternion(new Math3D.Vector3(1, 0 /* y unwired */, 0 /* z unwired */), "
+                + "new Math3D.Vector3(0 /* x unwired */, 2, 0 /* z unwired */), "
+                + "new Math3D.Vector3(0 /* x unwired */, 1, 0 /* z unwired */))"
+        ))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func eulerToQuaternionCompilesToMath3DHelperCall() {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let angles = RCP3ScriptGraph.Node(id: "v", type: "tm_make_vector3")
@@ -1315,6 +1361,129 @@ import RCP3Runtime
 
         #expect(js.contains("const Math3D = require(\"Math3D\")"))
         #expect(js.contains("const xyz = new Math3D.Vector3(1, 2, 3); return new Math3D.Vector4(xyz.x, xyz.y, xyz.z, 4);"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func colorAndCGSizeUseTheirRuntimeConstructors() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let setColor = RCP3ScriptGraph.Node(
+            id: "setColor", type: "tm_set_variable_node", variableName: "color"
+        )
+        let setSize = RCP3ScriptGraph.Node(
+            id: "setSize", type: "tm_set_variable_node", variableName: "size"
+        )
+        let color = RCP3ScriptGraph.Node(id: "color", type: "tm_make_color")
+        let size = RCP3ScriptGraph.Node(id: "size", type: "tm_make_cgsize")
+        let wires = [
+            RCP3ScriptGraph.Wire(id: "e1", from: "u", to: "setColor"),
+            RCP3ScriptGraph.Wire(id: "e2", from: "setColor", to: "setSize"),
+            RCP3ScriptGraph.Wire(
+                id: "colorOut", from: "color", to: "setColor",
+                fromPin: TMHash.murmur64a("color"), toPin: TMHash.murmur64a("value")
+            ),
+            RCP3ScriptGraph.Wire(
+                id: "sizeOut", from: "size", to: "setSize",
+                fromPin: TMHash.murmur64a("size"), toPin: TMHash.murmur64a("value")
+            ),
+        ]
+        let data = [
+            RCP3ScriptGraph.DataLiteral(
+                id: "red", toNode: "color", toPin: TMHash.murmur64a("red"), scalarValue: 1
+            ),
+            RCP3ScriptGraph.DataLiteral(
+                id: "green", toNode: "color", toPin: TMHash.murmur64a("green"), scalarValue: 0.5
+            ),
+            RCP3ScriptGraph.DataLiteral(
+                id: "blue", toNode: "color", toPin: TMHash.murmur64a("blue"), scalarValue: 0.25
+            ),
+            RCP3ScriptGraph.DataLiteral(
+                id: "alpha", toNode: "color", toPin: TMHash.murmur64a("alpha"), scalarValue: 1
+            ),
+            RCP3ScriptGraph.DataLiteral(
+                id: "width", toNode: "size", toPin: TMHash.murmur64a("width"), scalarValue: 320
+            ),
+            RCP3ScriptGraph.DataLiteral(
+                id: "height", toNode: "size", toPin: TMHash.murmur64a("height"), scalarValue: 180
+            ),
+        ]
+
+        let js = CanonicalScriptGraphCompiler().compile(
+            RCP3ScriptGraph(
+                nodes: [update, setColor, setSize, color, size],
+                wires: wires,
+                data: data
+            )
+        )
+
+        #expect(js.contains("const Foundation = require(\"Foundation\");"))
+        #expect(js.contains("const CoreGraphics = require(\"CoreGraphics\");"))
+        #expect(js.contains("new Foundation.Color(1, 0.5, 0.25, 1)"))
+        #expect(js.contains("new CoreGraphics.CGSize(320, 180)"))
+        #expect(!js.contains("unsupported"))
+    }
+
+    @Test func remainingMakeNodesUseTheirRuntimeConstructors() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let constructors: [(id: String, type: String, output: String, inputs: [String])] = [
+            ("cgcolor", "tm_make_cgcolor", "source", ["red", "green", "blue", "alpha"]),
+            ("insets", "tm_make_edge_insets", "insets", ["top", "left", "bottom", "right"]),
+            ("matrix2", "tm_make_matrix2x2", "source", ["col0", "col1"]),
+            ("matrix3", "tm_make_matrix3x3", "source", ["col0", "col1", "col2"]),
+            ("matrix4", "tm_make_matrix4x4", "source", ["col0", "col1", "col2", "col3"]),
+        ]
+        let makeNodes = constructors.map {
+            RCP3ScriptGraph.Node(id: $0.id, type: $0.type)
+        }
+        let setters = constructors.enumerated().map {
+            RCP3ScriptGraph.Node(
+                id: "set\($0.offset)",
+                type: "tm_set_variable_node",
+                variableName: $0.element.id
+            )
+        }
+        var wires = constructors.indices.map { index in
+            RCP3ScriptGraph.Wire(
+                id: "exec\(index)",
+                from: index == 0 ? "u" : "set\(index - 1)",
+                to: "set\(index)"
+            )
+        }
+        wires += constructors.enumerated().map { index, constructor in
+            RCP3ScriptGraph.Wire(
+                id: "value\(index)",
+                from: constructor.id,
+                to: "set\(index)",
+                fromPin: TMHash.murmur64a(constructor.output),
+                toPin: TMHash.murmur64a("value")
+            )
+        }
+        let data = constructors.flatMap { constructor in
+            constructor.inputs.enumerated().map { index, pin in
+                RCP3ScriptGraph.DataLiteral(
+                    id: "\(constructor.id)-\(pin)",
+                    toNode: constructor.id,
+                    toPin: TMHash.murmur64a(pin),
+                    scalarValue: Double(index + 1)
+                )
+            }
+        }
+
+        let js = CanonicalScriptGraphCompiler().compile(
+            RCP3ScriptGraph(
+                nodes: [update] + setters + makeNodes,
+                wires: wires,
+                data: data
+            )
+        )
+
+        #expect(js.contains("const Foundation = require(\"Foundation\");"))
+        #expect(js.contains("const CoreGraphics = require(\"CoreGraphics\");"))
+        #expect(js.contains("const Math3D = require(\"Math3D\");"))
+        #expect(js.contains("new CoreGraphics.CGColor(1, 2, 3, 4)"))
+        #expect(js.contains("new Foundation.EdgeInsets(1, 2, 3, 4)"))
+        #expect(js.contains("new Math3D.Matrix2x2(1, 2)"))
+        #expect(js.contains("new Math3D.Matrix3x3(1, 2, 3)"))
+        #expect(js.contains("new Math3D.Matrix4x4(1, 2, 3, 4)"))
         #expect(!js.contains("unsupported"))
     }
 

@@ -1,16 +1,24 @@
 import Foundation
 import RCP3Document
+import RCP3GraphEditor
 
 // Headless dev tool: print the scene-entity tree of a `.realitycomposerpro` bundle.
 //   swift run rcp3-dump <path/to/Name.realitycomposerpro>
+// Materialize the complete certification corpus as real Script Graph assets:
+//   swift run rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
 
 let arguments = CommandLine.arguments
-guard arguments.count == 2 else {
-    FileHandle.standardError.write(Data("usage: rcp3-dump <path/to/Name.realitycomposerpro>\n".utf8))
+guard arguments.count == 2 || (arguments.count == 3 && arguments[1] == "export-corpus") else {
+    FileHandle.standardError.write(Data("""
+    usage:
+      rcp3-dump <path/to/Name.realitycomposerpro>
+      rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
+    """.utf8))
     exit(2)
 }
 
-let url = URL(filePath: arguments[1])
+let exportsCorpus = arguments.count == 3
+let url = URL(filePath: arguments[exportsCorpus ? 2 : 1])
 
 func dump(_ entity: RCP3Entity, depth: Int) {
     let pad = String(repeating: "  ", count: depth)
@@ -27,6 +35,19 @@ func dump(_ entity: RCP3Entity, depth: Int) {
 
 do {
     let bundle = try RCP3Bundle.open(url)
+    if exportsCorpus {
+        for example in ScriptGraphExamples.all {
+            let asset = try bundle.createScriptGraphAsset(named: example.name)
+            let model = ScriptGraphEditorModel(graph: example.graph)
+            try ScriptGraphWriteBack.write(
+                model: model,
+                toAssetWithRootUUID: asset.id,
+                in: bundle.url
+            )
+            print("\(asset.name)\t\(asset.id)\t\(example.graph.nodes.count) nodes")
+        }
+        exit(0)
+    }
     if let count = bundle.typeCount { print("schema types: \(count)") }
     print("root: \(url.lastPathComponent)")
     dump(bundle.entity, depth: 0)

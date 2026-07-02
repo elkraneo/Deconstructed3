@@ -91,7 +91,10 @@ let package = Package(
                 "TMFormat",
             ]
         ),
-        .executableTarget(name: "RCP3Dump", dependencies: ["RCP3Document"]),
+        .executableTarget(
+            name: "RCP3Dump",
+            dependencies: ["RCP3Document", "RCP3GraphEditor"]
+        ),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),
         .testTarget(

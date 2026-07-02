@@ -54,8 +54,12 @@ import RCP3Runtime
         #expect(names.contains("Sine Bob"))
         #expect(names.contains("Orbit"))
         #expect(names.contains("Drag Momentum"))
-        // Exactly ten curated examples, ids unique, lookup works.
-        #expect(ScriptGraphExamples.all.count == 10)
+        // Cross-system interaction recipes.
+        #expect(names.contains("Look At Target"))
+        #expect(names.contains("Delayed Move"))
+        #expect(names.contains("One-shot Tap"))
+        // Exactly thirteen curated examples, ids unique, lookup works.
+        #expect(ScriptGraphExamples.all.count == 13)
         let ids = ScriptGraphExamples.all.map(\.id)
         #expect(Set(ids).count == ids.count)
         for example in ScriptGraphExamples.all {
@@ -87,7 +91,23 @@ import RCP3Runtime
     @Test func allCuratedExamplesRunToday() {
         let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
         #expect(pending.isEmpty)
-        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 10)
+        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 13)
+    }
+
+    @Test func everyExampleHasAnActionableCertificationManifest() {
+        for example in ScriptGraphExamples.all {
+            let manifest = example.certification
+            #expect(!manifest.capabilities.isEmpty, "\(example.name) has no coverage capabilities")
+            #expect(!manifest.expectedOutcome.isEmpty, "\(example.name) has no observable outcome")
+            #expect(manifest.manualSteps.count >= 4, "\(example.name) has no complete manual procedure")
+            #expect(example.requiredNodeTypes == Set(example.graph.nodes.map(\.type)))
+        }
+        #expect(Set(ScriptGraphExamples.all.map(\.certification.provenance)).isSuperset(of: [
+            .nativeRCP3, .unityPattern, .unrealPattern,
+        ]))
+        #expect(ScriptGraphExamples.coveredNodeTypes.contains("tm_make_look_at_rotation"))
+        #expect(ScriptGraphExamples.coveredNodeTypes.contains("tm_delay"))
+        #expect(ScriptGraphExamples.coveredNodeTypes.contains("tm_do_once"))
     }
 
     @Test func random2CapturedEntityRelativeTransformPathCompiles() throws {
