@@ -146,6 +146,8 @@ public enum ScriptGraphExamples {
         lookAtTarget,
         delayedMove,
         oneShotTap,
+        tapToggle,
+        growByLoop,
     ]
 
     /// Look up an example by id (the synthetic open-graph key).
@@ -705,6 +707,91 @@ public enum ScriptGraphExamples {
             ],
             data: [
                 lit("position.x", node: "position", pin: "x", 0.5),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// The toggle-switch pattern (light switches, doors): every activation flips a
+    /// Bool variable through Not and a Branch routes to one of two outcomes.
+    public static let tapToggle = ScriptGraphExample(
+        id: "example.tap-toggle",
+        name: "Tap Toggle",
+        summary: "Each tap flips a Bool variable via Not, then If teleports the box to alternating sides.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.tap", "variable.local", "logic.not", "control.branch", "transform.translation"],
+            expected: "Taps alternate the entity between X = 0.5 and X = -0.5.",
+            action: "Enter preview, tap four times, and verify the entity switches sides on every tap."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "getFlag", type: "tm_get_variable_node", label: "Get $flag", x: 0, y: 220, variableName: "flag"),
+                .init(id: "not", type: "tm_not", label: "Not", x: 280, y: 220),
+                .init(id: "setFlag", type: "tm_set_variable_node", label: "Set $flag", x: 560, y: 0, variableName: "flag"),
+                .init(id: "branch", type: "tm_if", label: "If", x: 840, y: 0),
+                .init(id: "right", type: "tm_make_vector3", label: "Right", x: 840, y: 260),
+                .init(id: "left", type: "tm_make_vector3", label: "Left", x: 840, y: 420),
+                .init(id: "setRight", type: "tm_set_component", label: "Set Transform", x: 1120, y: 0),
+                .init(id: "setLeft", type: "tm_set_component", label: "Set Transform", x: 1120, y: 220),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "setFlag"),
+                exec("e2", from: "setFlag", to: "branch"),
+                // The Branch's named exec outputs → unnamed exec ins (see Delayed Move).
+                RCP3ScriptGraph.Wire(id: "e3", from: "branch", to: "setRight", fromPin: pin("true"), toPin: nil),
+                RCP3ScriptGraph.Wire(id: "e4", from: "branch", to: "setLeft", fromPin: pin("false"), toPin: nil),
+                data("d1", from: "getFlag", "value", to: "not", "a"),
+                data("d2", from: "not", "result", to: "setFlag", "value"),
+                data("d3", from: "getFlag", "value", to: "branch", "condition"),
+                data("d4", from: "right", "vec3", to: "setRight", "translation"),
+                data("d5", from: "left", "vec3", to: "setLeft", "translation"),
+            ],
+            data: [
+                lit("lit.rightX", node: "right", pin: "x", 0.5),
+                lit("lit.leftX", node: "left", pin: "x", -0.5),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A bounded Loop driving a repeated state change from a single activation —
+    /// the batch-effect recipe (spawners, staged growth, repeated pulses).
+    public static let growByLoop = ScriptGraphExample(
+        id: "example.grow-by-loop",
+        name: "Grow by Loop",
+        summary: "One tap runs Loop over 0..<5; every Step grows the scale by 0.1: five compounding steps per tap.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["gesture.tap", "control.loop", "component.get", "transform.scale"],
+            expected: "A single tap grows the entity by 0.5 on every axis (five 0.1 steps applied in one activation).",
+            action: "Enter preview, tap once, and verify the entity grows in a single 0.5 jump; tap again for another."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "loop", type: "tm_loop", label: "Loop", x: 280, y: 0),
+                .init(id: "get", type: "tm_get_component", label: "Get Transform", x: 280, y: 260),
+                .init(id: "step", type: "tm_make_vector3", label: "Step", x: 280, y: 440),
+                .init(id: "add", type: "tm_math_add", label: "Add", x: 560, y: 300),
+                .init(id: "set", type: "tm_set_component", label: "Set Transform", x: 840, y: 0),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "loop"),
+                // The Loop's named Step output → the unnamed exec in (see Delayed Move).
+                RCP3ScriptGraph.Wire(id: "e2", from: "loop", to: "set", fromPin: pin("step"), toPin: nil),
+                data("d1", from: "get", "scale", to: "add", "a"),
+                data("d2", from: "step", "vec3", to: "add", "b"),
+                data("d3", from: "add", "result", to: "set", "scale"),
+            ],
+            data: [
+                lit("lit.begin", node: "loop", pin: "begin", 0),
+                lit("lit.end", node: "loop", pin: "end", 5),
+                lit("lit.step", node: "loop", pin: "step", 1),
+                lit("lit.stepX", node: "step", pin: "x", 0.1),
+                lit("lit.stepY", node: "step", pin: "y", 0.1),
+                lit("lit.stepZ", node: "step", pin: "z", 0.1),
             ]
         ),
         runsToday: true

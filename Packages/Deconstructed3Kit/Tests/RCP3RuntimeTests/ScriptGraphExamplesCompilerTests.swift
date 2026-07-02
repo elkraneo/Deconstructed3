@@ -58,8 +58,10 @@ import RCP3Runtime
         #expect(names.contains("Look At Target"))
         #expect(names.contains("Delayed Move"))
         #expect(names.contains("One-shot Tap"))
-        // Exactly thirteen curated examples, ids unique, lookup works.
-        #expect(ScriptGraphExamples.all.count == 13)
+        #expect(names.contains("Tap Toggle"))
+        #expect(names.contains("Grow by Loop"))
+        // Exactly fifteen curated examples, ids unique, lookup works.
+        #expect(ScriptGraphExamples.all.count == 15)
         let ids = ScriptGraphExamples.all.map(\.id)
         #expect(Set(ids).count == ids.count)
         for example in ScriptGraphExamples.all {
@@ -91,7 +93,7 @@ import RCP3Runtime
     @Test func allCuratedExamplesRunToday() {
         let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
         #expect(pending.isEmpty)
-        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 13)
+        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 15)
     }
 
     @Test func everyExampleHasAnActionableCertificationManifest() {
