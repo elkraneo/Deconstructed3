@@ -882,6 +882,40 @@ import RCP3Document
         })
     }
 
+    @Test func typedNumberVariableWritesAndReparsesCanonicalRCPMetadata() throws {
+        let asset = try Self.variableNodesAsset()
+        let variable = RCP3ScriptGraph.Variable(
+            uuid: "typed-variable",
+            name: "Score",
+            typeHash: 0x3c2f3d0fe92dd9a0,
+            editHash: 0x0ef2dd9a55accbe4,
+            dataType: "tm_double"
+        )
+        let node = RCP3ScriptGraph.Node(
+            id: "get1",
+            type: "tm_get_variable_node",
+            variableName: variable.name,
+            variableRefUUID: variable.uuid
+        )
+        let model = ScriptGraphEditorModel(graph: .init(
+            nodes: [node], wires: [], data: [], variables: [variable]
+        ))
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let root = try #require(try TM.parse(patched.tmText()).objectValue)
+        let tmGraph = try #require(root["graph"]?.objectValue)
+        let stored = try #require(tmGraph["variables"]?.arrayValue?.first?.objectValue)
+        #expect(stored["type_hash"]?.stringValue == "3c2f3d0fe92dd9a0")
+        #expect(stored["edit_hash"]?.stringValue == "0ef2dd9a55accbe4")
+        #expect(stored["data"]?.objectValue?.type == "tm_double")
+        #expect(stored["data"]?.objectValue?.uuid != nil)
+
+        let reparsed = RCP3ScriptGraph(tmGraph: tmGraph)
+        #expect(reparsed.variables == [variable])
+        #expect(reparsed.nodes.first?.variableName == "Score")
+        #expect(reparsed.nodes.first?.variableRefUUID == "typed-variable")
+    }
+
     /// A hand-built deterministic graph with two variable nodes, exercising authoring
     /// from scratch: naming a variable on a node declares it in the table and emits a
     /// `tm_graph_variable_ref` on the `name` connector; both Get + Set sharing a name

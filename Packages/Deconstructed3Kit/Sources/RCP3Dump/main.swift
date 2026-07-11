@@ -38,88 +38,15 @@ private struct CertificationMatrix: Decodable {
 }
 
 private func certificationGraph(for item: CertificationMatrix.Case) -> RCP3ScriptGraph {
-    let stringHash = TMHash.murmur64a("String")
-    let floatHash = TMHash.murmur64a("Float")
-    // RKS hashes concrete generic types, not the bare container spelling. This is
-    // RCP's canonical type identity for Swift.Array<Swift.String>, captured by
-    // selecting String in the Array Type inspector and saving the graph.
-    let stringArrayHash: UInt64 = 0xa147db4e70aa455c
+    if let graph = ScriptGraphAuthoringRecipes.makeGraph(
+        requestedType: item.subject,
+        label: item.mechanism,
+        graphID: "certification-\(item.mechanism)"
+    ) {
+        return graph
+    }
     let subjectID = UUID().uuidString
-
-    var node = RCP3ScriptGraph.Node(id: subjectID, type: item.subject, label: item.mechanism)
-    var variables: [RCP3ScriptGraph.Variable] = []
-    var data: [RCP3ScriptGraph.DataLiteral] = []
-
-    switch item.subject {
-    case "tm_constant":
-        // The generic Constant node is deprecated in RCP 3. Use the supported,
-        // explicitly typed Bool constructor captured from RCP authoring.
-        node = .init(id: subjectID, type: "tm_make_bool", label: item.mechanism)
-        data.append(.init(
-            id: UUID().uuidString,
-            toNode: subjectID,
-            toPin: TMHash.murmur64a("initial_value"),
-            value: .bool(true)
-        ))
-    case "tm_break_anchoring_component_target":
-        // Enum Make/Break nodes expose their schema-derived pins only after an
-        // authored case selection. Plane exercises the widest Target payload.
-        node.enumSelection = ScriptGraphNodeLibrary.enumSelection(
-            for: item.subject,
-            caseName: "plane"
-        )
-    case "tm_array_for_each":
-        node.dynamicConnectorSettings = .init(
-            // For Each uses the direct dynamic-connector settings object. Only
-            // Array Create wraps it in `tm_array_create_node_settings`.
-            container: .direct,
-            inputs: [.init(name: "array", displayName: "Array", typeHash: stringArrayHash, order: 0)],
-            outputs: [.init(name: "element", displayName: "Element", typeHash: stringHash, order: 0)]
-        )
-    case "tm_get_material_parameter", "tm_set_material_parameter_v2", "tm_modify_any_material":
-        node.materialSettings = .init(
-            typeHash: TMHash.murmur64a("PhysicallyBasedMaterial"),
-            objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
-            inputs: [.init(name: "roughness", typeHash: floatHash, editTypeHash: floatHash, isOptional: false)],
-            outputs: [.init(name: "roughness", typeHash: floatHash, editTypeHash: floatHash, isOptional: false)]
-        )
-    case "tm_get_variable_node", "tm_variable_add":
-        let variable = RCP3ScriptGraph.Variable(
-            uuid: UUID().uuidString,
-            name: "Certification Value",
-            typeHash: 0x3c2f3d0fe92dd9a0,
-            editHash: 0x0ef2dd9a55accbe4,
-            dataType: "tm_double"
-        )
-        variables = [variable]
-        node.variableName = variable.name
-        node.variableRefUUID = variable.uuid
-    case "tm_get_component":
-        data.append(.init(
-            id: UUID().uuidString,
-            toNode: subjectID,
-            toPin: TMHash.murmur64a("component_type"),
-            valueType: "re_scripting_graph_component_type",
-            valueHash: TMHash.murmur64a("Transform")
-        ))
-    default:
-        break
-    }
-
-    // Imported NodeLib nodes are opaque at graph level. Giving the fixture node a
-    // typed interface makes the import/export case useful even before registration.
-    if item.kind == "nodelib-fixture" {
-        node = .init(
-            id: subjectID,
-            type: "certification_nodelib_fixture",
-            label: item.subject,
-            dynamicConnectorSettings: .init(
-                container: .direct,
-                inputs: [.init(name: "value", displayName: "Value", typeHash: stringHash, order: 0)],
-                outputs: [.init(name: "result", displayName: "Result", typeHash: stringHash, order: 0)]
-            )
-        )
-    }
+    let node = RCP3ScriptGraph.Node(id: subjectID, type: item.subject, label: item.mechanism)
 
     let needsExecRoot = ScriptGraphNodeLibrary.spec(for: node.type)?.inputs.contains(where: \.isExec)
         ?? ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type)?.fixedInputs.contains(where: \.isExec)
@@ -129,8 +56,8 @@ private func certificationGraph(for item: CertificationMatrix.Case) -> RCP3Scrip
         id: "certification-\(item.mechanism)",
         nodes: needsExecRoot ? [root, node] : [node],
         wires: needsExecRoot ? [.init(id: UUID().uuidString, from: root.id, to: node.id)] : [],
-        data: data,
-        variables: variables
+        data: [],
+        variables: []
     )
 }
 
@@ -178,6 +105,12 @@ do {
             )
         }
         for (index, item) in matrix.cases.enumerated() {
+            // NodeLib declarations acquire their real graph-node IDs only after
+            // importJSONToTruth/APIRegistry registration. Never fabricate an ID.
+            if item.kind == "nodelib-fixture" {
+                print("SKIP\t\(item.id)\tpending Truth/APIRegistry registration")
+                continue
+            }
             let graph = certificationGraph(for: item)
             let asset = try bundle.createScriptGraphAsset(
                 named: certificationAssetName(index: index, mechanism: item.mechanism)
