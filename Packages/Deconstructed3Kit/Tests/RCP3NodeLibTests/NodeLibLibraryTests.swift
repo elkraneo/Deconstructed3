@@ -44,4 +44,18 @@ import Testing
         #expect(try NodeLibJSONCodec.decode(encoded) == library)
         #expect(encoded.last == 0x0a)
     }
+
+    @Test func discoversLibrariesDeterministically() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "nodelib-loader-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try representative.write(to: directory.appending(path: "B.nodelib.njson"))
+        try representative.write(to: directory.appending(path: "A.nodelib.njson"))
+        try Data("{}".utf8).write(to: directory.appending(path: "ignored.json"))
+
+        let libraries = try NodeLibLibraryLoader.loadLibraries(in: directory)
+        #expect(libraries.count == 2)
+        #expect(libraries.allSatisfy { $0.name == "MyGameLibrary" })
+    }
 }

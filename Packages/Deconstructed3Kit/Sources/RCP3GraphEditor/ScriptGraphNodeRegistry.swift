@@ -1,3 +1,4 @@
+import Foundation
 import RCP3NodeLib
 
 /// A merged authoring catalogue for built-in and imported NodeLib nodes.
@@ -52,6 +53,27 @@ public struct ScriptGraphNodeRegistry: Sendable {
 
     public func spec(for type: String) -> ScriptGraphNodeLibrary.NodeSpec? {
         nodeLibSpecs[type] ?? ScriptGraphNodeLibrary.spec(for: type)
+    }
+
+    public func paletteSections(matching query: String = "") -> [ScriptGraphNodeLibrary.PaletteSection] {
+        let allItems = ScriptGraphNodeLibrary.paletteItems + nodeLibPaletteItems
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = normalized.isEmpty ? allItems : allItems.filter {
+            $0.displayName.lowercased().contains(normalized)
+                || $0.type.lowercased().contains(normalized)
+        }
+        let grouped = Dictionary(grouping: filtered, by: \.category)
+        return ScriptGraphNodeLibrary.Category.allCases
+            .sorted { $0.order < $1.order }
+            .compactMap { category in
+                guard let items = grouped[category], !items.isEmpty else { return nil }
+                return .init(
+                    category: category,
+                    items: items.sorted {
+                        $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                    }
+                )
+            }
     }
 
     private static func displayName(for property: NodeLibLibrary.Property) -> String {

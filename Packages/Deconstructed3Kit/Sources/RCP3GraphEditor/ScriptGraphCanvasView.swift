@@ -519,7 +519,7 @@ public struct ScriptGraphCanvasView: View {
     /// node at the viewport center. A flat list doesn't scale once the library grows,
     /// so the popover scrolls and groups by `ScriptGraphNodeLibrary.paletteSections`.
     private var palettePopover: some View {
-        let sections = ScriptGraphNodeLibrary.paletteSections(matching: paletteQuery)
+        let sections = model.nodeRegistry.paletteSections(matching: paletteQuery)
         return VStack(alignment: .leading, spacing: 0) {
             Text("Add Node")
                 .font(.headline)
