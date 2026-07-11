@@ -358,8 +358,10 @@ public final class ScriptGraphEditorModel {
     public func addNode(type: String, label: String? = nil, at position: CGPoint) -> String {
         let newID = UUID().uuidString
         let enumSelection = ScriptGraphNodeLibrary.defaultEnumSelection(for: type)
+        let dynamicConnectorSettings = ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: type)
         let node = RCP3ScriptGraph.Node(
-            id: newID, type: type, label: label, enumSelection: enumSelection
+            id: newID, type: type, label: label, enumSelection: enumSelection,
+            dynamicConnectorSettings: dynamicConnectorSettings
         )
         let payload = ScriptGraphPinResolver.payload(
             for: node,
@@ -367,7 +369,8 @@ public final class ScriptGraphEditorModel {
             registry: nodeRegistry
         )
         nodes.append(GraphNodeBox(
-            id: newID, position: position, payload: payload, enumSelection: enumSelection
+            id: newID, position: position, payload: payload, enumSelection: enumSelection,
+            dynamicConnectorSettings: dynamicConnectorSettings
         ))
         selectNode(newID)
         markDirty()

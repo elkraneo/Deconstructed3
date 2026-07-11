@@ -49,6 +49,32 @@ import RCP3Document
         #expect(settings.outputs.first?.name == "element")
     }
 
+    @Test func sourceBackedDynamicFamiliesHaveOneUniformAuthoringPath() throws {
+        let authorable = [
+            "tm_to_string", "tm_string_merge",
+            "tm_array_add", "tm_array_count", "tm_array_create", "tm_array_find",
+            "tm_array_for_each", "tm_array_get", "tm_array_remove", "tm_array_set",
+            "tm_custom_event", "tm_is_valid", "tm_is_valid_branch",
+            "tm_on_entity_event", "tm_on_scene_event", "tm_send_entity_event",
+            "tm_send_scene_event", "tm_trigger_event",
+        ]
+        let palette = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
+        for type in authorable {
+            #expect(ScriptGraphAuthoringRecipes.recipe(for: type) != nil, "Missing recipe for \(type)")
+            #expect(palette.contains(type), "Missing palette item for \(type)")
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: type, label: type, graphID: type
+            ))
+            #expect(graph.nodes.last?.dynamicConnectorSettings != nil)
+            #expect(ScriptGraphNodeLibrary.spec(for: type) != nil)
+        }
+    }
+
+    @Test func privateEntityParameterSettingsAreNotMisrepresentedAsGenericDynamicSettings() {
+        #expect(ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: "tm_set_entity_parameter") == nil)
+        #expect(ScriptGraphAuthoringRecipes.recipe(for: "tm_set_entity_parameter") == nil)
+    }
+
     @Test func numberVariableIsFullyTypedAndBound() throws {
         let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
             requestedType: "tm_variable_add", label: "variable", graphID: "variable"

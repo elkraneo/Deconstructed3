@@ -170,6 +170,90 @@ public enum ScriptGraphNodeLibrary {
         dynamicPoliciesByType[type]
     }
 
+    /// A conservative, concrete initial typed-connector selection for dynamic
+    /// families whose settings format is fully represented by `RCP3ScriptGraph`.
+    /// String is used as the seed type because the harvested AllowedTypes policies
+    /// accept it and the RCP-accepted Array For Each representative established the
+    /// concrete `0xa147db4e70aa455c` String-array hash paired with
+    /// `murmur64a("String")` for its element. Connector names such as `value0` are
+    /// deterministic graph-authored defaults, not claims that RCP reserves those
+    /// names; the harvested settings contract explicitly stores author-chosen names.
+    /// Nodes with a distinct private settings object (currently entity parameters)
+    /// deliberately return `nil` rather than being serialized as the wrong shape.
+    public static func defaultDynamicConnectorSettings(
+        for type: String
+    ) -> RCP3ScriptGraph.Node.DynamicConnectorSettings? {
+        let string = TMHash.murmur64a("String")
+        let stringArray: UInt64 = 0xa147db4e70aa455c
+        func connector(_ name: String, _ hash: UInt64, _ order: Int) -> RCP3ScriptGraph.Node.DynamicConnector {
+            .init(name: name, displayName: dynamicDisplayName(name), typeHash: hash, order: Double(order))
+        }
+        func direct(
+            inputs: [RCP3ScriptGraph.Node.DynamicConnector] = [],
+            outputs: [RCP3ScriptGraph.Node.DynamicConnector] = []
+        ) -> RCP3ScriptGraph.Node.DynamicConnectorSettings {
+            .init(container: .direct, inputs: inputs, outputs: outputs)
+        }
+
+        switch type {
+        case "tm_to_string":
+            return direct(inputs: [connector("value", string, 0)])
+        case "tm_string_merge":
+            return direct(inputs: [connector("value0", string, 0), connector("value1", string, 1)])
+        case "tm_array_count", "tm_array_get", "tm_array_set", "tm_array_add", "tm_array_remove":
+            return direct(inputs: [connector("array", stringArray, 0)])
+        case "tm_array_for_each", "tm_array_find":
+            return direct(
+                inputs: [connector("array", stringArray, 0)],
+                outputs: [connector("element", string, 0)]
+            )
+        case "tm_array_create":
+            return .init(
+                container: .array(arrayType: stringArray, elementType: string),
+                inputs: [connector("value0", string, 0), connector("value1", string, 1)],
+                outputs: [connector("array", stringArray, 0)]
+            )
+        case "tm_is_valid":
+            return direct(inputs: [connector("value", string, 0)])
+        case "tm_is_valid_branch":
+            return direct(
+                inputs: [connector("source", string, 0)],
+                outputs: [connector("source", string, 0)]
+            )
+        case "tm_custom_event", "tm_on_scene_event", "tm_on_entity_event":
+            return direct(outputs: [connector("value", string, 0)])
+        case "tm_trigger_event", "tm_send_scene_event", "tm_send_entity_event":
+            return direct(inputs: [connector("value", string, 0)])
+        default:
+            return nil
+        }
+    }
+
+    /// Complete initial spec for an authorable typed-dynamic node.
+    public static func defaultDynamicSpec(for type: String) -> NodeSpec? {
+        guard let settings = defaultDynamicConnectorSettings(for: type),
+              let policy = dynamicPinPolicy(for: type)
+        else { return nil }
+        let inputs = settings.inputs.map { PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name)) }
+        let outputs = settings.outputs.map { PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name)) }
+        let inputSpecs: [PinSpec] = switch type {
+        case "tm_array_set": Array(policy.fixedInputs.prefix(2)) + inputs + Array(policy.fixedInputs.dropFirst(2))
+        case "tm_array_add", "tm_array_find": Array(policy.fixedInputs.prefix(1)) + inputs + Array(policy.fixedInputs.dropFirst())
+        default: policy.fixedInputs + inputs
+        }
+        let outputSpecs: [PinSpec] = switch type {
+        case "tm_array_set", "tm_array_add", "tm_array_remove", "tm_is_valid_branch":
+            policy.fixedOutputs + inputs
+        default: outputs + policy.fixedOutputs
+        }
+        let category: Category = switch type {
+        case let type where type.hasPrefix("tm_array_"): .utility
+        case "tm_is_valid", "tm_is_valid_branch": .logic
+        default: .string
+        }
+        return NodeSpec(inputs: inputSpecs, outputs: outputSpecs, category: category)
+    }
+
     /// Builds the complete interface of one of RCP's settings-backed material
     /// nodes. The selected RKS `Inspectable` descriptor is serialized on the node;
     /// its ordered property arrays are the authoring contract for the generated
@@ -254,7 +338,13 @@ public enum ScriptGraphNodeLibrary {
     /// display name for a stable, readable palette. Data-driven: it grows automatically
     /// as node specs are added to ``specsByType``.
     public static var paletteItems: [PaletteItem] {
-        specsByType
+        let authorable = specsByType.merging(
+            dynamicPoliciesByType.keys.reduce(into: [String: NodeSpec]()) { result, type in
+                result[type] = defaultDynamicSpec(for: type)
+            },
+            uniquingKeysWith: { fixed, _ in fixed }
+        )
+        return authorable
             .map { type, spec in
                 PaletteItem(
                     id: type, type: type,
@@ -568,7 +658,9 @@ public enum ScriptGraphNodeLibrary {
 
     /// The declared interface for a node `type`, or `nil` for an unknown type (the
     /// bridge then derives pins from the wired connectors instead).
-    public static func spec(for type: String) -> NodeSpec? { specsByType[type] }
+    public static func spec(for type: String) -> NodeSpec? {
+        specsByType[type] ?? defaultDynamicSpec(for: type)
+    }
 
     private static let exec = PinSpec(connectorName: "", displayName: "exec", isExec: true)
 

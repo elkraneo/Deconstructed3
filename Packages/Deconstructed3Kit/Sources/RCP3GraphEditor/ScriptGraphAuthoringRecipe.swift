@@ -100,11 +100,9 @@ public enum ScriptGraphAuthoringRecipes {
     public static func recipe(for type: String) -> ScriptGraphAuthoringRecipe? {
         if let verified = verified[type] { return verified }
         // Fixed-interface nodes need no authored settings beyond their catalog spec.
-        // Dynamic families are intentionally excluded: inventing connectors would
-        // repeat the exact false-positive that RCP certification exposed.
-        guard dynamicRecipeRequired(for: type) == false,
-              let spec = ScriptGraphNodeLibrary.spec(for: type)
-        else { return nil }
+        // Typed-dynamic specs appear here only when the library has a concrete,
+        // serializable default settings selection; policy-only nodes remain absent.
+        guard let spec = ScriptGraphNodeLibrary.spec(for: type) else { return nil }
         let hasExecInput = spec.inputs.contains(where: \.isExec)
         let execOutputCount = spec.outputs.count(where: \.isExec)
         let topology: ScriptGraphAuthoringRecipe.Topology
@@ -116,10 +114,6 @@ public enum ScriptGraphAuthoringRecipes {
             topology = .pure
         }
         return .init(requestedType: type, topology: topology)
-    }
-
-    private static func dynamicRecipeRequired(for type: String) -> Bool {
-        ScriptGraphNodeLibrary.dynamicPinPolicy(for: type) != nil
     }
 
     /// Creates a minimal graph through the same recipe interpreter for every family.
@@ -152,6 +146,11 @@ public enum ScriptGraphAuthoringRecipes {
                 objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
                 inputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)],
                 outputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)]
+            )
+        }
+        if node.dynamicConnectorSettings == nil {
+            node.dynamicConnectorSettings = ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(
+                for: recipe.authoredType
             )
         }
 

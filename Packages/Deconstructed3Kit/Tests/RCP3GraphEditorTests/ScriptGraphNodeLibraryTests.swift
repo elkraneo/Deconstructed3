@@ -262,6 +262,13 @@ struct ScriptGraphNodeLibraryTests {
         let expectedTypeSet = Set(expectedTypes)
             .union(schemaDerivedTypes)
             .union(newlySourceBackedTypes)
+            .union([
+                "tm_to_string", "tm_string_merge", "tm_array_add", "tm_array_count",
+                "tm_array_create", "tm_array_find", "tm_array_for_each", "tm_array_get",
+                "tm_array_remove", "tm_array_set", "tm_custom_event", "tm_is_valid",
+                "tm_is_valid_branch", "tm_on_entity_event", "tm_on_scene_event",
+                "tm_send_entity_event", "tm_send_scene_event", "tm_trigger_event",
+            ])
         #expect(items.count == expectedTypeSet.count)
         #expect(Set(items.map(\.type)) == expectedTypeSet)
     }
@@ -699,28 +706,28 @@ struct ScriptGraphNodeLibraryTests {
         for type in [
             "tm_custom_event", "tm_on_scene_event", "tm_on_entity_event",
             "tm_trigger_event", "tm_send_scene_event", "tm_send_entity_event",
-            "tm_get_entity_parameter", "tm_set_entity_parameter",
         ] {
+            #expect(ScriptGraphNodeLibrary.dynamicPinPolicy(for: type) != nil)
+            #expect(ScriptGraphNodeLibrary.spec(for: type) != nil)
+        }
+        for type in ["tm_get_entity_parameter", "tm_set_entity_parameter"] {
             #expect(ScriptGraphNodeLibrary.dynamicPinPolicy(for: type) != nil)
             #expect(ScriptGraphNodeLibrary.spec(for: type) == nil)
         }
 
-        // Policy evidence is not authoring parity: none is insertable until the
-        // editor can persist its graph-defined connectors.
+        // Generic typed settings are authorable; the distinct entity-parameter
+        // settings container remains deliberately absent.
         let paletteTypes = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
-        #expect(!paletteTypes.contains("tm_to_string"))
-        #expect(!paletteTypes.contains("tm_string_merge"))
-        #expect(!paletteTypes.contains("tm_array_count"))
-        #expect(!paletteTypes.contains("tm_array_get"))
-        #expect(!paletteTypes.contains("tm_array_set"))
-        #expect(!paletteTypes.contains("tm_array_add"))
-        #expect(!paletteTypes.contains("tm_array_create"))
-        #expect(!paletteTypes.contains("tm_array_remove"))
-        #expect(!paletteTypes.contains("tm_array_for_each"))
-        #expect(!paletteTypes.contains("tm_array_find"))
-        #expect(ScriptGraphNodeLibrary.spec(for: "tm_to_string") == nil)
-        #expect(ScriptGraphNodeLibrary.spec(for: "tm_string_merge") == nil)
-        #expect(ScriptGraphNodeLibrary.spec(for: "tm_array_count") == nil)
+        #expect(paletteTypes.contains("tm_to_string"))
+        #expect(paletteTypes.contains("tm_string_merge"))
+        #expect(paletteTypes.contains("tm_array_count"))
+        #expect(paletteTypes.contains("tm_array_get"))
+        #expect(paletteTypes.contains("tm_array_set"))
+        #expect(paletteTypes.contains("tm_array_add"))
+        #expect(paletteTypes.contains("tm_array_create"))
+        #expect(paletteTypes.contains("tm_array_remove"))
+        #expect(paletteTypes.contains("tm_array_for_each"))
+        #expect(paletteTypes.contains("tm_array_find"))
     }
 
     @Test("Logic/arithmetic/constant/variable specs declare faithful pins")
