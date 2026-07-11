@@ -204,6 +204,52 @@ import RCP3Document
         return try #require(try TM.parse(text).objectValue)
     }
 
+    static func entityParameterSettingsAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "parameter-root"
+        graph: {
+        \t__uuid: "parameter-graph"
+        \tnodes: [{
+        \t\t__uuid: "parameter-node"
+        \t\ttype: "tm_get_entity_parameter"
+        \t\tposition: { __uuid: "parameter-position" x: 10 y: 20 }
+        \t\tsettings: {
+        \t\t\t__type: "tm_entity_parameter_node_settings"
+        \t\t\t__uuid: "parameter-settings"
+        \t\t\ttype: "1111111111111111"
+        \t\t\tvendor_extension: "preserve-me"
+        \t\t}
+        \t}]
+        \tconnections: []
+        \tdata: []
+        }
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    @Test("Entity Parameter settings parse and identity-preservingly round trip")
+    func entityParameterSettingsRoundTrip() throws {
+        let asset = try Self.entityParameterSettingsAsset()
+        let model = try Self.model(for: asset)
+        let box = try #require(model.node("parameter-node"))
+        #expect(box.entityParameterSettings?.typeHash == 0x1111_1111_1111_1111)
+        #expect(box.dynamicConnectorSettings == nil)
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let node = try #require(reparsed["graph"]?.objectValue?["nodes"]?.arrayValue?.first?.objectValue)
+        let settings = try #require(node["settings"]?.objectValue)
+        #expect(settings.type == "tm_entity_parameter_node_settings")
+        #expect(settings.uuid == "parameter-settings")
+        #expect(settings["type"]?.stringValue == "1111111111111111")
+        #expect(settings["vendor_extension"]?.stringValue == "preserve-me")
+
+        let projected = RCP3ScriptGraph(tmGraph: try #require(reparsed["graph"]?.objectValue))
+        #expect(projected.node(id: "parameter-node")?.entityParameterSettings ==
+            RCP3ScriptGraph.Node.EntityParameterSettings(typeHash: 0x1111_1111_1111_1111))
+    }
+
     @Test("Material settings parse the exact Inspectable property schema")
     func materialSettingsParse() throws {
         let model = try Self.model(for: Self.materialSettingsAsset())

@@ -366,6 +366,40 @@ struct ScriptGraphNodeLibraryTests {
         #expect(payload.pins.allSatisfy { !$0.label.contains("Any") })
     }
 
+    @Test("Entity Parameter settings select the typed Get and Set interfaces")
+    func entityParameterSettingsDerivedSpecs() throws {
+        let settings = RCP3ScriptGraph.Node.EntityParameterSettings(typeHash: 0x1111)
+        let get = try #require(ScriptGraphNodeLibrary.entityParameterSpec(
+            for: "tm_get_entity_parameter", settings: settings
+        ))
+        #expect(get.inputs.map(\.connectorName) == ["entity", "name"])
+        #expect(get.outputs.map(\.connectorName) == ["result"])
+
+        let set = try #require(ScriptGraphNodeLibrary.entityParameterSpec(
+            for: "tm_set_entity_parameter", settings: settings
+        ))
+        #expect(set.inputs.map(\.connectorName) == ["", "entity", "name", "value"])
+        #expect(set.outputs.map(\.connectorName) == [""])
+
+        let node = RCP3ScriptGraph.Node(
+            id: "parameter", type: "tm_set_entity_parameter", entityParameterSettings: settings
+        )
+        let payload = ScriptGraphPinResolver.payload(
+            for: node, in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+        )
+        #expect(payload.inputPins.map(\.label) == ["exec", "Entity", "Name", "Value"])
+        #expect(payload.outputPins.map(\.label) == ["exec"])
+
+        for type in ["tm_get_entity_parameter", "tm_set_entity_parameter"] {
+            #expect(ScriptGraphNodeLibrary.paletteItems.contains { $0.type == type })
+            #expect(ScriptGraphAuthoringRecipes.recipe(for: type) != nil)
+            #expect(
+                ScriptGraphNodeLibrary.defaultEntityParameterSettings(for: type)?.typeHash
+                    == 0xaed3caa5c516d191
+            )
+        }
+    }
+
     @Test("New data-only node specs declare faithful pin connector names, no exec")
     func dataOnlyNodeSpecs() throws {
         // Comparison: a, b → result.

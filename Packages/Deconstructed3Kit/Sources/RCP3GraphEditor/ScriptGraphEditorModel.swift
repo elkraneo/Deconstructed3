@@ -65,6 +65,8 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
     public var dynamicConnectorSettings: RCP3ScriptGraph.Node.DynamicConnectorSettings?
     /// Inspectable-derived connector schema for generated Material nodes.
     public var materialSettings: RCP3ScriptGraph.Node.MaterialSettings?
+    /// Selected value type for Get/Set Entity Parameter nodes.
+    public var entityParameterSettings: RCP3ScriptGraph.Node.EntityParameterSettings?
 
     /// PROVENANCE for an instance-override graph (mirrors ``RCP3ScriptGraph/Node/instanceOf``):
     /// the `__prototype_uuid` of the prototype node this box INSTANCES, when it came from the
@@ -89,6 +91,7 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
         enumSelection: RCP3ScriptGraph.Node.EnumSelection? = nil,
         dynamicConnectorSettings: RCP3ScriptGraph.Node.DynamicConnectorSettings? = nil,
         materialSettings: RCP3ScriptGraph.Node.MaterialSettings? = nil,
+        entityParameterSettings: RCP3ScriptGraph.Node.EntityParameterSettings? = nil,
         instanceOf: String? = nil,
         authoredX: Bool = true,
         authoredY: Bool = true
@@ -99,6 +102,7 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
         self.enumSelection = enumSelection
         self.dynamicConnectorSettings = dynamicConnectorSettings
         self.materialSettings = materialSettings
+        self.entityParameterSettings = entityParameterSettings
         self.instanceOf = instanceOf
         self.authoredX = authoredX
         self.authoredY = authoredY
@@ -245,6 +249,7 @@ public final class ScriptGraphEditorModel {
                 enumSelection: node.enumSelection,
                 dynamicConnectorSettings: node.dynamicConnectorSettings,
                 materialSettings: node.materialSettings,
+                entityParameterSettings: node.entityParameterSettings,
                 instanceOf: node.instanceOf,
                 authoredX: node.x != nil,
                 authoredY: node.y != nil
@@ -359,9 +364,11 @@ public final class ScriptGraphEditorModel {
         let newID = UUID().uuidString
         let enumSelection = ScriptGraphNodeLibrary.defaultEnumSelection(for: type)
         let dynamicConnectorSettings = ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: type)
+        let entityParameterSettings = ScriptGraphNodeLibrary.defaultEntityParameterSettings(for: type)
         let node = RCP3ScriptGraph.Node(
             id: newID, type: type, label: label, enumSelection: enumSelection,
-            dynamicConnectorSettings: dynamicConnectorSettings
+            dynamicConnectorSettings: dynamicConnectorSettings,
+            entityParameterSettings: entityParameterSettings
         )
         let payload = ScriptGraphPinResolver.payload(
             for: node,
@@ -370,7 +377,8 @@ public final class ScriptGraphEditorModel {
         )
         nodes.append(GraphNodeBox(
             id: newID, position: position, payload: payload, enumSelection: enumSelection,
-            dynamicConnectorSettings: dynamicConnectorSettings
+            dynamicConnectorSettings: dynamicConnectorSettings,
+            entityParameterSettings: entityParameterSettings
         ))
         selectNode(newID)
         markDirty()

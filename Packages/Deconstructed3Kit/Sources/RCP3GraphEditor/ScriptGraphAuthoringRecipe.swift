@@ -153,6 +153,9 @@ public enum ScriptGraphAuthoringRecipes {
                 for: recipe.authoredType
             )
         }
+        node.entityParameterSettings = ScriptGraphNodeLibrary.defaultEntityParameterSettings(
+            for: recipe.authoredType
+        )
 
         switch recipe.variable {
         case .none: break

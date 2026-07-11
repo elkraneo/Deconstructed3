@@ -110,6 +110,10 @@ public enum ScriptGraphPinResolver {
            let spec = ScriptGraphNodeLibrary.materialSpec(for: node.type, settings: settings) {
             return libraryPins(for: node, spec: spec, in: graph)
         }
+        if let settings = node.entityParameterSettings,
+           let spec = ScriptGraphNodeLibrary.entityParameterSpec(for: node.type, settings: settings) {
+            return libraryPins(for: node, spec: spec, in: graph)
+        }
         if let settings = node.dynamicConnectorSettings,
            let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type) {
             return dynamicPins(for: node, settings: settings, policy: policy, in: graph)

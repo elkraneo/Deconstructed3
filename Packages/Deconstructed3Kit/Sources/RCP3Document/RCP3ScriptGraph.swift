@@ -118,6 +118,16 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             }
         }
 
+        /// The selected value type for Get/Set Entity Parameter. RCP stores this in
+        /// its own settings object (not in generic dynamic-connector settings).
+        public struct EntityParameterSettings: Hashable, Sendable {
+            public let typeHash: UInt64
+
+            public init(typeHash: UInt64) {
+                self.typeHash = typeHash
+            }
+        }
+
         /// The node's `__uuid` (what connections/data reference).
         public let id: String
         /// The node `type` (e.g. `tm_gesture_event_drag`, `tm_set_component`).
@@ -166,8 +176,11 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         public var dynamicConnectorSettings: DynamicConnectorSettings?
         /// Selected RKS material type and its serialized Inspectable property schema.
         public var materialSettings: MaterialSettings?
+        /// Selected parameter value type for `tm_get_entity_parameter` and
+        /// `tm_set_entity_parameter`.
+        public var entityParameterSettings: EntityParameterSettings?
 
-        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil, instanceOf: String? = nil, enumSelection: EnumSelection? = nil, dynamicConnectorSettings: DynamicConnectorSettings? = nil, materialSettings: MaterialSettings? = nil) {
+        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil, instanceOf: String? = nil, enumSelection: EnumSelection? = nil, dynamicConnectorSettings: DynamicConnectorSettings? = nil, materialSettings: MaterialSettings? = nil, entityParameterSettings: EntityParameterSettings? = nil) {
             self.id = id
             self.type = type
             self.label = label
@@ -179,6 +192,7 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             self.enumSelection = enumSelection
             self.dynamicConnectorSettings = dynamicConnectorSettings
             self.materialSettings = materialSettings
+            self.entityParameterSettings = entityParameterSettings
         }
     }
 
@@ -359,7 +373,8 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 dynamicConnectorSettings: Self.dynamicConnectorSettings(
                     from: object["settings"]?.objectValue
                 ),
-                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue)
+                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue),
+                entityParameterSettings: Self.entityParameterSettings(from: object["settings"]?.objectValue)
             )
         }
 
@@ -388,7 +403,8 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 dynamicConnectorSettings: Self.dynamicConnectorSettings(
                     from: object["settings"]?.objectValue
                 ),
-                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue)
+                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue),
+                entityParameterSettings: Self.entityParameterSettings(from: object["settings"]?.objectValue)
             ))
         }
 
@@ -577,6 +593,17 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             inputs: properties("inputs"),
             outputs: properties("outputs")
         )
+    }
+
+    private static func entityParameterSettings(
+        from settings: TMObject?
+    ) -> Node.EntityParameterSettings? {
+        guard
+            let settings,
+            settings.type == "tm_entity_parameter_node_settings",
+            let typeHash = uint64(settings["type"])
+        else { return nil }
+        return .init(typeHash: typeHash)
     }
 
     /// TM stores uint64 fields as 16-digit hex strings, but accepting numeric lexemes

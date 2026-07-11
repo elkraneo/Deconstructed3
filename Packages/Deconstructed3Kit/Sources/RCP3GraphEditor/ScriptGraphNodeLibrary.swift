@@ -298,6 +298,43 @@ public enum ScriptGraphNodeLibrary {
         }
     }
 
+    /// Builds the interface selected by `tm_entity_parameter_node_settings`.
+    /// The type hash controls the value connector's runtime type; pin names and
+    /// topology are fixed by the Get/Set registrations.
+    public static func entityParameterSpec(
+        for type: String,
+        settings: RCP3ScriptGraph.Node.EntityParameterSettings
+    ) -> NodeSpec? {
+        _ = settings.typeHash // Retained on the model for type checking/serialization.
+        switch type {
+        case "tm_get_entity_parameter":
+            return NodeSpec(
+                inputs: [data("entity", "Entity"), data("name", "Name")],
+                outputs: [data("result", "Result")],
+                category: .components
+            )
+        case "tm_set_entity_parameter":
+            return NodeSpec(
+                inputs: [exec, data("entity", "Entity"), data("name", "Name"), data("value", "Value")],
+                outputs: [exec],
+                category: .components
+            )
+        default:
+            return nil
+        }
+    }
+
+    /// RCP's recovered default selection for the dedicated Entity Parameter
+    /// settings record. This is intentionally separate from generic dynamic pins.
+    public static func defaultEntityParameterSettings(
+        for type: String
+    ) -> RCP3ScriptGraph.Node.EntityParameterSettings? {
+        guard type == "tm_get_entity_parameter" || type == "tm_set_entity_parameter" else {
+            return nil
+        }
+        return .init(typeHash: 0xaed3caa5c516d191)
+    }
+
     // MARK: - Palette (insertable node types)
 
     /// One entry in the node-insert palette: a node type the editor can author onto
@@ -338,12 +375,17 @@ public enum ScriptGraphNodeLibrary {
     /// display name for a stable, readable palette. Data-driven: it grows automatically
     /// as node specs are added to ``specsByType``.
     public static var paletteItems: [PaletteItem] {
-        let authorable = specsByType.merging(
+        var authorable = specsByType.merging(
             dynamicPoliciesByType.keys.reduce(into: [String: NodeSpec]()) { result, type in
                 result[type] = defaultDynamicSpec(for: type)
             },
             uniquingKeysWith: { fixed, _ in fixed }
         )
+        for type in ["tm_get_entity_parameter", "tm_set_entity_parameter"] {
+            if let settings = defaultEntityParameterSettings(for: type) {
+                authorable[type] = entityParameterSpec(for: type, settings: settings)
+            }
+        }
         return authorable
             .map { type, spec in
                 PaletteItem(
@@ -659,7 +701,9 @@ public enum ScriptGraphNodeLibrary {
     /// The declared interface for a node `type`, or `nil` for an unknown type (the
     /// bridge then derives pins from the wired connectors instead).
     public static func spec(for type: String) -> NodeSpec? {
-        specsByType[type] ?? defaultDynamicSpec(for: type)
+        if let spec = specsByType[type] ?? defaultDynamicSpec(for: type) { return spec }
+        guard let settings = defaultEntityParameterSettings(for: type) else { return nil }
+        return entityParameterSpec(for: type, settings: settings)
     }
 
     private static let exec = PinSpec(connectorName: "", displayName: "exec", isExec: true)

@@ -18,7 +18,7 @@ swift run rcp3-dump audit-compliance \
 - Harvested catalogue: 382 rows, 360 unique public-candidate identifiers. The
   ledger contains duplicate rows for `tm_set_entity_parameter` and
   `tm_make_collision_group`.
-- Live fixed/schema/typed-dynamic palette: 334 node types; every palette type has an authoring
+- Live fixed/schema/typed-dynamic palette: 336 node types; every palette type has an authoring
   recipe.
 - Settings-backed material authoring adds `tm_get_material_parameter`,
   `tm_set_material_parameter_v2`, and `tm_modify_any_material` outside the fixed
@@ -26,9 +26,9 @@ swift run rcp3-dump audit-compliance \
 - The generic typed-dynamic settings path now creates concrete initial interfaces
   for 18 public nodes across Array, String, validation, and custom-event families.
   These are structurally round-trip tested but remain RCP acceptance candidates,
-  not individually RCP-certified nodes. `tm_set_entity_parameter` remains unavailable:
-  it uses the distinct `tm_entity_parameter_node_settings` contract and must not be
-  emitted as generic dynamic-connector settings.
+  not individually RCP-certified nodes. Get/Set Entity Parameter are also authorable
+  through their recovered dedicated `tm_entity_parameter_node_settings` record;
+  they are deliberately not emitted as generic dynamic-connector settings.
 - Another 23 unique public-candidate identifiers are intentionally deferred:
   two pending public schemas; three feature-flagged diagnostics; three nodes not
   recovered from `libtm`; six unregistered catalogue entries; six validation-test

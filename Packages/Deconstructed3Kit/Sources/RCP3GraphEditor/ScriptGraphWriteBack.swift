@@ -252,6 +252,7 @@ public enum ScriptGraphWriteBack {
         patchEnumSettings(on: &node, selection: box.enumSelection)
         patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
         patchMaterialSettings(on: &node, settings: box.materialSettings)
+        patchEntityParameterSettings(on: &node, settings: box.entityParameterSettings)
         return node
     }
 
@@ -544,6 +545,7 @@ public enum ScriptGraphWriteBack {
             patchEnumSettings(on: &node, selection: box.enumSelection)
             patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
             patchMaterialSettings(on: &node, settings: box.materialSettings)
+            patchEntityParameterSettings(on: &node, settings: box.entityParameterSettings)
             return node
         }
 
@@ -562,6 +564,7 @@ public enum ScriptGraphWriteBack {
         patchEnumSettings(on: &node, selection: box.enumSelection)
         patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
         patchMaterialSettings(on: &node, settings: box.materialSettings)
+        patchEntityParameterSettings(on: &node, settings: box.entityParameterSettings)
         return node
     }
 
@@ -700,6 +703,18 @@ public enum ScriptGraphWriteBack {
 
         settings.set(.array(values(modeled.inputs, existing: settings["inputs"]?.arrayValue ?? [])), forKey: "inputs")
         settings.set(.array(values(modeled.outputs, existing: settings["outputs"]?.arrayValue ?? [])), forKey: "outputs")
+        node.set(.object(settings), forKey: "settings")
+    }
+
+    private static func patchEntityParameterSettings(
+        on node: inout TMObject,
+        settings modeled: RCP3ScriptGraph.Node.EntityParameterSettings?
+    ) {
+        guard let modeled else { return }
+        var settings = node["settings"]?.objectValue ?? TMObject()
+        settings.set(.string("tm_entity_parameter_node_settings"), forKey: "__type")
+        if settings.uuid == nil { settings.set(.string(UUID().uuidString), forKey: "__uuid") }
+        settings.set(.string(TMHash.hex(modeled.typeHash)), forKey: "type")
         node.set(.object(settings), forKey: "settings")
     }
 
