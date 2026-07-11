@@ -76,6 +76,26 @@ Apple RCP3 samples are the highest-value scenario references because they repres
 the intended runtime and authoring workflow. Decompose large samples into small
 recipes first, then retain one end-to-end project as a stress test.
 
+## NodeLib-generated identities
+
+NodeLib method declarations do not use their declaration name directly as the
+serialized Script Graph node type. RCP3 generates:
+
+```text
+node_<decimal(murmurCombine(hash(node.name), hash(library.uniqueID)))>
+```
+
+`TMHash.nodeLibMethodIdentity(nodeName:libraryUniqueID:)` implements that exact
+derivation. It is clean-room verified against RCP3's runtime result for the
+representative `spawnPlayer` fixture. The library's registration UUID controls
+ownership and removal but is not part of the serialized node type.
+
+The identity alone is insufficient for execution or RCP ingestion: the matching
+NodeLib must be registered in the same process so its static connector interface,
+metadata, and emitter callbacks exist. Agentic and web authoring can derive and
+serialize identities portably, while an Apple host adapter owns registration and
+runtime validation.
+
 ## Current corpus
 
 The corpus is declared by `ScriptGraphExamples.all`. Automated tests enforce:

@@ -12,10 +12,13 @@
 /// This lets us turn a name into the hash a graph stores, and (via a known-name
 /// table) recover a readable label for a stored hash.
 public enum TMHash {
+    private static let murmurMultiplier: UInt64 = 0xc6a4a7935bd1e995
+    private static let murmurShift: UInt64 = 47
+
     /// MurmurHash64A of `string`'s UTF-8 bytes (seed `0`).
     public static func murmur64a(_ string: String) -> UInt64 {
-        let m: UInt64 = 0xc6a4a7935bd1e995
-        let r: UInt64 = 47
+        let m = murmurMultiplier
+        let r = murmurShift
         let bytes = Array(string.utf8)
         let length = bytes.count
 
@@ -49,6 +52,42 @@ public enum TMHash {
         h = h &* m
         h ^= h >> r
         return h
+    }
+
+    /// Combines two already-hashed values using RCP3's private
+    /// `tm_murmur_hash_64a_combine` operation.
+    ///
+    /// NodeLib registration uses this to namespace generated graph-node names
+    /// by the library's stable `uniqueID` without incorporating the transient
+    /// registration UUID.
+    public static func murmur64aCombine(_ first: UInt64, _ second: UInt64) -> UInt64 {
+        let m = murmurMultiplier
+        let r = murmurShift
+
+        func mix(_ value: UInt64) -> UInt64 {
+            var value = value &* m
+            value ^= value >> r
+            return value &* m
+        }
+
+        var result = mix(first) ^ 0x6a4a7935bd1e9950
+        result = result &* m
+        result ^= mix(second)
+        result = result &* m
+        result ^= result >> r
+        result = result &* m
+        result ^= result >> r
+        return result
+    }
+
+    /// The authorable Script Graph node type RCP3 generates for a method in a
+    /// NodeLib library: `node_<decimal combined hash>`.
+    public static func nodeLibMethodIdentity(nodeName: String, libraryUniqueID: String) -> String {
+        let combined = murmur64aCombine(
+            murmur64a(nodeName),
+            murmur64a(libraryUniqueID)
+        )
+        return "node_\(combined)"
     }
 
     /// MurmurHash64A as the lowercase 16-digit hex string the format stores

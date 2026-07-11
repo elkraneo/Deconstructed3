@@ -19,4 +19,15 @@ import TMFormat
         // Deterministic, just guards the length-0 path (no tail, no blocks).
         #expect(TMHash.murmur64a("") == TMHash.murmur64a(""))
     }
+
+    @Test func nodeLibMethodIdentityMatchesRCP3Runtime() {
+        // Verified by registering the representative NodeLib through RCP3's
+        // gameplay_scripting ABI and calling Apple's own hash/combine code.
+        #expect(
+            TMHash.nodeLibMethodIdentity(
+                nodeName: "spawnPlayer",
+                libraryUniqueID: "deconstructed3-certification-nodelib-v1"
+            ) == "node_17854906811712824314"
+        )
+    }
 }
