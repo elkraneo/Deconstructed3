@@ -9,17 +9,21 @@ import TMFormat
 //   swift run rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
 // Materialize the generated mechanism matrix as one minimal graph per case:
 //   swift run rcp3-dump export-certification <project> <matrix.json>
+// Reconcile live authoring/corpus coverage with the harvested parity ledger:
+//   swift run rcp3-dump audit-compliance <ledger.json> <matrix.json>
 
 let arguments = CommandLine.arguments
 guard arguments.count == 2
     || (arguments.count == 3 && arguments[1] == "export-corpus")
     || (arguments.count == 4 && arguments[1] == "export-certification")
+    || (arguments.count == 4 && arguments[1] == "audit-compliance")
 else {
     FileHandle.standardError.write(Data("""
     usage:
       rcp3-dump <path/to/Name.realitycomposerpro>
       rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
       rcp3-dump export-certification <path/to/Name.realitycomposerpro> <path/to/matrix.json>
+      rcp3-dump audit-compliance <path/to/parity-ledger.json> <path/to/matrix.json>
     """.utf8))
     exit(2)
 }
@@ -29,13 +33,69 @@ let url = URL(filePath: arguments[command == "dump" ? 1 : 2])
 
 private struct CertificationMatrix: Decodable {
     struct Case: Decodable {
+        struct Certification: Decodable {
+            let authoring: String?
+            let runtime: String?
+        }
         let id: String
         let kind: String
         let mechanism: String
         let subject: String
         let registeredNodeType: String?
+        let certification: Certification?
     }
     let cases: [Case]
+}
+
+private struct ParityLedger: Decodable {
+    struct Entry: Decodable {
+        struct Parity: Decodable { let authoringImplemented: Bool }
+        let id: String
+        let isPublicPaletteCandidate: Bool
+        let parity: Parity
+    }
+    let entries: [Entry]
+}
+
+if arguments.count == 4, arguments[1] == "audit-compliance" {
+    do {
+        let decoder = JSONDecoder()
+        let ledger = try decoder.decode(
+            ParityLedger.self,
+            from: Data(contentsOf: URL(filePath: arguments[2]))
+        )
+        let matrix = try decoder.decode(
+            CertificationMatrix.self,
+            from: Data(contentsOf: URL(filePath: arguments[3]))
+        )
+        let publicTypes = Set(ledger.entries.filter(\.isPublicPaletteCandidate).map(\.id))
+        let additionalAuthorable = Set(ledger.entries.filter {
+            $0.parity.authoringImplemented && [
+                "tm_get_material_parameter", "tm_set_material_parameter_v2", "tm_modify_any_material",
+            ].contains($0.id)
+        }.map(\.id))
+        let rcpCertified = Set(matrix.cases.compactMap {
+            $0.certification?.authoring == "pass" ? ($0.registeredNodeType ?? $0.subject) : nil
+        })
+        let runtimeVerified: Set<String> = Set(matrix.cases.compactMap {
+            guard let runtime = $0.certification?.runtime, runtime == "pass" else { return nil }
+            return $0.registeredNodeType ?? $0.subject
+        })
+        let report = ScriptGraphComplianceAudit.makeReport(
+            cataloguedPublicTypes: publicTypes,
+            additionallyAuthorableTypes: additionalAuthorable,
+            rcpRoundTripCertifiedTypes: rcpCertified,
+            runtimeVerifiedTypes: runtimeVerified
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        FileHandle.standardOutput.write(try encoder.encode(report))
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+        exit(1)
+    }
 }
 
 private func certificationGraph(
