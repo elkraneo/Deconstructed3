@@ -152,6 +152,7 @@ public struct CanonicalScriptGraphCompiler {
             case lifecycle(String)
             /// A `this.<name> = function(event){…}` runtime event hook.
             case runtime(String)
+            case custom(targeted: Bool)
         }
 
         static func eventKind(for type: String) -> EventKind? {
@@ -174,6 +175,8 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_animation_event_playback_looped": return .runtime("animationPlaybackLooped")
             case "tm_animation_event_playback_terminated": return .runtime("animationPlaybackTerminated")
             case "tm_audio_event_playback_completed": return .runtime("audioPlaybackCompleted")
+            case "tm_custom_event", "tm_on_scene_event": return .custom(targeted: false)
+            case "tm_on_entity_event": return .custom(targeted: true)
             default: return nil
             }
         }
@@ -200,6 +203,18 @@ public struct CanonicalScriptGraphCompiler {
             case .runtime(let name):
                 let body = emitActionBody(after: node, context: .event)
                 return emitFunctionHandler(name: name, params: "event", body: body, logEvent: name)
+            case .custom(let targeted):
+                var seen: Set<String> = []
+                let eventName = inputExpression(
+                    into: node, pinName: "eventName", context: .lifecycle, seen: &seen,
+                    defaultValue: Expr("\"\"")
+                ).code
+                let body = emitActionBody(after: node, context: .event)
+                let receiver = targeted ? "this.entity" : "this"
+                var lines = ["\(receiver).on(\(eventName), (event) => {"]
+                for statement in body { lines.append("    " + statement) }
+                lines.append("});")
+                return lines.joined(separator: "\n")
             }
         }
 
@@ -319,6 +334,10 @@ public struct CanonicalScriptGraphCompiler {
                 return emitSetVariable(node, context: context)
             case "tm_clear_variable_node", "tm_clear_remote_variable_node":
                 return emitClearVariable(node)
+            case "tm_variable_add", "tm_variable_subtract", "tm_variable_multiply",
+                 "tm_variable_divide", "tm_variable_multiply_by_scalar",
+                 "tm_variable_multiply_by_quaternion", "tm_variable_multiply_by_matrix":
+                return emitVariableMutation(node, context: context)
             case "tm_sequence":
                 return emitSequence(node, context: context)
             case "tm_if":
@@ -349,6 +368,84 @@ public struct CanonicalScriptGraphCompiler {
                 return emitRemoveChild(node, context: context)
             case "tm_remove_from_parent":
                 return emitRemoveFromParent(node, context: context)
+            case "tm_remove_component":
+                return emitRemoveComponent(node, context: context)
+            case "tm_array_set":
+                return emitArraySet(node, context: context)
+            case "tm_array_add":
+                return emitArrayAdd(node, context: context)
+            case "tm_array_remove":
+                return emitArrayRemove(node, context: context)
+            case "tm_array_for_each":
+                return emitArrayForEach(node, context: context)
+            case "tm_array_find":
+                return emitArrayFind(node, context: context)
+            case "tm_physics_clear_forces_and_torques":
+                return emitEntityBooleanMethod(node, method: "clearForcesAndTorques", context: context)
+            case "tm_physics_reset_transform":
+                return emitEntityBooleanMethod(node, method: "resetPhysicsTransform", context: context)
+            case "tm_physics_add_force":
+                return emitPhysicsVectorAction(node, valuePin: "force", method: "addForce", hasPosition: true, context: context)
+            case "tm_physics_add_torque":
+                return emitPhysicsVectorAction(node, valuePin: "torque", method: "addTorque", hasPosition: false, context: context)
+            case "tm_physics_apply_linear_impulse":
+                return emitPhysicsVectorAction(node, valuePin: "impulse", method: "applyLinearImpulse", hasPosition: false, context: context)
+            case "tm_physics_apply_angular_impulse":
+                return emitPhysicsVectorAction(node, valuePin: "impulse", method: "applyAngularImpulse", hasPosition: false, context: context)
+            case "tm_physics_apply_impulse":
+                return emitPhysicsVectorAction(node, valuePin: "impulse", method: "applyLinearImpulse", hasPosition: true, context: context)
+            case "tm_audio_mix_groups_component_add_group":
+                return emitAudioMixGroupMutation(node, operation: "set", valuePin: "mixGroup", createIfMissing: true, context: context)
+            case "tm_audio_mix_groups_component_remove_group":
+                return emitAudioMixGroupMutation(node, operation: "remove", valuePin: "name", createIfMissing: false, context: context)
+            case "tm_pause_audio":
+                return emitAudioControllerAction(node, method: "pause", argumentPins: [], context: context)
+            case "tm_seek_audio", "tm_seek_audio_group":
+                return emitAudioControllerAction(node, method: "seek", argumentPins: ["time"], context: context)
+            case "tm_fade_audio", "tm_fade_audio_group":
+                return emitAudioControllerAction(node, method: "fade", argumentPins: ["gain", "duration"], context: context)
+            case "tm_pause_audio_group":
+                return emitAudioGroupPause(node, context: context)
+            case "tm_stop_all_audio":
+                return emitReceiverAction(node, receiverPin: "source", method: "stopAllAudio", argumentPins: [], receiverDefault: "this.entity", context: context)
+            case "tm_stop_audio", "tm_stop_audio_group":
+                return emitReceiverAction(node, receiverPin: "source", method: "stop", argumentPins: [], receiverDefault: "undefined", context: context)
+            case "tm_play_audio_at_time", "tm_play_audio_group_at_time":
+                return emitReceiverAction(node, receiverPin: "source", method: "play", argumentPins: ["time"], receiverDefault: "undefined", context: context)
+            case "tm_fade_audio_mix_group":
+                return emitAudioControllerAction(node, method: "fade", argumentPins: ["gain", "duration"], context: context)
+            case "tm_play_audio_by_name":
+                return emitPlayAudioByName(node, grouped: false, context: context)
+            case "tm_play_audio_group_by_name":
+                return emitPlayAudioByName(node, grouped: true, context: context)
+            case "tm_set_material_parameter_v2":
+                return emitSetMaterialParameter(node, context: context)
+            case "tm_modify_any_material":
+                return emitModifyAnyMaterial(node, context: context)
+            case "tm_trigger_event", "tm_send_scene_event":
+                return emitCustomEventSend(node, targeted: false, context: context)
+            case "tm_send_entity_event":
+                return emitCustomEventSend(node, targeted: true, context: context)
+            case "tm_stop_all_animations":
+                return emitReceiverAction(node, receiverPin: "entity", method: "stopAllAnimations", argumentPins: ["recursive"], receiverDefault: "this.entity", context: context)
+            case "tm_stop_animation":
+                return emitReceiverAction(node, receiverPin: "playbackController", method: "stop", argumentPins: ["blendOutDuration"], receiverDefault: "undefined", context: context)
+            case "tm_pause_animation":
+                return emitAnimationPause(node, context: context)
+            case "tm_play_animation_by_name", "tm_play_animation_by_index":
+                return emitPlayAnimationByName(node, context: context)
+            case "tm_entity_teleport_character":
+                return emitTeleportCharacter(node, context: context)
+            case "tm_entity_move":
+                return emitEntityMove(node, context: context)
+            case "tm_entity_move_character":
+                return emitMoveCharacter(node, context: context)
+            case "tm_is_valid_branch":
+                return emitIsValidBranch(node, context: context)
+            case "tm_scene_raycast_v2":
+                return emitSceneCast(node, convex: false, context: context)
+            case "tm_scene_convex_cast":
+                return emitSceneCast(node, convex: true, context: context)
             default:
                 return ["// unsupported node: \(node.type)"]
             }
@@ -356,7 +453,7 @@ public struct CanonicalScriptGraphCompiler {
 
         static func handlesOwnControlFlow(_ type: String) -> Bool {
             switch type {
-            case "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay", "tm_do_once":
+            case "tm_sequence", "tm_if", "tm_switch", "tm_loop", "tm_delay", "tm_do_once", "tm_array_for_each", "tm_array_find", "tm_entity_move_character", "tm_is_valid_branch", "tm_scene_raycast_v2", "tm_scene_convex_cast":
                 return true
             default:
                 return false
@@ -387,6 +484,16 @@ public struct CanonicalScriptGraphCompiler {
                 return [CanonicalScriptGraphCompiler.alwaysPin, CanonicalScriptGraphCompiler.truePin, CanonicalScriptGraphCompiler.falsePin].contains(wire.fromPin)
             case "tm_loop":
                 return [CanonicalScriptGraphCompiler.stepPin, CanonicalScriptGraphCompiler.endPin].contains(wire.fromPin)
+            case "tm_array_for_each":
+                return [CanonicalScriptGraphCompiler.stepPin, CanonicalScriptGraphCompiler.endPin].contains(wire.fromPin)
+            case "tm_array_find":
+                return [TMHash.murmur64a("found"), TMHash.murmur64a("not found")].contains(wire.fromPin)
+            case "tm_entity_move_character":
+                return [CanonicalScriptGraphCompiler.unnamedExecPin, TMHash.murmur64a("collision")].contains(wire.fromPin)
+            case "tm_is_valid_branch":
+                return [TMHash.murmur64a("valid"), TMHash.murmur64a("invalid")].contains(wire.fromPin)
+            case "tm_scene_raycast_v2", "tm_scene_convex_cast":
+                return [TMHash.murmur64a("hit"), TMHash.murmur64a("miss")].contains(wire.fromPin)
             case "tm_delay":
                 return [CanonicalScriptGraphCompiler.alwaysPin, CanonicalScriptGraphCompiler.oncePin].contains(wire.fromPin)
             case "tm_do_once":
@@ -423,6 +530,29 @@ public struct CanonicalScriptGraphCompiler {
             statements.append(contentsOf: Self.indent(falseBody.isEmpty ? ["// no-op"] : falseBody))
             statements.append("}")
             return statements
+        }
+
+        mutating func emitIsValidBranch(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let input = node.dynamicConnectorSettings?.inputs.first?.name ?? "source"
+            let source = inputExpression(
+                into: node, pinName: input, context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let validBody = emitActionBody(
+                after: node, context: context, outputPin: TMHash.murmur64a("valid")
+            )
+            let invalidBody = emitActionBody(
+                after: node, context: context, outputPin: TMHash.murmur64a("invalid")
+            )
+            return ["if (" + source + " !== undefined && " + source + " !== null) {"]
+                + Self.indent(validBody.isEmpty ? ["// no-op"] : validBody)
+                + ["} else {"]
+                + Self.indent(invalidBody.isEmpty ? ["// no-op"] : invalidBody)
+                + ["}"]
         }
 
         mutating func emitSwitch(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
@@ -614,6 +744,518 @@ public struct CanonicalScriptGraphCompiler {
             ]
         }
 
+        mutating func emitEntityBooleanMethod(
+            _ node: RCP3ScriptGraph.Node,
+            method: String,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let recursive = inputExpression(
+                into: node, pinName: "recursive", context: context, seen: &seen,
+                defaultValue: Expr("false")
+            ).code
+            return ["\(entity).\(method)(\(recursive));"]
+        }
+
+        mutating func emitPhysicsVectorAction(
+            _ node: RCP3ScriptGraph.Node,
+            valuePin: String,
+            method: String,
+            hasPosition: Bool,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let value = inputExpression(
+                into: node, pinName: valuePin, context: context, seen: &seen
+            ).code
+            let relativeTo = inputExpression(
+                into: node, pinName: "relativeTo", context: context, seen: &seen,
+                defaultValue: Expr("null")
+            ).code
+            if hasPosition {
+                let at = inputExpression(
+                    into: node, pinName: "at", context: context, seen: &seen,
+                    defaultValue: Expr("null")
+                ).code
+                return ["\(entity).\(method)(\(value), \(at), \(relativeTo));"]
+            }
+            return ["\(entity).\(method)(\(value), \(relativeTo));"]
+        }
+
+        mutating func emitAudioMixGroupMutation(
+            _ node: RCP3ScriptGraph.Node,
+            operation: String,
+            valuePin: String,
+            createIfMissing: Bool,
+            context: ExprContext
+        ) -> [String] {
+            usesRealityKit = true
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "source", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let value = inputExpression(
+                into: node, pinName: valuePin, context: context, seen: &seen
+            ).code
+            let component = "__d3_audio_mix_groups_\(Self.sanitize(node.id))"
+            if createIfMissing {
+                return [
+                    "let \(component) = \(entity).getComponent(RealityKit.AudioMixGroupsComponent.Type) ?? new RealityKit.AudioMixGroupsComponent();",
+                    "\(component).\(operation)(\(value));",
+                    "\(entity).setComponent(\(component));",
+                ]
+            }
+            return [
+                "let \(component) = \(entity).getComponent(RealityKit.AudioMixGroupsComponent.Type);",
+                "if (\(component) != null) {",
+                "    \(component).\(operation)(\(value));",
+                "    \(entity).setComponent(\(component));",
+                "}",
+            ]
+        }
+
+        mutating func emitRemoveComponent(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let source = inputExpression(
+                into: node, pinName: "source", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let componentType = inputExpression(
+                into: node, pinName: "component_type", context: context, seen: &seen
+            ).code
+            return [
+                "if (\(source).hasComponent(\(componentType))) {",
+                "    \(source).removeComponent(\(componentType));",
+                "}",
+            ]
+        }
+
+        mutating func emitCustomEventSend(
+            _ node: RCP3ScriptGraph.Node,
+            targeted: Bool,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let eventName = inputExpression(
+                into: node, pinName: "eventName", context: context, seen: &seen,
+                defaultValue: Expr("\"\"")
+            ).code
+            let receiver = targeted
+                ? inputExpression(
+                    into: node, pinName: "receiver", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                ).code
+                : "this"
+            let fixed = Set(["eventName", "receiver"])
+            let connectors = (node.dynamicConnectorSettings?.inputs ?? [])
+                .filter { !fixed.contains($0.name) }
+                .sorted { $0.order < $1.order }
+            let properties = connectors.map { connector -> String in
+                let value = inputExpression(
+                    into: node, pinName: connector.name, context: context, seen: &seen
+                ).code
+                return "\(Self.renderJSString(connector.name)): \(value)"
+            }
+            return ["\(receiver).send(\(eventName), { \(properties.joined(separator: ", ")) });"]
+        }
+
+        mutating func emitReceiverAction(
+            _ node: RCP3ScriptGraph.Node,
+            receiverPin: String,
+            method: String,
+            argumentPins: [String],
+            receiverDefault: String,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let receiver = inputExpression(
+                into: node, pinName: receiverPin, context: context, seen: &seen,
+                defaultValue: Expr(receiverDefault)
+            ).code
+            let arguments = argumentPins.map {
+                inputExpression(into: node, pinName: $0, context: context, seen: &seen).code
+            }
+            return ["\(receiver).\(method)(\(arguments.joined(separator: ", ")));"]
+        }
+
+        mutating func emitAnimationPause(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let controller = inputExpression(
+                into: node, pinName: "playbackController", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let pause = inputExpression(
+                into: node, pinName: "pause", context: context, seen: &seen,
+                defaultValue: Expr("false")
+            ).code
+            return ["if (\(pause)) { \(controller).pause(); } else { \(controller).resume(); }"]
+        }
+
+        mutating func emitSceneCast(
+            _ node: RCP3ScriptGraph.Node,
+            convex: Bool,
+            context: ExprContext
+        ) -> [String] {
+            usesRealityKit = true
+            var seen: Set<String> = []
+            let mask = inputExpression(
+                into: node, pinName: "mask", context: context, seen: &seen,
+                defaultValue: Expr("RealityKit.CollisionGroup.all")
+            ).code
+            let relativeTo = inputExpression(
+                into: node, pinName: "relativeTo", context: context, seen: &seen,
+                defaultValue: Expr("null")
+            ).code
+            let hits = "__d3_cast_hits_\(Self.sanitize(node.id))"
+            let hit = Self.sceneCastHitName(for: node)
+            let call: String
+            if convex {
+                let shape = inputExpression(into: node, pinName: "shape", context: context, seen: &seen).code
+                let from = inputExpression(into: node, pinName: "from", context: context, seen: &seen).code
+                let to = inputExpression(into: node, pinName: "to", context: context, seen: &seen).code
+                call = "this.entity.scene.convexCast({ shape: \(shape), fromPosition: \(from), toPosition: \(to), mask: \(mask), query: RealityKit.CollisionCastQueryType.nearest, entity: \(relativeTo) })"
+            } else {
+                let from = inputExpression(into: node, pinName: "from", context: context, seen: &seen).code
+                let direction = inputExpression(into: node, pinName: "direction", context: context, seen: &seen).code
+                let length = inputExpression(into: node, pinName: "length", context: context, seen: &seen).code
+                call = "this.entity.scene.raycast(\(from), \(direction), \(length), RealityKit.CollisionCastQueryType.nearest, \(mask), \(relativeTo))"
+            }
+            let hitBody = emitActionBody(after: node, context: context, outputPin: TMHash.murmur64a("hit"))
+            let missBody = emitActionBody(after: node, context: context, outputPin: TMHash.murmur64a("miss"))
+            return ["let \(hits) = \(call);", "if (\(hits).length > 0) {", "    let \(hit) = \(hits)[0];"]
+                + Self.indent(hitBody, by: "    ")
+                + ["} else {"] + Self.indent(missBody) + ["}"]
+        }
+
+        mutating func emitPlayAnimationByName(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+            let selectorPin = node.type == "tm_play_animation_by_index" ? "index" : "name"
+            let selector = inputExpression(into: node, pinName: selectorPin, context: context, seen: &seen).code
+            let shouldRepeat = inputExpression(into: node, pinName: "repeat", context: context, seen: &seen, defaultValue: Expr("false")).code
+            let transition = inputExpression(into: node, pinName: "transitionDuration", context: context, seen: &seen, defaultValue: Expr("0")).code
+            let startsPaused = inputExpression(into: node, pinName: "startsPaused", context: context, seen: &seen, defaultValue: Expr("false")).code
+            let animation = "__d3_animation_\(Self.sanitize(node.id))"
+            let controller = Self.animationControllerName(for: node)
+            return [
+                node.type == "tm_play_animation_by_index"
+                    ? "let \(animation) = \(entity).availableAnimations[\(selector)];"
+                    : "let \(animation) = \(entity).availableAnimations.find(animation => animation.name == \(selector));",
+                "let \(controller) = undefined;",
+                "if (\(animation) == undefined) {",
+                "    console.error(\"Could not find animation to play!\");",
+                "} else {",
+                "    \(controller) = \(entity).playAnimation(\(shouldRepeat) ? \(animation).repeat() : \(animation), \(transition), \(startsPaused));",
+                "}",
+            ]
+        }
+
+        mutating func emitPlayAudioByName(
+            _ node: RCP3ScriptGraph.Node,
+            grouped: Bool,
+            context: ExprContext
+        ) -> [String] {
+            usesRealityKit = true
+            var seen: Set<String> = []
+            let sourcePin = grouped ? "source" : "entity"
+            let libraryEntity = inputExpression(
+                into: node, pinName: sourcePin, context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let prepare = inputExpression(
+                into: node, pinName: "prepareOnly", context: context, seen: &seen,
+                defaultValue: Expr("false")
+            ).code
+            let library = "__d3_audio_library_\(Self.sanitize(node.id))"
+            let controller = Self.namedAudioControllerName(for: node)
+            var lines = [
+                "let \(library) = \(libraryEntity).getComponent(RealityKit.AudioLibraryComponent.Type);",
+                "let \(controller) = undefined;",
+            ]
+            if grouped {
+                let entities = inputExpression(into: node, pinName: "entities", context: context, seen: &seen).code
+                let names = inputExpression(into: node, pinName: "names", context: context, seen: &seen).code
+                let pairs = "__d3_audio_pairs_\(Self.sanitize(node.id))"
+                lines += [
+                    "if (\(library) == null) { console.error(\"Could not find AudioLibraryComponent\"); } else {",
+                    "    let \(pairs) = \(names).map((name, index) => [\(library).resources[name], \(entities)[index]]);",
+                    "    \(controller) = \(prepare) ? RealityKit.Audio.prepareAudio(\(pairs)) : RealityKit.Audio.playAudio(\(pairs));",
+                    "}",
+                ]
+            } else {
+                let name = inputExpression(into: node, pinName: "name", context: context, seen: &seen).code
+                let target = inputExpression(into: node, pinName: "target", context: context, seen: &seen, defaultValue: Expr("this.entity")).code
+                let resource = "__d3_audio_resource_\(Self.sanitize(node.id))"
+                lines += [
+                    "let \(resource) = \(library)?.resources[\(name)];",
+                    "if (\(resource) == undefined) { console.error(\"Could not find audio resource\"); } else {",
+                    "    \(controller) = \(prepare) ? \(target).prepareAudio(\(resource)) : \(target).playAudio(\(resource));",
+                    "}",
+                ]
+            }
+            return lines
+        }
+
+        mutating func emitAudioControllerAction(
+            _ node: RCP3ScriptGraph.Node,
+            method: String,
+            argumentPins: [String],
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let source = inputExpression(
+                into: node, pinName: "source", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let arguments = argumentPins.map { pin in
+                inputExpression(
+                    into: node, pinName: pin, context: context, seen: &seen,
+                    defaultValue: Expr("0")
+                ).code
+            }
+            return ["\(source).\(method)(\(arguments.joined(separator: ", ")));"]
+        }
+
+        mutating func emitAudioGroupPause(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let source = inputExpression(
+                into: node, pinName: "source", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let pause = inputExpression(
+                into: node, pinName: "pause", context: context, seen: &seen,
+                defaultValue: Expr("false")
+            ).code
+            return ["if (\(pause)) { \(source).pause(); } else { \(source).play(); }"]
+        }
+
+        mutating func emitTeleportCharacter(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let to = inputExpression(into: node, pinName: "to", context: context, seen: &seen).code
+            let relativeTo = inputExpression(
+                into: node, pinName: "relativeTo", context: context, seen: &seen,
+                defaultValue: Expr("null")
+            ).code
+            return ["\(entity).teleportCharacter(\(to), \(relativeTo));"]
+        }
+
+        mutating func emitEntityMove(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            usesRealityKit = true
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let relativeTo = inputExpression(
+                into: node, pinName: "relativeTo", context: context, seen: &seen,
+                defaultValue: Expr("null")
+            ).code
+            let scale = inputExpression(
+                into: node, pinName: "scale", context: context, seen: &seen,
+                defaultValue: Expr("\(entity).relativeScale(\(relativeTo))")
+            ).code
+            let orientation = inputExpression(
+                into: node, pinName: "orientation", context: context, seen: &seen,
+                defaultValue: Expr("\(entity).relativeOrientation(\(relativeTo))")
+            ).code
+            let position = inputExpression(
+                into: node, pinName: "position", context: context, seen: &seen,
+                defaultValue: Expr("\(entity).relativePosition(\(relativeTo))")
+            ).code
+            let duration = inputExpression(into: node, pinName: "duration", context: context, seen: &seen).code
+            let timing = inputExpression(into: node, pinName: "timingFunction", context: context, seen: &seen).code
+            return [
+                "let \(Self.entityMoveControllerName(for: node)) = \(entity).move(new RealityKit.Transform(\(scale), \(orientation), \(position)), \(relativeTo), \(duration), \(timing));"
+            ]
+        }
+
+        mutating func emitMoveCharacter(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let by = inputExpression(into: node, pinName: "by", context: context, seen: &seen).code
+            let deltaTime = inputExpression(into: node, pinName: "deltaTime", context: context, seen: &seen).code
+            let relativeTo = inputExpression(
+                into: node, pinName: "relativeTo", context: context, seen: &seen,
+                defaultValue: Expr("null")
+            ).code
+            let names = Self.moveCharacterOutputPins.map {
+                Self.moveCharacterOutputName(for: node, pin: $0)
+            }
+            let collisionBody = emitActionBody(
+                after: node, context: context, outputPin: TMHash.murmur64a("collision")
+            )
+            var statements = [
+                "\(entity).moveCharacter(\(by), \(deltaTime), \(relativeTo), (\(names.joined(separator: ", "))) => {",
+            ]
+            statements.append(contentsOf: Self.indent(collisionBody.isEmpty ? ["// no-op"] : collisionBody))
+            statements.append("});")
+            statements.append(contentsOf: emitActionBody(
+                after: node, context: context, outputPin: CanonicalScriptGraphCompiler.unnamedExecPin
+            ))
+            return statements
+        }
+
+        /// Array Set is a contextual action, not a pure subscript expression. The
+        /// shipped emitter aliases the input array to its typed output, bounds-checks
+        /// `index`, mutates only when `0 <= index < array.length`, then continues exec.
+        mutating func emitArraySet(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            guard let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name else {
+                return ["// unsupported node: tm_array_set (typed array connector missing)"]
+            }
+            let index = inputExpression(
+                into: node, pinName: "index", context: context, seen: &seen
+            ).code
+            let array = inputExpression(
+                into: node, pinName: arrayPin, context: context, seen: &seen
+            ).code
+            let element = inputExpression(
+                into: node, pinName: "element", context: context, seen: &seen
+            ).code
+            let output = Self.arraySetOutputName(for: node)
+            return [
+                "let \(output) = \(array);",
+                "if ((\(index)) >= 0 && (\(index)) < \(output).length) {",
+                "    \(output)[\(index)] = \(element);",
+                "}",
+            ]
+        }
+
+        /// Array Add aliases the typed array output and calls `push(element)`.
+        mutating func emitArrayAdd(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            guard let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name else {
+                return ["// unsupported node: tm_array_add (typed array connector missing)"]
+            }
+            let array = inputExpression(
+                into: node, pinName: arrayPin, context: context, seen: &seen
+            ).code
+            let element = inputExpression(
+                into: node, pinName: "element", context: context, seen: &seen
+            ).code
+            let output = Self.arrayMutationOutputName(for: node)
+            return ["let \(output) = \(array);", "\(output).push(\(element));"]
+        }
+
+        /// Array Remove mirrors Set's bounds guard, then emits `splice(index, 1)`.
+        mutating func emitArrayRemove(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            guard let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name else {
+                return ["// unsupported node: tm_array_remove (typed array connector missing)"]
+            }
+            let index = inputExpression(
+                into: node, pinName: "index", context: context, seen: &seen
+            ).code
+            let array = inputExpression(
+                into: node, pinName: arrayPin, context: context, seen: &seen
+            ).code
+            let output = Self.arrayMutationOutputName(for: node)
+            return [
+                "let \(output) = \(array);",
+                "if ((\(index)) >= 0 && (\(index)) < \(output).length) {",
+                "    \(output).splice(\(index), 1);",
+                "}",
+            ]
+        }
+
+        mutating func emitArrayForEach(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            guard let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name else {
+                return ["// unsupported node: tm_array_for_each (typed array connector missing)"]
+            }
+            let array = inputExpression(
+                into: node, pinName: arrayPin, context: context, seen: &seen
+            ).code
+            let index = Self.arrayForEachIndexName(for: node)
+            let stepBody = emitActionBody(
+                after: node, context: context, outputPin: CanonicalScriptGraphCompiler.stepPin
+            )
+            var statements = ["for (let \(index) = 0; \(index) < (\(array)).length; \(index) += 1) {"]
+            statements.append(contentsOf: Self.indent(stepBody.isEmpty ? ["// no-op"] : stepBody))
+            statements.append("}")
+            statements.append(contentsOf: emitActionBody(
+                after: node, context: context, outputPin: CanonicalScriptGraphCompiler.endPin
+            ))
+            return statements
+        }
+
+        /// Array Find performs an element-type-aware equality test in Apple's AST:
+        /// primitives use `==`, schema objects use `.equals`. The runtime guard below
+        /// selects the same operation without needing private TypeManagement metadata.
+        mutating func emitArrayFind(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            guard let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name else {
+                return ["// unsupported node: tm_array_find (typed array connector missing)"]
+            }
+            let array = inputExpression(
+                into: node, pinName: arrayPin, context: context, seen: &seen
+            ).code
+            let search = inputExpression(
+                into: node, pinName: "searchValue", context: context, seen: &seen
+            ).code
+            let index = Self.arrayFindIndexName(for: node)
+            let element = Self.arrayFindElementName(for: node)
+            let candidate = "__d3_array_candidate_\(Self.sanitize(node.id))"
+            let foundBody = emitActionBody(
+                after: node, context: context, outputPin: TMHash.murmur64a("found")
+            )
+            let notFoundBody = emitActionBody(
+                after: node, context: context, outputPin: TMHash.murmur64a("not found")
+            )
+            var statements = [
+                "let \(index) = -1;",
+                "let \(element);",
+                "for (let i = 0; i < (\(array)).length; i += 1) {",
+                "    const \(candidate) = (\(array))[i];",
+                "    if ((\(candidate) && typeof \(candidate).equals === \"function\") ? \(candidate).equals(\(search)) : \(candidate) == (\(search))) {",
+                "        \(index) = i;",
+                "        \(element) = \(candidate);",
+            ]
+            statements.append(contentsOf: Self.indent(foundBody, by: "        "))
+            statements.append("        return;")
+            statements.append("    }")
+            statements.append("}")
+            statements.append(contentsOf: notFoundBody)
+            return statements
+        }
+
         /// A Set Component action: write a Transform property fed by a data wire —
         /// `translation` → `.position`, `rotation` → `.orientation`, `scale` → `.scale`.
         /// If the node has no property value wire but does carry a known `component_type`
@@ -666,6 +1308,98 @@ public struct CanonicalScriptGraphCompiler {
             return Self.defaultConstructibleComponentNamesByHash[hash]
         }
 
+        /// RCP's material writers do not mutate a detached material and stop there.
+        /// They retrieve the entity's ModelComponent and material slot, mutate the
+        /// material, put it back in the component, then put the component back on the
+        /// entity. This apparently redundant write-back is part of the shipped emitter.
+        mutating func emitSetMaterialParameter(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let slot = materialSlotExpression(into: node, context: context, seen: &seen)
+            let parameter = inputExpression(
+                into: node, pinName: "parameter", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let value = inputExpression(
+                into: node, pinName: "value", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let suffix = Self.sanitize(node.id)
+            let component = "__d3_model_component_\(suffix)"
+            let material = "__d3_material_\(suffix)"
+            usesRealityKit = true
+            return [
+                "const \(component) = \(entity).getComponent(RealityKit.ModelComponent.Type);",
+                "if (\(component) == null) { console.error(\"Set Material Parameter: ModelComponent not found\"); return; }",
+                "const \(material) = \(component).getMaterial(\(slot));",
+                "if (\(material) == null) { console.error(\"Set Material Parameter: material not found\"); return; }",
+                "if (\(parameter) == null) { console.error(\"Set Material Parameter: parameter not found\"); return; }",
+                "\(material).setParameter(\(parameter), \(value));",
+                "\(component).setMaterial(\(material), \(slot));",
+                "\(entity).setComponent(\(component));",
+            ]
+        }
+
+        mutating func emitModifyAnyMaterial(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            guard let settings = node.materialSettings else {
+                return ["// unsupported node: tm_modify_any_material (material settings missing)"]
+            }
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let slot = materialSlotExpression(into: node, context: context, seen: &seen)
+            let suffix = Self.sanitize(node.id)
+            let component = "__d3_model_component_\(suffix)"
+            let material = Self.modifiedMaterialName(for: node)
+            usesRealityKit = true
+            var statements = [
+                "const \(component) = \(entity).getComponent(RealityKit.ModelComponent.Type);",
+                "if (\(component) == null) { console.error(\"Modify Material: ModelComponent not found\"); return; }",
+                "const \(material) = \(component).getMaterial(\(slot));",
+                "if (\(material) == null) { console.error(\"Modify Material: material not found\"); return; }",
+            ]
+            for property in settings.inputs {
+                // `writeMaterialProperties(... writes_inputs: true)` only records
+                // writable Inspectable descriptors; the serialized settings list is
+                // therefore the source of truth for this generated assignment set.
+                let value = inputExpression(
+                    into: node, pinName: property.name, context: context, seen: &seen,
+                    defaultValue: Expr("undefined")
+                ).code
+                if property.isOptional {
+                    statements.append("if (\(value) !== undefined) { \(material).\(property.name) = \(value); }")
+                } else {
+                    statements.append("\(material).\(property.name) = \(value);")
+                }
+            }
+            statements.append("\(component).setMaterial(\(material), \(slot));")
+            statements.append("\(entity).setComponent(\(component));")
+            return statements
+        }
+
+        mutating func materialSlotExpression(
+            into node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> String {
+            let pin = hasDataInput(into: node, pinName: "slot") ? "slot" : "index"
+            return inputExpression(
+                into: node, pinName: pin, context: context, seen: &seen,
+                defaultValue: Expr("0")
+            ).code
+        }
+
         /// A variable-set action. A LOCAL variable (the node carries a `variableName`)
         /// writes the stable per-script instance-property slot:
         /// `this.variable_<slot> = <valueExpr>;`. Without a name (the on-disk reference
@@ -704,6 +1438,53 @@ public struct CanonicalScriptGraphCompiler {
                 return ["this.\(slot) = 0;"]
             }
             return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
+        }
+
+        /// Shared lowering for Apple's `registerVariableMathOperations` family.
+        /// The shipped emitter resolves one variable reference, evaluates one
+        /// operation-specific operand, assigns the result back to that variable,
+        /// and exposes the updated value on `result`.
+        mutating func emitVariableMutation(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            guard let name = node.variableName else {
+                return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
+            }
+            let descriptor: (pin: String, operation: String, alwaysMath3D: Bool)
+            switch node.type {
+            case "tm_variable_add": descriptor = ("value", "add", false)
+            case "tm_variable_subtract": descriptor = ("value", "subtract", false)
+            case "tm_variable_multiply": descriptor = ("value", "multiply", false)
+            case "tm_variable_divide": descriptor = ("value", "divide", false)
+            case "tm_variable_multiply_by_scalar": descriptor = ("scalar", "multiply", true)
+            case "tm_variable_multiply_by_quaternion": descriptor = ("quaternion", "multiply", true)
+            case "tm_variable_multiply_by_matrix": descriptor = ("matrix", "multiply", true)
+            default: return ["// unsupported node: \(node.type)"]
+            }
+
+            var seen: Set<String> = []
+            let operand = inputExpression(
+                into: node, pinName: descriptor.pin, context: context, seen: &seen
+            )
+            let slot = "this.\(CanonicalScriptGraphCompiler.variableSlot(for: name))"
+            let current = "(\(slot) ?? 0)"
+            let expression: String
+            if descriptor.alwaysMath3D || operand.isVector {
+                usesMath3D = true
+                expression = "Math3D.\(descriptor.operation)(\(current), \(operand.code))"
+            } else {
+                let symbol: String
+                switch descriptor.operation {
+                case "add": symbol = "+"
+                case "subtract": symbol = "-"
+                case "multiply": symbol = "*"
+                case "divide": symbol = "/"
+                default: symbol = "+"
+                }
+                expression = "\(current) \(symbol) \(operand.code)"
+            }
+            return ["\(slot) = \(expression);"]
         }
 
         // MARK: Data inputs → expressions (the recursive core)
@@ -746,7 +1527,7 @@ public struct CanonicalScriptGraphCompiler {
 
         func hasDataInput(into node: RCP3ScriptGraph.Node, pinName: String) -> Bool {
             let pin = TMHash.murmur64a(pinName)
-            return dataWire(into: node.id, pin: pin) != nil || graph.scalarLiteral(node: node.id, pin: pin) != nil
+            return dataWire(into: node.id, pin: pin) != nil || graph.literal(node: node.id, pin: pin) != nil
         }
 
         /// Emits a JS expression for the value carried by a data `wire` — i.e. the
@@ -797,6 +1578,27 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr(Self.loopIndexName(for: node))
             }
 
+            if node.type == "tm_array_for_each" {
+                let index = Self.arrayForEachIndexName(for: node)
+                if outputPin == CanonicalScriptGraphCompiler.indexPin { return Expr(index) }
+                if outputPin == TMHash.murmur64a("element"),
+                   let arrayPin = node.dynamicConnectorSettings?.inputs.first?.name {
+                    let array = inputExpression(
+                        into: node, pinName: arrayPin, context: context, seen: &seen
+                    )
+                    return Expr("(\(array.code))[\(index)]")
+                }
+            }
+
+            if node.type == "tm_array_find" {
+                if outputPin == CanonicalScriptGraphCompiler.indexPin {
+                    return Expr(Self.arrayFindIndexName(for: node))
+                }
+                if outputPin == TMHash.murmur64a("element") {
+                    return Expr(Self.arrayFindElementName(for: node))
+                }
+            }
+
             if node.type == "tm_delay", outputPin == CanonicalScriptGraphCompiler.cancelIDPin {
                 return Expr("this.\(Self.delayCancelSlot(for: node))")
             }
@@ -807,6 +1609,337 @@ public struct CanonicalScriptGraphCompiler {
 
             if node.type == "tm_scene" {
                 return Expr("this.entity.scene")
+            }
+
+            if node.type == "tm_math_inverse" {
+                usesMath3D = true
+                let value = inputExpression(
+                    into: node, pinName: "value", context: context, seen: &seen
+                )
+                return Expr("Math3D.inverse(\(value.code))")
+            }
+
+            if node.type == "tm_is_head_tracking_available" {
+                return Expr("this.input.worldTrackingDataAvailable")
+            }
+            if node.type == "tm_is_hand_tracking_available" {
+                return Expr("this.input.handTrackingDataAvailable")
+            }
+            if node.type == "tm_input_get_keyboard" { return Expr("this.input.keyboard") }
+            if node.type == "tm_input_get_mouse" { return Expr("this.input.mouse") }
+            if node.type == "tm_input_get_gamepad" {
+                if hasDataInput(into: node, pinName: "player") {
+                    let player = inputExpression(
+                        into: node, pinName: "player", context: context, seen: &seen
+                    ).code
+                    return Expr("this.input.players[\(player)]")
+                }
+                return Expr("this.input.current")
+            }
+            if node.type == "tm_input_gamepad_axes" {
+                let receiver = inputExpression(
+                    into: node, pinName: "gamepad", context: context, seen: &seen,
+                    defaultValue: Expr("this.input.controllers.current")
+                ).code
+                let names = ["leftThumbstickAxes", "rightThumbstickAxes", "leftTriggerPressure", "rightTriggerPressure"]
+                let member = names.first { outputPin == TMHash.murmur64a($0) } ?? names[0]
+                return Expr("\(receiver).\(member)", isVector: member.hasSuffix("Axes"))
+            }
+            if node.type == "tm_input_gamepad_button" || node.type == "tm_input_mouse_button" {
+                let receiverPin = node.type == "tm_input_gamepad_button" ? "gamepad" : "mouse"
+                let fallback = node.type == "tm_input_gamepad_button"
+                    ? "this.input.controllers.current" : "this.input.mouse.connected"
+                let receiver = inputExpression(
+                    into: node, pinName: receiverPin, context: context, seen: &seen,
+                    defaultValue: Expr(fallback)
+                ).code
+                let selector = inputExpression(
+                    into: node, pinName: "button", context: context, seen: &seen
+                ).code
+                let button: String
+                if node.type == "tm_input_mouse_button" {
+                    // RCP's enum setting uses raw 2 = right, 3 = middle, default = left.
+                    button = "(\(selector) == 2 ? \(receiver).rightButton : (\(selector) == 3 ? \(receiver).middleButton : \(receiver).leftButton))"
+                } else {
+                    // Gamepad settings resolve their UInt64 case hash through RCP's
+                    // member-name table; authored connector values carry that member.
+                    button = "\(receiver)[\(selector)]"
+                }
+                let names = ["down", "pressed", "released", "pressCount"]
+                let member = names.first { outputPin == TMHash.murmur64a($0) } ?? names[0]
+                let defaultValue = member == "pressCount" ? "0" : "false"
+                return Expr("(\(button)?.\(member) ?? \(defaultValue))")
+            }
+            if node.type == "tm_input_keyboard_key" {
+                let keyboard = inputExpression(
+                    into: node, pinName: "keyboard", context: context, seen: &seen,
+                    defaultValue: Expr("this.input.keyboard")
+                ).code
+                let key = inputExpression(into: node, pinName: "key", context: context, seen: &seen).code
+                let names = ["down", "pressed", "released", "pressesCount"]
+                let member = names.first { outputPin == TMHash.murmur64a($0) } ?? names[0]
+                return Expr("\(keyboard).key(\(key)).\(member)")
+            }
+            if node.type == "tm_input_mouse_motion" {
+                let mouse = inputExpression(
+                    into: node, pinName: "mouse", context: context, seen: &seen,
+                    defaultValue: Expr("this.input.mouse")
+                ).code
+                return Expr("\(mouse).delta", isVector: true)
+            }
+            if node.type == "tm_head_tracking" {
+                let member = outputPin == TMHash.murmur64a("orientation")
+                    ? "orientation" : "position"
+                return Expr("this.input.getDeviceTransform().\(member)", isVector: member == "position")
+            }
+            if node.type == "tm_hand_joint" {
+                let hand = inputExpression(
+                    into: node, pinName: "hand", context: context, seen: &seen
+                ).code
+                let joint = inputExpression(
+                    into: node, pinName: "joint", context: context, seen: &seen
+                ).code
+                let member = outputPin == TMHash.murmur64a("orientation")
+                    ? "orientation" : "position"
+                return Expr(
+                    "this.input.getJointTransform(\(hand), \(joint)).\(member)",
+                    isVector: member == "position"
+                )
+            }
+            if node.type == "tm_get_material" {
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                ).code
+                let index = inputExpression(
+                    into: node, pinName: "index", context: context, seen: &seen,
+                    defaultValue: Expr("0")
+                ).code
+                return Expr("\(entity).getComponent(\"RealityKit.ModelComponent\").materials[\(index)]")
+            }
+            if node.type == "tm_get_material_parameter" {
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                ).code
+                let slot = materialSlotExpression(into: node, context: context, seen: &seen)
+                let parameter = inputExpression(
+                    into: node, pinName: "parameter", context: context, seen: &seen,
+                    defaultValue: Expr("undefined")
+                ).code
+                usesRealityKit = true
+                // The guards and undefined result mirror the shipped emitter's three
+                // failure paths while keeping this value node usable as an expression.
+                return Expr(
+                    "(() => { const component = \(entity).getComponent(RealityKit.ModelComponent.Type); "
+                    + "if (component == null) { console.error(\"Get Material Parameter: ModelComponent not found\"); return undefined; } "
+                    + "const material = component.getMaterial(\(slot)); "
+                    + "if (material == null) { console.error(\"Get Material Parameter: material not found\"); return undefined; } "
+                    + "if (\(parameter) == null) { console.error(\"Get Material Parameter: parameter not found\"); return undefined; } "
+                    + "return material.getParameter(\(parameter)); })()"
+                )
+            }
+            if node.type == "tm_modify_any_material",
+               let property = node.materialSettings?.outputs.first(where: {
+                   outputPin == TMHash.murmur64a($0.name)
+               }) {
+                return Expr("\(Self.modifiedMaterialName(for: node)).\(property.name)")
+            }
+            if node.type == "tm_scene_raycast_v2" || node.type == "tm_scene_convex_cast" {
+                guard let outputPin,
+                      let name = ["entity", "position", "normal"].first(where: {
+                          TMHash.murmur64a($0) == outputPin
+                      }) else { return Expr("undefined") }
+                return Expr("\(Self.sceneCastHitName(for: node)).\(name)", isVector: name != "entity")
+            }
+            if node.type == "tm_play_animation_by_name" || node.type == "tm_play_animation_by_index" {
+                return Expr(Self.animationControllerName(for: node))
+            }
+
+            if node.type == "tm_make_font" {
+                usesFoundation = true
+                let size = inputExpression(
+                    into: node, pinName: "size", context: context, seen: &seen,
+                    defaultValue: Expr("16")
+                ).code
+                var font: String
+                if hasDataInput(into: node, pinName: "name") {
+                    let name = inputExpression(
+                        into: node, pinName: "name", context: context, seen: &seen
+                    ).code
+                    font = "new Foundation.Font(\(name), \(size))"
+                } else {
+                    font = "Foundation.Font.systemFont(\(size))"
+                }
+                if hasDataInput(into: node, pinName: "weight") {
+                    let weight = inputExpression(
+                        into: node, pinName: "weight", context: context, seen: &seen
+                    ).code
+                    font = "\(font).boldFont(\(weight))"
+                }
+                for (pin, member) in [
+                    ("italic", "italicFont"),
+                    ("monospaced", "monospacedFont"),
+                    ("monospacedDigit", "monospacedDigitFont"),
+                ] where hasDataInput(into: node, pinName: pin) {
+                    let enabled = inputExpression(
+                        into: node, pinName: pin, context: context, seen: &seen
+                    ).code
+                    font = "(\(enabled) ? \(font).\(member)() : \(font))"
+                }
+                return Expr(font)
+            }
+
+            if node.type == "tm_make_attributed_string" {
+                usesFoundation = true
+                let text = inputExpression(
+                    into: node, pinName: "Text", context: context, seen: &seen,
+                    defaultValue: Expr("\"\"")
+                ).code
+                var statements = ["let value = new Foundation.AttributedString(\(text));"]
+                for property in ["font", "alignment", "foregroundColor", "backgroundColor"]
+                where hasDataInput(into: node, pinName: property) {
+                    let value = inputExpression(
+                        into: node, pinName: property, context: context, seen: &seen
+                    ).code
+                    statements.append("value.\(property) = \(value);")
+                }
+                statements.append("return value;")
+                return Expr("(() => { \(statements.joined(separator: " ")) })()")
+            }
+            if node.type == "tm_attributed_string_size" {
+                usesCoreGraphics = true
+                let string = inputExpression(into: node, pinName: "string", context: context, seen: &seen).code
+                let base: String
+                if hasDataInput(into: node, pinName: "maxWidth") {
+                    let width = inputExpression(into: node, pinName: "maxWidth", context: context, seen: &seen).code
+                    base = "\(string).size(new CoreGraphics.CGSize(\(width), 0))"
+                } else {
+                    base = "\(string).size()"
+                }
+                guard hasDataInput(into: node, pinName: "padding") else { return Expr(base) }
+                let padding = inputExpression(into: node, pinName: "padding", context: context, seen: &seen).code
+                return Expr("(() => { let size = \(base); size.width += \(padding).width; size.height += \(padding).height; return size; })()")
+            }
+
+            if node.type == "tm_play_audio_by_name" ||
+                node.type == "tm_play_audio_group_by_name" {
+                return Expr(Self.namedAudioControllerName(for: node))
+            }
+
+            if node.type == "tm_entity_convert_matrix_to" ||
+                node.type == "tm_entity_convert_matrix_from" {
+                usesRealityKit = true
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                )
+                let matrix = inputExpression(
+                    into: node, pinName: "matrix", context: context, seen: &seen
+                )
+                if node.type == "tm_entity_convert_matrix_to" {
+                    let target = inputExpression(
+                        into: node, pinName: "toEntity", context: context, seen: &seen,
+                        defaultValue: Expr("null")
+                    )
+                    return Expr("\(entity.code).convertMatrixTo(\(matrix.code), \(target.code))")
+                }
+                let source = inputExpression(
+                    into: node, pinName: "fromEntity", context: context, seen: &seen,
+                    defaultValue: Expr("null")
+                )
+                return Expr(
+                    "\(entity.code).convertTransformFrom(new RealityKit.Transform(\(matrix.code)), \(source.code)).matrix"
+                )
+            }
+
+            let coordinateConversions: [String: (value: String, peer: String, method: String)] = [
+                "tm_entity_convert_direction_to": ("direction", "toEntity", "convertDirectionTo"),
+                "tm_entity_convert_direction_from": ("direction", "fromEntity", "convertDirectionFrom"),
+                "tm_entity_convert_normal_to": ("normal", "toEntity", "convertNormalTo"),
+                "tm_entity_convert_normal_from": ("normal", "fromEntity", "convertNormalFrom"),
+                "tm_entity_convert_position_to": ("position", "toEntity", "convertPositionTo"),
+                "tm_entity_convert_position_from": ("position", "fromEntity", "convertPositionFrom"),
+            ]
+            if let conversion = coordinateConversions[node.type] {
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                )
+                let value = inputExpression(
+                    into: node, pinName: conversion.value, context: context, seen: &seen
+                )
+                let peer = inputExpression(
+                    into: node, pinName: conversion.peer, context: context, seen: &seen,
+                    defaultValue: Expr("null")
+                )
+                return Expr("\(entity.code).\(conversion.method)(\(value.code), \(peer.code))")
+            }
+
+            if node.type == "tm_entity_move" {
+                return Expr(Self.entityMoveControllerName(for: node))
+            }
+
+            if node.type == "tm_entity_move_character",
+               let pin = Self.moveCharacterOutputPins.first(where: {
+                   TMHash.murmur64a($0) == outputPin
+               }) {
+                return Expr(Self.moveCharacterOutputName(for: node, pin: pin))
+            }
+
+            if node.type == "tm_is_valid_branch",
+               let input = node.dynamicConnectorSettings?.inputs.first?.name,
+               outputPin == TMHash.murmur64a(input) {
+                return inputExpression(
+                    into: node, pinName: input, context: context, seen: &seen
+                )
+            }
+
+            if node.type == "tm_entity_equals" {
+                let a = inputExpression(
+                    into: node, pinName: "a", context: context, seen: &seen
+                )
+                let b = inputExpression(
+                    into: node, pinName: "b", context: context, seen: &seen
+                )
+                // Entity is a schema object. TypeManagement's non-primitive equality
+                // branch (also used by Array Find) dispatches through `.equals`.
+                return Expr("(\(a.code)).equals(\(b.code))")
+            }
+
+            if node.type == "tm_entity_get_relative_transform" {
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                )
+                let relativeTo = inputExpression(
+                    into: node, pinName: "relativeTo", context: context, seen: &seen,
+                    defaultValue: Expr("null")
+                )
+                let method: String
+                switch outputPin {
+                case TMHash.murmur64a("scale"): method = "relativeScale"
+                case TMHash.murmur64a("orientation"): method = "relativeOrientation"
+                case TMHash.murmur64a("position"): method = "relativePosition"
+                default: method = "relativeTransformMatrix"
+                }
+                return Expr("\(entity.code).\(method)(\(relativeTo.code))", isVector: true)
+            }
+
+            if node.type == "tm_entity_get_local_direction_vectors"
+                || node.type == "tm_entity_get_world_direction_vectors" {
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                )
+                let axis: String
+                switch outputPin {
+                case TMHash.murmur64a("up"): axis = "Up"
+                case TMHash.murmur64a("right"): axis = "Right"
+                default: axis = "Forward"
+                }
+                let space = node.type.contains("_world_") ? "world" : "local"
+                return Expr("\(entity.code).\(space)\(axis)", isVector: true)
             }
 
             if node.type == "tm_find_entity" {
@@ -866,9 +1999,51 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr(constant)
             }
 
+            if node.type == "tm_is_valid" {
+                guard let input = node.dynamicConnectorSettings?.inputs.first?.name else {
+                    return Expr("false /* typed input missing */")
+                }
+                let value = inputExpression(
+                    into: node, pinName: input, context: context, seen: &seen
+                ).code
+                return Expr("(" + value + " !== undefined && " + value + " !== null)")
+            }
+
             // `tm_constant` literal: the value is node settings, not a wire — emit 0.
             if node.type == "tm_constant" {
                 return Expr("0 /* tm_constant literal (value in node settings) */")
+            }
+
+            if node.type == "tm_constant_bitset" {
+                // This emitter is intentionally compile-time: Apple's contextual
+                // emitter reads each data-only Bool literal and ORs its bit into an
+                // Int. Connector 0 is `count`; connector i+1 is bit i.
+                let count = Int(graph.literal(
+                    node: node.id,
+                    pin: TMHash.murmur64a("count")
+                )?.number ?? 0)
+                let clampedCount = min(max(count, 0), 32)
+                let value = (0..<clampedCount).reduce(0) { result, index in
+                    guard graph.literal(
+                        node: node.id,
+                        pin: TMHash.murmur64a(String(index))
+                    )?.bool == true else { return result }
+                    return result | (1 << index)
+                }
+                return Expr(String(value))
+            }
+
+            if node.type == "tm_bool_to_any" {
+                let condition = inputExpression(
+                    into: node, pinName: "bool", context: context, seen: &seen
+                ).code
+                let whenTrue = inputExpression(
+                    into: node, pinName: "true", context: context, seen: &seen
+                ).code
+                let whenFalse = inputExpression(
+                    into: node, pinName: "false", context: context, seen: &seen
+                ).code
+                return Expr("(" + condition + " ? " + whenTrue + " : " + whenFalse + ")")
             }
 
             // Unary Math.* (plain JS — runs anywhere). Always scalar.
@@ -907,6 +2082,125 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("Math3D.\(interp.function)(\(a.code), \(b.code), \(factor.code))", isVector: true)
             }
 
+            // Captured Bool/String literal nodes and the same source-registered
+            // Number template: `initial_value` is the editable input and `value` is
+            // the data output. Preserve the literal's real JS kind.
+            if ["tm_make_bool", "tm_make_number", "tm_make_string"].contains(node.type) {
+                let fallback: Expr
+                switch node.type {
+                case "tm_make_bool": fallback = Expr("false")
+                case "tm_make_string": fallback = Expr("\"\"")
+                default: fallback = Expr("0")
+                }
+                return inputExpression(
+                    into: node,
+                    pinName: "initial_value",
+                    context: context,
+                    seen: &seen,
+                    defaultValue: fallback
+                )
+            }
+
+            if let hostProperty = Self.hostProperty(for: node.type) {
+                return Expr("this.\(hostProperty)")
+            }
+
+            if node.type == "tm_make_audio_mix_group" {
+                usesRealityKit = true
+                let name = inputExpression(into: node, pinName: "name", context: context, seen: &seen)
+                return Expr("new RealityKit.AudioMixGroup(\(name.code))")
+            }
+            if node.type == "tm_make_collision_group_number" {
+                usesRealityKit = true
+                let value = inputExpression(into: node, pinName: "value", context: context, seen: &seen)
+                return Expr("new RealityKit.CollisionGroup(\(value.code))")
+            }
+            if node.type == "tm_make_collision_filter_number" {
+                usesRealityKit = true
+                let group = inputExpression(into: node, pinName: "group", context: context, seen: &seen)
+                let mask = inputExpression(into: node, pinName: "mask", context: context, seen: &seen)
+                return Expr(
+                    "new RealityKit.CollisionFilter(new RealityKit.CollisionGroup(\(group.code)), new RealityKit.CollisionGroup(\(mask.code)))"
+                )
+            }
+            if node.type == "tm_make_collision_filter" {
+                usesRealityKit = true
+                let group = inputExpression(into: node, pinName: "group", context: context, seen: &seen)
+                let mask = inputExpression(into: node, pinName: "mask", context: context, seen: &seen)
+                return Expr("new RealityKit.CollisionFilter(\(group.code), \(mask.code))")
+            }
+            if node.type == "tm_make_sphere_shape" {
+                usesRealityKit = true
+                let radius = inputExpression(
+                    into: node, pinName: "radius", context: context, seen: &seen
+                )
+                return Expr("RealityKit.ShapeResource.generateSphere(\(radius.code))")
+            }
+            if node.type == "tm_make_capsule_shape" {
+                usesRealityKit = true
+                let height = inputExpression(
+                    into: node, pinName: "height", context: context, seen: &seen
+                )
+                let radius = inputExpression(
+                    into: node, pinName: "radius", context: context, seen: &seen
+                )
+                return Expr("RealityKit.ShapeResource.generateCapsule(\(height.code), \(radius.code))")
+            }
+            if node.type == "tm_make_box_shape" {
+                usesRealityKit = true
+                let extents = inputExpression(
+                    into: node, pinName: "extents", context: context, seen: &seen
+                )
+                return Expr("RealityKit.ShapeResource.generateBox(\(extents.code))")
+            }
+
+            // The shipped generic Make emitter looks up the schema module/type,
+            // requires that module, and returns `new Module.Type(inputs...)` in
+            // connector order. These remaining fixed Make registrations use that
+            // path; their exact connector order comes from the shipped node tests.
+            if let constructor = Self.sourceMakeConstructor(for: node.type) {
+                usesRealityKit = true
+                let arguments = constructor.inputPins.map {
+                    inputExpression(into: node, pinName: $0, context: context, seen: &seen).code
+                }
+                return Expr("new RealityKit.\(constructor.runtimeType)(\(arguments.joined(separator: ", ")))" )
+            }
+
+            // Generic enum Make family. The harvested emitter requires the schema
+            // module and emits the selected case member, called with associated values
+            // in descriptor order when that case carries a payload.
+            if let schema = ScriptGraphValueSchema.enumMakeNodes[node.type],
+               let selected = node.enumSelection.flatMap({ selection in
+                   schema.cases.first { $0.name == selection.caseName }
+               }) ?? schema.cases.first {
+                requireSchemaModule(schema.module)
+                let member = "\(schema.module).\(schema.typeName).\(selected.name)"
+                guard !selected.associatedValues.isEmpty else { return Expr(member) }
+                let arguments = selected.associatedValues.map {
+                    inputExpression(
+                        into: node, pinName: $0.name, context: context, seen: &seen
+                    ).code
+                }
+                return Expr("\(member)(\(arguments.joined(separator: ", ")))")
+            }
+
+            // Generic enum Break family. Hopper shows one output property per
+            // associated descriptor, whose expression is `source[index]`.
+            if let schema = ScriptGraphValueSchema.enumBreakNodes[node.type],
+               let selected = node.enumSelection.flatMap({ selection in
+                   schema.cases.first { $0.name == selection.caseName }
+               }) ?? schema.cases.first,
+               let outputPin,
+               let index = selected.associatedValues.firstIndex(where: {
+                   TMHash.murmur64a($0.name) == outputPin
+               }) {
+                requireSchemaModule(schema.module)
+                let source = inputExpression(
+                    into: node, pinName: "source", context: context, seen: &seen
+                )
+                return Expr("(\(source.code))[\(index)]")
+            }
+
             // Break (destructure) family. A break node has a single input `source` and one
             // output per property of the value type; reading an output emits a member access
             // on the source, `(<source>).<property>`. Component properties are scalars.
@@ -915,6 +2209,26 @@ public struct CanonicalScriptGraphCompiler {
                 let property = outputPin.flatMap { Self.breakPropertyName(forHash: $0) }
                     ?? outputPin.map { TMHash.hex($0) } ?? "value"
                 return Expr("(\(source.code)).\(property)")
+            }
+
+            // Write family. Apple's generic emitter takes `source`, conditionally
+            // assigns each connected writable schema property, and returns `source`.
+            // Omitting an unwired property is important: assigning our normal scalar
+            // fallback (`0`) would overwrite a field the graph did not author.
+            if let schema = ScriptGraphValueSchema.writeNodes[node.type] {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen)
+                let assignments = schema.properties.compactMap { property -> String? in
+                    guard let value = optionalInputExpression(
+                        into: node,
+                        pinName: property.name,
+                        context: context,
+                        seen: &seen
+                    ) else { return nil }
+                    return "source.\(property.name) = \(value.code);"
+                }
+                return Expr(
+                    "(() => { const source = \(source.code); \(assignments.joined(separator: " ")) return source; })()"
+                )
             }
 
             // Multiply family (vector/quaternion/matrix * operand). All three emit the
@@ -1061,6 +2375,13 @@ public struct CanonicalScriptGraphCompiler {
                 return stringExpr
             }
 
+            // Typed Array operators use graph-authored connector names from their
+            // dynamic settings. Hopper confirms Count → `.length`, Get → `array[index]`,
+            // and Set's data output → the alias declared by its contextual action.
+            if let arrayExpr = emitArrayExpression(node, context: context, seen: &seen) {
+                return arrayExpr
+            }
+
             // Vector constructors are the canonical VECTOR leaf.
             if node.type == "tm_make_vector3" {
                 usesMath3D = true
@@ -1111,6 +2432,17 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr(
                     "new Foundation.Color(\(red.code), \(green.code), \(blue.code), \(alpha.code))"
                 )
+            }
+
+            if node.type == "tm_cgcolor_to_color" {
+                usesFoundation = true
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen)
+                return Expr("new Foundation.Color(\(source.code))")
+            }
+
+            if node.type == "tm_color_to_cgcolor" {
+                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen)
+                return Expr("\(source.code).cgColor")
             }
 
             if node.type == "tm_make_cgsize" {
@@ -1196,8 +2528,23 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("this.getRemoteValue(/* variable name unresolved */ \"\")")
             }
 
+            if node.type.hasPrefix("tm_variable_"), let name = node.variableName {
+                let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
+                return Expr("(this.\(slot) ?? 0)")
+            }
+
             // Unknown / unmapped node → a safe fallback, never fabricated behavior.
             return Expr("0 /* unsupported: \(node.type) */")
+        }
+
+        mutating func requireSchemaModule(_ module: String) {
+            switch module {
+            case "RealityKit": usesRealityKit = true
+            case "Math3D": usesMath3D = true
+            case "Foundation": usesFoundation = true
+            case "CoreGraphics": usesCoreGraphics = true
+            default: break
+            }
         }
 
         /// Lowers a binary math node from its already-evaluated operands. The result type
@@ -1234,6 +2581,12 @@ public struct CanonicalScriptGraphCompiler {
         ) -> Expr {
             guard let pin = outputPin else {
                 return Expr("undefined /* exec pin used as value */")
+            }
+            if let kind = Self.eventKind(for: node.type), case .custom = kind,
+               let connector = node.dynamicConnectorSettings?.outputs.first(where: {
+                   TMHash.murmur64a($0.name) == pin
+               }) {
+                return Expr("event.eventData[\(Self.renderJSString(connector.name))]")
             }
             // Resolve the output pin hash back to a readable gesture-output name.
             let name = Self.gestureOutputName(forHash: pin) ?? TMHash.hex(pin)
@@ -1292,6 +2645,22 @@ public struct CanonicalScriptGraphCompiler {
             return emitExpression(from: wire, context: context, seen: &seen)
         }
 
+        /// Resolves a property-style optional input, returning `nil` when the pin is
+        /// genuinely absent rather than manufacturing the scalar fallback used by
+        /// arithmetic nodes.
+        mutating func optionalInputExpression(
+            into node: RCP3ScriptGraph.Node,
+            pinName: String,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> Expr? {
+            let pin = TMHash.murmur64a(pinName)
+            if let wire = dataWire(into: node.id, pin: pin) {
+                return emitExpression(from: wire, context: context, seen: &seen)
+            }
+            return graph.literal(node: node.id, pin: pin).map { Expr(Self.renderValue($0)) }
+        }
+
         /// Renders a scalar literal as a clean JS number (integers without a
         /// trailing `.0`).
         static func renderScalar(_ value: Double) -> String {
@@ -1342,6 +2711,19 @@ public struct CanonicalScriptGraphCompiler {
             case "tm_constant_log2e": return "Math.LOG2E"
             case "tm_constant_sqrt2": return "Math.SQRT2"
             case "tm_constant_sqrt1_2": return "Math.SQRT1_2"
+            default: return nil
+            }
+        }
+
+        static func hostProperty(for type: String) -> String? {
+            switch type {
+            case "tm_in_editor": return "inEditor"
+            case "tm_host_is_macos": return "isMacOS"
+            case "tm_host_is_visionos": return "isVisionOS"
+            case "tm_host_is_ios": return "isIOS"
+            case "tm_host_is_tvos": return "isTVOS"
+            case "tm_host_is_simulator": return "isSimulator"
+            case "tm_host_time": return "hostTime"
             default: return nil
             }
         }
@@ -1512,6 +2894,21 @@ public struct CanonicalScriptGraphCompiler {
                 inputExpression(into: node, pinName: pinName, context: context, seen: &seen).code
             }
             switch node.type {
+            case "tm_to_string":
+                guard let input = node.dynamicConnectorSettings?.inputs.first?.name else {
+                    return Expr("\"\" /* typed input missing */")
+                }
+                // Apple's AST is a template literal around connector 0. `String(...)`
+                // is the equivalent expression without having to escape nested JS code.
+                return Expr("String(\(arg(input)))")
+            case "tm_string_merge":
+                let values = node.dynamicConnectorSettings?.inputs.map { arg($0.name) } ?? []
+                guard values.count >= 2 else {
+                    return Expr("\"\" /* string merge requires two values */")
+                }
+                // The source emitter flattens when any value connector is an Array;
+                // unconditional `flat()` has the same scalar/array result in plain JS.
+                return Expr("[\(values.joined(separator: ", "))].flat().join(\(arg("separator")))")
             case "tm_string_has_prefix":
                 return Expr("(\(arg("string"))).startsWith(\(arg("prefix")))")
             case "tm_string_has_suffix":
@@ -1535,6 +2932,87 @@ public struct CanonicalScriptGraphCompiler {
             default:
                 return nil
             }
+        }
+
+        mutating func emitArrayExpression(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext,
+            seen: inout Set<String>
+        ) -> Expr? {
+            guard node.type.hasPrefix("tm_array_") else { return nil }
+            func arg(_ pinName: String) -> String {
+                inputExpression(into: node, pinName: pinName, context: context, seen: &seen).code
+            }
+            switch node.type {
+            case "tm_array_create":
+                let elements = node.dynamicConnectorSettings?.inputs.map { arg($0.name) } ?? []
+                return Expr("[\(elements.joined(separator: ", "))]")
+            case "tm_array_count":
+                guard let array = node.dynamicConnectorSettings?.inputs.first?.name else {
+                    return Expr("0 /* typed array connector missing */")
+                }
+                return Expr("(\(arg(array))).length")
+            case "tm_array_get":
+                guard let array = node.dynamicConnectorSettings?.inputs.first?.name else {
+                    return Expr("undefined /* typed array connector missing */")
+                }
+                return Expr("(\(arg(array)))[\(arg("index"))]")
+            case "tm_array_set", "tm_array_add", "tm_array_remove":
+                return Expr(Self.arrayMutationOutputName(for: node))
+            default:
+                return nil
+            }
+        }
+
+        static func arraySetOutputName(for node: RCP3ScriptGraph.Node) -> String {
+            arrayMutationOutputName(for: node)
+        }
+
+        static func arrayMutationOutputName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_\(sanitize(node.type))_\(sanitize(node.id))"
+        }
+
+        static func arrayForEachIndexName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_array_index_\(sanitize(node.id))"
+        }
+
+        static func arrayFindIndexName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_array_find_index_\(sanitize(node.id))"
+        }
+
+        static func arrayFindElementName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_array_find_element_\(sanitize(node.id))"
+        }
+
+        static func entityMoveControllerName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_move_controller_\(sanitize(node.id))"
+        }
+
+        static func sceneCastHitName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_cast_hit_\(sanitize(node.id))"
+        }
+
+        static func animationControllerName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_animation_controller_\(sanitize(node.id))"
+        }
+
+        static func namedAudioControllerName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_named_audio_controller_\(sanitize(node.id))"
+        }
+
+        static func modifiedMaterialName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_modified_material_\(sanitize(node.id))"
+        }
+
+        static let moveCharacterOutputPins = [
+            "hitEntity", "hitPosition", "hitNormal", "moveDirection", "moveDistance",
+        ]
+
+        static func moveCharacterOutputName(
+            for node: RCP3ScriptGraph.Node,
+            pin: String
+        ) -> String {
+            "__d3_move_character_\(sanitize(node.id))_\(pin)"
         }
 
         /// A vector-math op that lowers to a `Math3D.<function>(args)` call: the JS
@@ -1567,6 +3045,78 @@ public struct CanonicalScriptGraphCompiler {
             var factorPin: String
         }
 
+        struct SourceMakeConstructor {
+            var runtimeType: String
+            var inputPins: [String]
+        }
+
+        static func sourceMakeConstructor(for type: String) -> SourceMakeConstructor? {
+            switch type {
+            case "tm_make_material_parameter_types_texture_coordinate_transform":
+                return SourceMakeConstructor(
+                    runtimeType: "MaterialParameterTypes.TextureCoordinateTransform",
+                    inputPins: ["offset", "scale", "rotation"]
+                )
+            case "tm_make_physically_based_material_anisotropy_angle":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.AnisotropyAngle",
+                    inputPins: ["angle"]
+                )
+            case "tm_make_physically_based_material_anisotropy_level":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.AnisotropyLevel",
+                    inputPins: ["level"]
+                )
+            case "tm_make_physically_based_material_base_color":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.BaseColor",
+                    inputPins: ["red", "green", "blue", "alpha"]
+                )
+            case "tm_make_physically_based_material_clearcoat":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.Clearcoat",
+                    inputPins: ["clearcoat"]
+                )
+            case "tm_make_physically_based_material_clearcoat_roughness":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.ClearcoatRoughness",
+                    inputPins: ["roughness"]
+                )
+            case "tm_make_physically_based_material_emissive_color":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.EmissiveColor",
+                    inputPins: ["red", "green", "blue", "alpha"]
+                )
+            case "tm_make_physically_based_material_metallic":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.Metallic",
+                    inputPins: ["metallic"]
+                )
+            case "tm_make_physically_based_material_roughness":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.Roughness",
+                    inputPins: ["roughness"]
+                )
+            case "tm_make_physically_based_material_sheen_color":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicallyBasedMaterial.SheenColor",
+                    inputPins: ["red", "green", "blue", "alpha"]
+                )
+            case "tm_make_physics_mass_properties":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicsMassProperties",
+                    inputPins: ["mass", "inertia", "position", "orientation"]
+                )
+            case "tm_make_physics_material_resource":
+                return SourceMakeConstructor(
+                    runtimeType: "PhysicsMaterialResource",
+                    inputPins: ["staticFriction", "dynamicFriction", "restitution"]
+                )
+            default:
+                return nil
+            }
+        }
+
         /// The `Math3D` interpolation op for a node type, or `nil` if it is not one.
         static func interpolationOp(for type: String) -> InterpolationOp? {
             switch type {
@@ -1585,6 +3135,9 @@ public struct CanonicalScriptGraphCompiler {
         /// entity, and the component/material breaks are deferred until their exact property
         /// names are confirmed.
         static func breakOutputNames(for type: String) -> [String]? {
+            if let schema = ScriptGraphValueSchema.breakNodes[type] {
+                return schema.properties.map(\.name)
+            }
             switch type {
             case "tm_break_vector2": return ["x", "y"]
             case "tm_break_vector3": return ["x", "y", "z"]
@@ -1603,7 +3156,9 @@ public struct CanonicalScriptGraphCompiler {
         }
 
         static let breakPropertyNamesByHash: [UInt64: String] = {
-            let names = ["x", "y", "z", "w", "width", "height", "red", "green", "blue", "alpha"]
+            let schemaNames = ScriptGraphValueSchema.breakNodes.values
+                .flatMap { $0.properties.map(\.name) }
+            let names = schemaNames + ["x", "y", "z", "w", "width", "height", "red", "green", "blue", "alpha"]
             var map: [UInt64: String] = [:]
             for name in names { map[TMHash.murmur64a(name)] = name }
             return map

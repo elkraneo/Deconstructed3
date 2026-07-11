@@ -112,18 +112,75 @@ public struct ScriptGraphExample: Identifiable, Sendable {
         self.name = name
         self.summary = summary
         self.certification = certification
+        let augmentedData = Self.addRequiredComponentTypeLiterals(to: graph)
+        let augmentedVariables = Self.addRequiredVariableDeclarations(to: graph, namespace: id)
+        let augmentedNodes = Self.addRequiredVariableRefs(to: graph.nodes, variables: augmentedVariables)
         // Stamp the example's stable id onto its graph identity, so the editor can key
         // the canvas on the SHOWN graph's identity (not a coupled selection) and a loaded
         // example reads back its own id from `graph.id`. The example graphs are built with
         // the memberwise init (no `__uuid`), so this is the graph's identity.
         self.graph = RCP3ScriptGraph(
             id: id,
-            nodes: graph.nodes,
+            nodes: augmentedNodes,
             wires: graph.wires,
-            data: graph.data,
-            variables: graph.variables
+            data: augmentedData,
+            variables: augmentedVariables
         )
         self.runsToday = runsToday
+    }
+
+    private static func addRequiredComponentTypeLiterals(to graph: RCP3ScriptGraph) -> [RCP3ScriptGraph.DataLiteral] {
+        var data = graph.data
+        let componentTypePin = TMHash.murmur64a("component_type")
+        let transformHash = TMHash.murmur64a("Transform")
+        let nodesNeedingTransform = graph.nodes
+            .filter { ["tm_set_component", "tm_get_component"].contains($0.type) }
+            .filter { node in
+                !data.contains { $0.toNode == node.id && $0.toPin == componentTypePin }
+            }
+
+        for node in nodesNeedingTransform {
+            data.append(RCP3ScriptGraph.DataLiteral(
+                id: "component_type.\(node.id)",
+                toNode: node.id,
+                toPin: componentTypePin,
+                valueType: "re_scripting_graph_component_type",
+                valueHash: transformHash
+            ))
+        }
+        return data
+    }
+
+    private static func addRequiredVariableDeclarations(to graph: RCP3ScriptGraph, namespace: String) -> [RCP3ScriptGraph.Variable] {
+        var variables = graph.variables
+        var declared = Set(variables.map { $0.name.lowercased() })
+        let neededNames = graph.nodes.compactMap(\.variableName)
+        for name in neededNames where !declared.contains(name.lowercased()) {
+            variables.append(RCP3ScriptGraph.Variable(uuid: deterministicUUID(namespace: namespace, name: name), name: name))
+            declared.insert(name.lowercased())
+        }
+        return variables
+    }
+
+    private static func addRequiredVariableRefs(
+        to nodes: [RCP3ScriptGraph.Node],
+        variables: [RCP3ScriptGraph.Variable]
+    ) -> [RCP3ScriptGraph.Node] {
+        let refByName = Dictionary(uniqueKeysWithValues: variables.map { ($0.name.lowercased(), $0.uuid) })
+        return nodes.map { node in
+            guard let name = node.variableName, node.variableRefUUID == nil else { return node }
+            var node = node
+            node.variableRefUUID = refByName[name.lowercased()]
+            return node
+        }
+    }
+
+    private static func deterministicUUID(namespace: String, name: String) -> String {
+        let input = "\(namespace.lowercased())|\(name.lowercased())"
+        let first = TMHash.hex(TMHash.murmur64a(input))
+        let second = TMHash.hex(TMHash.murmur64a("variable|\(input)"))
+        let hex = first + second
+        return "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
     }
 }
 

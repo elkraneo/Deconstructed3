@@ -86,10 +86,115 @@ public enum ScriptGraphPinResolver {
     /// from ``ScriptGraphNodeLibrary`` (full named pin set, parity with RCP) and
     /// falling back to wire-derived pins for unknown node types.
     static func pins(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> [ScriptGraphNodePayload.Pin] {
+        if node.type == "tm_constant_bitset" {
+            let count = Int(graph.literal(node: node.id, pin: TMHash.murmur64a("count"))?.number ?? 0)
+            let bitPins = (0..<min(max(count, 0), 32)).map {
+                ScriptGraphNodeLibrary.PinSpec.data(String($0), String($0))
+            }
+            let spec = ScriptGraphNodeLibrary.NodeSpec(
+                inputs: [.data("count", "Count")] + bitPins,
+                outputs: [.data("value", "Value")],
+                category: .math
+            )
+            return libraryPins(for: node, spec: spec, in: graph)
+        }
+        if let settings = node.materialSettings,
+           let spec = ScriptGraphNodeLibrary.materialSpec(for: node.type, settings: settings) {
+            return libraryPins(for: node, spec: spec, in: graph)
+        }
+        if let settings = node.dynamicConnectorSettings,
+           let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type) {
+            return dynamicPins(for: node, settings: settings, policy: policy, in: graph)
+        }
+        if let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.type),
+           let selectedCase = policy.selectedCase(named: node.enumSelection?.caseName) {
+            let associated = selectedCase.associatedValues.map {
+                ScriptGraphNodeLibrary.PinSpec.data($0.name, enumAssociatedValueDisplayName($0.name))
+            }
+            let spec: ScriptGraphNodeLibrary.NodeSpec
+            switch policy.direction {
+            case .make:
+                spec = .init(inputs: associated, outputs: policy.fixedPins, category: .make)
+            case .break:
+                spec = .init(inputs: policy.fixedPins, outputs: associated, category: .make)
+            }
+            return libraryPins(for: node, spec: spec, in: graph)
+        }
         if let spec = ScriptGraphNodeLibrary.spec(for: node.type) {
             return libraryPins(for: node, spec: spec, in: graph)
         }
         return wireDerivedPins(for: node, in: graph)
+    }
+
+    private static func dynamicPins(
+        for node: RCP3ScriptGraph.Node,
+        settings: RCP3ScriptGraph.Node.DynamicConnectorSettings,
+        policy: ScriptGraphNodeLibrary.DynamicPinPolicy,
+        in graph: RCP3ScriptGraph
+    ) -> [ScriptGraphNodePayload.Pin] {
+        let dynamicInputs = settings.inputs.map {
+            ScriptGraphNodeLibrary.PinSpec.data(
+                $0.name, $0.displayName ?? dynamicConnectorDisplayName($0.name)
+            )
+        }
+        let dynamicOutputs = settings.outputs.map {
+            ScriptGraphNodeLibrary.PinSpec.data(
+                $0.name, $0.displayName ?? dynamicConnectorDisplayName($0.name)
+            )
+        }
+        let inputSpecs: [ScriptGraphNodeLibrary.PinSpec]
+        switch node.type {
+        case "tm_array_set":
+            // Source emitter connector indices are exec, index, array, element.
+            // The typed array pin therefore sits between the two fixed data pins.
+            inputSpecs = Array(policy.fixedInputs.prefix(2))
+                + dynamicInputs
+                + Array(policy.fixedInputs.dropFirst(2))
+        case "tm_array_add":
+            inputSpecs = Array(policy.fixedInputs.prefix(1))
+                + dynamicInputs
+                + Array(policy.fixedInputs.dropFirst())
+        case "tm_array_find":
+            inputSpecs = Array(policy.fixedInputs.prefix(1))
+                + dynamicInputs
+                + Array(policy.fixedInputs.dropFirst())
+        default:
+            inputSpecs = policy.fixedInputs + dynamicInputs
+        }
+        let outputSpecs: [ScriptGraphNodeLibrary.PinSpec]
+        switch node.type {
+        case "tm_array_set", "tm_array_add", "tm_array_remove", "tm_is_valid_branch":
+            // Their connector builders mirror the typed array INPUT connector as
+            // output connector 1; it is not duplicated in settings.outputs.
+            outputSpecs = policy.fixedOutputs + dynamicInputs
+        default:
+            outputSpecs = dynamicOutputs + policy.fixedOutputs
+        }
+        let category: ScriptGraphNodeLibrary.Category = switch node.type {
+        case let type where type.hasPrefix("tm_array_"): .utility
+        case "tm_is_valid", "tm_is_valid_branch": .logic
+        default: .string
+        }
+        let spec = ScriptGraphNodeLibrary.NodeSpec(
+            inputs: inputSpecs,
+            outputs: outputSpecs,
+            category: category
+        )
+        return libraryPins(for: node, spec: spec, in: graph)
+    }
+
+    private static func dynamicConnectorDisplayName(_ name: String) -> String {
+        name
+            .split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private static func enumAssociatedValueDisplayName(_ name: String) -> String {
+        guard name.hasPrefix("value"), Int(name.dropFirst(5)) != nil else {
+            return name.prefix(1).uppercased() + name.dropFirst()
+        }
+        return "Value " + name.dropFirst(5)
     }
 
     /// Pins for a node with a known interface: every declared input and output pin

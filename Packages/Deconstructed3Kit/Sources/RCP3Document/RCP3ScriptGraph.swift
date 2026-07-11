@@ -15,6 +15,109 @@ import TMFormat
 public struct RCP3ScriptGraph: Equatable, Sendable {
     /// A graph node — one logic block (an event, an action, a getter, …).
     public struct Node: Equatable, Sendable, Identifiable {
+        /// The source-backed setting used by generated enum Make/Break nodes. The
+        /// selected case controls which associated-value connectors the node exposes.
+        public struct EnumSelection: Hashable, Sendable {
+            public struct AssociatedValue: Hashable, Sendable {
+                public let index: UInt32
+                public let typeHash: UInt64
+
+                public init(index: UInt32, typeHash: UInt64) {
+                    self.index = index
+                    self.typeHash = typeHash
+                }
+            }
+
+            public let typeHash: UInt64
+            public let caseName: String
+            public let associatedValues: [AssociatedValue]
+
+            public init(typeHash: UInt64, caseName: String, associatedValues: [AssociatedValue] = []) {
+                self.typeHash = typeHash
+                self.caseName = caseName
+                self.associatedValues = associatedValues
+            }
+        }
+
+        /// One graph-authored typed connector stored in dynamic node settings.
+        public struct DynamicConnector: Hashable, Sendable {
+            public let name: String
+            public let displayName: String?
+            public let typeHash: UInt64
+            public let editHash: UInt64
+            public let order: Double
+            public let optionality: UInt32
+
+            public init(
+                name: String,
+                displayName: String? = nil,
+                typeHash: UInt64,
+                editHash: UInt64 = 0,
+                order: Double,
+                optionality: UInt32 = 1
+            ) {
+                self.name = name
+                self.displayName = displayName
+                self.typeHash = typeHash
+                self.editHash = editHash
+                self.order = order
+                self.optionality = optionality
+            }
+        }
+
+        public struct DynamicConnectorSettings: Hashable, Sendable {
+            public enum Container: Hashable, Sendable {
+                case direct
+                case array(arrayType: UInt64?, elementType: UInt64?)
+            }
+
+            public let container: Container
+            public let inputs: [DynamicConnector]
+            public let outputs: [DynamicConnector]
+
+            public init(
+                container: Container,
+                inputs: [DynamicConnector],
+                outputs: [DynamicConnector]
+            ) {
+                self.container = container
+                self.inputs = inputs
+                self.outputs = outputs
+            }
+        }
+
+        /// The Inspectable-driven settings carried by RCP's generated Material nodes.
+        /// `inputs` and `outputs` are snapshots of the selected material descriptor;
+        /// they are deliberately distinct from generic dynamic connectors because their
+        /// on-disk field names and optionality representation are different.
+        public struct MaterialSettings: Hashable, Sendable {
+            public struct Property: Hashable, Sendable {
+                public let name: String
+                public let typeHash: UInt64
+                public let editTypeHash: UInt64
+                public let isOptional: Bool
+
+                public init(name: String, typeHash: UInt64, editTypeHash: UInt64, isOptional: Bool) {
+                    self.name = name
+                    self.typeHash = typeHash
+                    self.editTypeHash = editTypeHash
+                    self.isOptional = isOptional
+                }
+            }
+
+            public let typeHash: UInt64
+            public let objectIdentifier: String
+            public let inputs: [Property]
+            public let outputs: [Property]
+
+            public init(typeHash: UInt64, objectIdentifier: String, inputs: [Property], outputs: [Property]) {
+                self.typeHash = typeHash
+                self.objectIdentifier = objectIdentifier
+                self.inputs = inputs
+                self.outputs = outputs
+            }
+        }
+
         /// The node's `__uuid` (what connections/data reference).
         public let id: String
         /// The node `type` (e.g. `tm_gesture_event_drag`, `tm_set_component`).
@@ -55,7 +158,16 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// all existing call sites and standalone-asset reads behaving as before.
         public var instanceOf: String?
 
-        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil, instanceOf: String? = nil) {
+        /// Recognized `settings: { __type: "script_graph_enum", ... }`, when this is
+        /// an enum Make/Break node. Other settings remain unmodeled and are preserved
+        /// by tree patching during write-back.
+        public var enumSelection: EnumSelection?
+        /// Graph-authored typed pins for variadic String and Array nodes.
+        public var dynamicConnectorSettings: DynamicConnectorSettings?
+        /// Selected RKS material type and its serialized Inspectable property schema.
+        public var materialSettings: MaterialSettings?
+
+        public init(id: String, type: String, label: String? = nil, x: Double? = nil, y: Double? = nil, variableName: String? = nil, variableRefUUID: String? = nil, instanceOf: String? = nil, enumSelection: EnumSelection? = nil, dynamicConnectorSettings: DynamicConnectorSettings? = nil, materialSettings: MaterialSettings? = nil) {
             self.id = id
             self.type = type
             self.label = label
@@ -64,6 +176,9 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
             self.variableName = variableName
             self.variableRefUUID = variableRefUUID
             self.instanceOf = instanceOf
+            self.enumSelection = enumSelection
+            self.dynamicConnectorSettings = dynamicConnectorSettings
+            self.materialSettings = materialSettings
         }
     }
 
@@ -77,12 +192,27 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         /// The author-given variable name (e.g. `"Name1"`). The compile slot derives
         /// from `MurmurHash64A(lowercase(name))`.
         public let name: String
+        /// Runtime value type selected in RCP's Graph Interfaces inspector.
+        public let typeHash: UInt64?
+        /// Inspector/edit representation type (for Number, RCP uses Double).
+        public let editHash: UInt64?
+        /// Concrete default-data object type, e.g. `tm_double`.
+        public let dataType: String?
 
         public var id: String { uuid }
 
-        public init(uuid: String, name: String) {
+        public init(
+            uuid: String,
+            name: String,
+            typeHash: UInt64? = nil,
+            editHash: UInt64? = nil,
+            dataType: String? = nil
+        ) {
             self.uuid = uuid
             self.name = name
+            self.typeHash = typeHash
+            self.editHash = editHash
+            self.dataType = dataType
         }
     }
 
@@ -224,7 +354,12 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 type: object["type"]?.stringValue ?? object.prototypeType ?? "?",
                 label: object["label"]?.stringValue,
                 x: position?["x"]?.doubleValue,
-                y: position?["y"]?.doubleValue
+                y: position?["y"]?.doubleValue,
+                enumSelection: Self.enumSelection(from: object["settings"]?.objectValue),
+                dynamicConnectorSettings: Self.dynamicConnectorSettings(
+                    from: object["settings"]?.objectValue
+                ),
+                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue)
             )
         }
 
@@ -248,7 +383,12 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
                 // the prototype's `__prototype_uuid`. Recorded even when the type couldn't
                 // be resolved (it drives write-back's nodes/nodes__instantiated split, not
                 // type recovery).
-                instanceOf: object.prototypeUUID
+                instanceOf: object.prototypeUUID,
+                enumSelection: Self.enumSelection(from: object["settings"]?.objectValue),
+                dynamicConnectorSettings: Self.dynamicConnectorSettings(
+                    from: object["settings"]?.objectValue
+                ),
+                materialSettings: Self.materialSettings(from: object["settings"]?.objectValue)
             ))
         }
 
@@ -257,7 +397,13 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         variables = (tmGraph["variables"]?.arrayValue ?? []).compactMap { value in
             guard let object = value.objectValue, let uuid = object.uuid, let name = object.name
             else { return nil }
-            return Variable(uuid: uuid, name: name)
+            return Variable(
+                uuid: uuid,
+                name: name,
+                typeHash: Self.uint64(object["type_hash"]),
+                editHash: Self.uint64(object["edit_hash"]),
+                dataType: object["data"]?.objectValue?.type
+            )
         }
 
         wires = (tmGraph["connections"]?.arrayValue ?? []).compactMap { value in
@@ -324,6 +470,123 @@ public struct RCP3ScriptGraph: Equatable, Sendable {
         }
 
         nodes = parsedNodes
+    }
+
+    private static func enumSelection(from settings: TMObject?) -> Node.EnumSelection? {
+        guard
+            let settings,
+            settings.type == "script_graph_enum",
+            let typeHash = uint64(settings["type"]),
+            let caseName = settings["case"]?.stringValue
+        else { return nil }
+
+        let associatedValues = (settings["associated_values"]?.arrayValue ?? []).compactMap {
+            value -> Node.EnumSelection.AssociatedValue? in
+            guard
+                let object = value.objectValue,
+                let indexValue = uint64(object["index"]),
+                indexValue <= UInt64(UInt32.max),
+                let typeHash = uint64(object["type_hash"])
+            else { return nil }
+            return .init(index: UInt32(indexValue), typeHash: typeHash)
+        }
+        return .init(typeHash: typeHash, caseName: caseName, associatedValues: associatedValues)
+    }
+
+    private static func dynamicConnectorSettings(
+        from settings: TMObject?
+    ) -> Node.DynamicConnectorSettings? {
+        guard let settings, settings.type != "tm_material_node_settings" else { return nil }
+
+        let container: Node.DynamicConnectorSettings.Container
+        let dynamicObject: TMObject
+        if settings.type == "tm_array_create_node_settings" {
+            guard let nested = settings["dynamic_connectors"]?.objectValue else { return nil }
+            container = .array(
+                arrayType: uint64(settings["array_type"]),
+                elementType: uint64(settings["element_type"])
+            )
+            dynamicObject = nested
+        } else if settings.type == "tm_graph_node_dynamic_connectors_settings"
+                    || settings["inputs"]?.arrayValue != nil
+                    || settings["outputs"]?.arrayValue != nil {
+            container = .direct
+            dynamicObject = settings
+        } else {
+            return nil
+        }
+
+        func connectors(_ key: String) -> [Node.DynamicConnector] {
+            (dynamicObject[key]?.arrayValue ?? []).compactMap { value in
+                guard
+                    let object = value.objectValue,
+                    let name = object["name"]?.stringValue,
+                    let typeHash = uint64(object["type_hash"])
+                else { return nil }
+                let optionalityValue = uint64(object["optionality"]) ?? 1
+                guard optionalityValue <= UInt64(UInt32.max) else { return nil }
+                return .init(
+                    name: name,
+                    displayName: object["display_name"]?.stringValue,
+                    typeHash: typeHash,
+                    editHash: uint64(object["edit_hash"]) ?? 0,
+                    order: object["order"]?.doubleValue ?? 0,
+                    optionality: UInt32(optionalityValue)
+                )
+            }.sorted { lhs, rhs in
+                lhs.order == rhs.order ? lhs.name < rhs.name : lhs.order < rhs.order
+            }
+        }
+
+        return .init(
+            container: container,
+            inputs: connectors("inputs"),
+            outputs: connectors("outputs")
+        )
+    }
+
+    private static func materialSettings(from settings: TMObject?) -> Node.MaterialSettings? {
+        guard
+            let settings,
+            settings.type == "tm_material_node_settings",
+            let typeHash = uint64(settings["type"]),
+            let objectIdentifier = settings["object_identifier"]?.stringValue
+        else { return nil }
+
+        func properties(_ key: String) -> [Node.MaterialSettings.Property] {
+            (settings[key]?.arrayValue ?? []).compactMap { value in
+                guard
+                    let object = value.objectValue,
+                    let name = object["name"]?.stringValue,
+                    let typeHash = uint64(object["type"]),
+                    let editTypeHash = uint64(object["edit_type"]),
+                    let isOptional = object["optional"]?.boolValue
+                else { return nil }
+                return .init(
+                    name: name,
+                    typeHash: typeHash,
+                    editTypeHash: editTypeHash,
+                    isOptional: isOptional
+                )
+            }
+        }
+
+        return .init(
+            typeHash: typeHash,
+            objectIdentifier: objectIdentifier,
+            inputs: properties("inputs"),
+            outputs: properties("outputs")
+        )
+    }
+
+    /// TM stores uint64 fields as 16-digit hex strings, but accepting numeric lexemes
+    /// makes the projection tolerant of hand-authored and older fixtures.
+    private static func uint64(_ value: TMValue?) -> UInt64? {
+        if let string = value?.stringValue {
+            return UInt64(string, radix: 16) ?? UInt64(string)
+        }
+        if let lexeme = value?.numberLexeme { return UInt64(lexeme) }
+        return nil
     }
 
     // MARK: Pin-name resolution

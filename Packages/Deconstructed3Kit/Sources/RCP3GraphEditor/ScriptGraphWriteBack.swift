@@ -34,7 +34,7 @@ public enum ScriptGraphWriteBack {
     /// `label` follows the payload (added/removed/changed), and any other members it
     /// carries (`settings`, the position's own `__uuid`, …) are left untouched. A
     /// model node with no matching object is an *insert*: a fresh node object
-    /// `{ __uuid, type, label?, position: { x, y } }` is appended in model order.
+    /// `{ __uuid, type, label?, position: { __uuid, x, y } }` is appended in model order.
     /// Node objects whose `__uuid` is absent from the model are *deletes* and are
     /// dropped.
     ///
@@ -244,10 +244,14 @@ public enum ScriptGraphWriteBack {
         } else {
             // No original position object: write a fresh override only for authored/moved coords.
             var position = TMObject()
+            position.set(.string(UUID().uuidString), forKey: "__uuid")
             if box.authoredX { position.set(.number(numberLexeme(box.position.x)), forKey: "x") }
             if box.authoredY { position.set(.number(numberLexeme(box.position.y)), forKey: "y") }
             node.set(.object(position), forKey: "position")
         }
+        patchEnumSettings(on: &node, selection: box.enumSelection)
+        patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
+        patchMaterialSettings(on: &node, settings: box.materialSettings)
         return node
     }
 
@@ -283,6 +287,18 @@ public enum ScriptGraphWriteBack {
             var object = objectByUUID[variable.uuid] ?? TMObject()
             object.set(.string(variable.uuid), forKey: "__uuid")
             object.set(.string(variable.name), forKey: "name")
+            if let typeHash = variable.typeHash {
+                object.set(.string(TMHash.hex(typeHash)), forKey: "type_hash")
+            }
+            if let editHash = variable.editHash {
+                object.set(.string(TMHash.hex(editHash)), forKey: "edit_hash")
+            }
+            if let dataType = variable.dataType {
+                var data = object["data"]?.objectValue ?? TMObject()
+                data.set(.string(dataType), forKey: "__type")
+                if data.uuid == nil { data.set(.string(UUID().uuidString), forKey: "__uuid") }
+                object.set(.object(data), forKey: "data")
+            }
             return .object(object)
         }
     }
@@ -299,6 +315,11 @@ public enum ScriptGraphWriteBack {
         liveIDs: Set<String>
     ) -> [TMValue] {
         var remaining = model.literals // authored pins not yet matched to an existing literal
+        var remainingUnmodeled = Dictionary(
+            uniqueKeysWithValues: model.unmodeledLiterals.map {
+                (LiteralKey(nodeID: $0.toNode, pinConnectorHash: $0.toPin), $0)
+            }
+        )
         // Variable references the model still wants, keyed by node — consumed as we
         // rewrite existing `tm_graph_variable_ref` entries; the rest are appended fresh.
         var remainingVariableNodes = Set(model.variableNames.keys)
@@ -314,6 +335,7 @@ public enum ScriptGraphWriteBack {
             guard liveIDs.contains(toNode) else { continue }
 
             let valueObject = object["data"]?.objectValue
+            let pinHash = object["to_connector_hash"]?.stringValue.flatMap { UInt64($0, radix: 16) }
 
             // A variable reference (`tm_graph_variable_ref`): reconcile it with the
             // model's per-node variable name. Rewrite `ref`/`name` in place (preserving
@@ -332,8 +354,7 @@ public enum ScriptGraphWriteBack {
             // classifies). Reconcile it with the model's authored value for this pin.
             // A `component_type` literal classifies as nil → falls through and is preserved.
             if let vo = valueObject, TMGraphValue(valueObject: vo) != nil,
-               let pinHex = object["to_connector_hash"]?.stringValue,
-               let pinHash = UInt64(pinHex, radix: 16) {
+               let pinHash {
                 let key = LiteralKey(nodeID: toNode, pinConnectorHash: pinHash)
                 if let authored = remaining.removeValue(forKey: key) {
                     // Rewrite the value in place, preserving identity + other members.
@@ -344,12 +365,22 @@ public enum ScriptGraphWriteBack {
             }
 
             // Unmodeled literal (e.g. component_type) — preserved untouched.
+            if let pinHash {
+                remainingUnmodeled.removeValue(forKey: LiteralKey(nodeID: toNode, pinConnectorHash: pinHash))
+            }
             kept.append(value)
         }
 
         // Append a fresh literal for each newly-authored pin (bound to a live node).
         for (key, value) in remaining where liveIDs.contains(key.nodeID) {
             kept.append(.object(newValueLiteral(key: key, value: value)))
+        }
+
+        // Append fresh typed/unmodeled literals (notably `component_type`) when
+        // materializing a graph from memory into a newly-created asset whose original
+        // `data[]` array was empty.
+        for (key, literal) in remainingUnmodeled where liveIDs.contains(key.nodeID) {
+            kept.append(.object(newUnmodeledLiteral(literal)))
         }
 
         // Append a fresh `tm_graph_variable_ref` for each newly-named variable node.
@@ -384,6 +415,27 @@ public enum ScriptGraphWriteBack {
             valueObject.set(.string(ref), forKey: "ref")
         }
         valueObject.set(.string(name), forKey: "name")
+        object.set(.object(valueObject), forKey: "data")
+        return object
+    }
+
+    /// A fresh typed literal for currently uneditable, non-scalar data values.
+    /// Observed example: `component_type` stores
+    /// `{ __type: "re_scripting_graph_component_type", type: <component hash> }`.
+    private static func newUnmodeledLiteral(_ literal: RCP3ScriptGraph.DataLiteral) -> TMObject {
+        var object = TMObject()
+        object.set(.string(UUID().uuidString), forKey: "__uuid")
+        object.set(.string(literal.toNode), forKey: "to_node")
+        object.set(.string(TMHash.hex(literal.toPin)), forKey: "to_connector_hash")
+
+        var valueObject = TMObject()
+        if let valueType = literal.valueType {
+            valueObject.set(.string(valueType), forKey: "__type")
+        }
+        valueObject.set(.string(UUID().uuidString), forKey: "__uuid")
+        if let valueHash = literal.valueHash {
+            valueObject.set(.string(TMHash.hex(valueHash)), forKey: "type")
+        }
         object.set(.object(valueObject), forKey: "data")
         return object
     }
@@ -489,6 +541,9 @@ public enum ScriptGraphWriteBack {
             } else {
                 node.remove(key: "label")
             }
+            patchEnumSettings(on: &node, selection: box.enumSelection)
+            patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
+            patchMaterialSettings(on: &node, settings: box.materialSettings)
             return node
         }
 
@@ -500,10 +555,152 @@ public enum ScriptGraphWriteBack {
             node.set(.string(label), forKey: "label")
         }
         var position = TMObject()
+        position.set(.string(UUID().uuidString), forKey: "__uuid")
         position.set(.number(numberLexeme(box.position.x)), forKey: "x")
         position.set(.number(numberLexeme(box.position.y)), forKey: "y")
         node.set(.object(position), forKey: "position")
+        patchEnumSettings(on: &node, selection: box.enumSelection)
+        patchDynamicConnectorSettings(on: &node, settings: box.dynamicConnectorSettings)
+        patchMaterialSettings(on: &node, settings: box.materialSettings)
         return node
+    }
+
+    /// Writes only recognized enum settings. A nil selection leaves an existing
+    /// unmodeled `settings` object untouched, preserving forward compatibility.
+    private static func patchEnumSettings(
+        on node: inout TMObject,
+        selection: RCP3ScriptGraph.Node.EnumSelection?
+    ) {
+        guard let selection else { return }
+        var settings = node["settings"]?.objectValue ?? TMObject()
+        settings.set(.string("script_graph_enum"), forKey: "__type")
+        if settings.uuid == nil { settings.set(.string(UUID().uuidString), forKey: "__uuid") }
+        settings.set(.string(TMHash.hex(selection.typeHash)), forKey: "type")
+        settings.set(.string(selection.caseName), forKey: "case")
+        var existingByIndex: [UInt32: TMObject] = [:]
+        for item in settings["associated_values"]?.arrayValue ?? [] {
+            guard let object = item.objectValue,
+                  let lexeme = object["index"]?.numberLexeme,
+                  let index = UInt32(lexeme) else { continue }
+            existingByIndex[index] = object
+        }
+        let values = selection.associatedValues.map { value -> TMValue in
+            var object = existingByIndex[value.index] ?? TMObject()
+            if object.type == nil {
+                object.set(.string("script_graph_enum_associated_value"), forKey: "__type")
+            }
+            if object.uuid == nil { object.set(.string(UUID().uuidString), forKey: "__uuid") }
+            object.set(.number(String(value.index)), forKey: "index")
+            object.set(.string(TMHash.hex(value.typeHash)), forKey: "type_hash")
+            return .object(object)
+        }
+        settings.set(.array(values), forKey: "associated_values")
+        node.set(.object(settings), forKey: "settings")
+    }
+
+    private static func patchDynamicConnectorSettings(
+        on node: inout TMObject,
+        settings modeled: RCP3ScriptGraph.Node.DynamicConnectorSettings?
+    ) {
+        guard let modeled else { return }
+        var outer = node["settings"]?.objectValue ?? TMObject()
+        var dynamic: TMObject
+        switch modeled.container {
+        case .direct:
+            dynamic = outer
+            dynamic.set(.string("tm_graph_node_dynamic_connectors_settings"), forKey: "__type")
+            if dynamic.uuid == nil { dynamic.set(.string(UUID().uuidString), forKey: "__uuid") }
+        case let .array(arrayType, elementType):
+            outer.set(.string("tm_array_create_node_settings"), forKey: "__type")
+            if outer.uuid == nil { outer.set(.string(UUID().uuidString), forKey: "__uuid") }
+            if let arrayType { outer.set(.string(TMHash.hex(arrayType)), forKey: "array_type") }
+            if let elementType { outer.set(.string(TMHash.hex(elementType)), forKey: "element_type") }
+            dynamic = outer["dynamic_connectors"]?.objectValue ?? TMObject()
+            dynamic.set(.string("tm_graph_node_dynamic_connectors_settings"), forKey: "__type")
+            if dynamic.uuid == nil { dynamic.set(.string(UUID().uuidString), forKey: "__uuid") }
+        }
+
+        func values(
+            _ connectors: [RCP3ScriptGraph.Node.DynamicConnector],
+            existing: [TMValue]
+        ) -> [TMValue] {
+            var existingByName: [String: TMObject] = [:]
+            for value in existing {
+                if let object = value.objectValue, let name = object["name"]?.stringValue {
+                    existingByName[name] = object
+                }
+            }
+            return connectors.map { connector in
+                var object = existingByName[connector.name] ?? TMObject()
+                object.set(.string("tm_graph_node_dynamic_connector"), forKey: "__type")
+                if object.uuid == nil { object.set(.string(UUID().uuidString), forKey: "__uuid") }
+                object.set(.string(connector.name), forKey: "name")
+                if let displayName = connector.displayName {
+                    object.set(.string(displayName), forKey: "display_name")
+                } else {
+                    object.remove(key: "display_name")
+                }
+                object.set(.string(TMHash.hex(connector.typeHash)), forKey: "type_hash")
+                object.set(.string(TMHash.hex(connector.editHash)), forKey: "edit_hash")
+                object.set(.number(numberLexeme(connector.order)), forKey: "order")
+                object.set(.number(String(connector.optionality)), forKey: "optionality")
+                return .object(object)
+            }
+        }
+
+        dynamic.set(
+            .array(values(modeled.inputs, existing: dynamic["inputs"]?.arrayValue ?? [])),
+            forKey: "inputs"
+        )
+        dynamic.set(
+            .array(values(modeled.outputs, existing: dynamic["outputs"]?.arrayValue ?? [])),
+            forKey: "outputs"
+        )
+        switch modeled.container {
+        case .direct:
+            outer = dynamic
+        case .array:
+            outer.set(.object(dynamic), forKey: "dynamic_connectors")
+        }
+        node.set(.object(outer), forKey: "settings")
+    }
+
+    private static func patchMaterialSettings(
+        on node: inout TMObject,
+        settings modeled: RCP3ScriptGraph.Node.MaterialSettings?
+    ) {
+        guard let modeled else { return }
+        var settings = node["settings"]?.objectValue ?? TMObject()
+        settings.set(.string("tm_material_node_settings"), forKey: "__type")
+        if settings.uuid == nil { settings.set(.string(UUID().uuidString), forKey: "__uuid") }
+        settings.set(.string(TMHash.hex(modeled.typeHash)), forKey: "type")
+        settings.set(.string(modeled.objectIdentifier), forKey: "object_identifier")
+
+        func values(
+            _ properties: [RCP3ScriptGraph.Node.MaterialSettings.Property],
+            existing: [TMValue]
+        ) -> [TMValue] {
+            var existingByName: [String: TMObject] = [:]
+            for value in existing {
+                if let object = value.objectValue, let name = object["name"]?.stringValue {
+                    existingByName[name] = object
+                }
+            }
+            return properties.map { property in
+                var object = existingByName[property.name] ?? TMObject()
+                object.set(.string("tm_material_node_settings_property"), forKey: "__type")
+                if object.uuid == nil { object.set(.string(UUID().uuidString), forKey: "__uuid") }
+                object.set(.string(property.name), forKey: "name")
+                object.set(.string(TMHash.hex(property.typeHash)), forKey: "type")
+                object.set(.string(TMHash.hex(property.editTypeHash)), forKey: "edit_type")
+                object.set(.bool(property.isOptional), forKey: "optional")
+                return .object(object)
+            }
+        }
+
+        settings.set(.array(values(modeled.inputs, existing: settings["inputs"]?.arrayValue ?? [])), forKey: "inputs")
+        settings.set(.array(values(modeled.outputs, existing: settings["outputs"]?.arrayValue ?? [])), forKey: "outputs")
+        node.set(.object(settings), forKey: "settings")
     }
 
     /// Sets `position[key]` to `value` ONLY when it genuinely differs from the

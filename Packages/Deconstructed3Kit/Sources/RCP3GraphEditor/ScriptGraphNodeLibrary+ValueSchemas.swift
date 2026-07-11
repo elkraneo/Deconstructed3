@@ -1,0 +1,136 @@
+import RCP3Document
+import TMFormat
+
+extension ScriptGraphNodeLibrary {
+    public struct EnumPinPolicy: Sendable, Hashable {
+        public enum Direction: Sendable, Hashable {
+            case make
+            case `break`
+        }
+
+        public let direction: Direction
+        public let schema: ScriptGraphValueSchema.EnumNodeSchema
+
+        /// The fixed side of the interface. The other side is populated with the
+        /// selected case's associated values, using their public descriptor labels.
+        public var fixedPins: [PinSpec] {
+            switch direction {
+            case .make: return [.data("value", "Value")]
+            case .break: return [.data("source", "Source")]
+            }
+        }
+
+        public func selectedCase(named name: String?) -> ScriptGraphValueSchema.EnumCase? {
+            if let name, let match = schema.cases.first(where: { $0.name == name }) { return match }
+            return schema.cases.first
+        }
+    }
+
+    /// Source-backed enum connector policy. `RCP3ScriptGraph.Node` carries the
+    /// selected-case setting, so the resolver can author the case-dependent pins.
+    public static func enumPinPolicy(for type: String) -> EnumPinPolicy? {
+        if let schema = ScriptGraphValueSchema.enumMakeNodes[type] {
+            return EnumPinPolicy(direction: .make, schema: schema)
+        }
+        if let schema = ScriptGraphValueSchema.enumBreakNodes[type] {
+            return EnumPinPolicy(direction: .break, schema: schema)
+        }
+        return nil
+    }
+
+    /// Initial settings for inserting an enum node. RCP's registry identifies enum
+    /// types by the same schema-name Murmur hash used elsewhere in graph metadata.
+    public static func defaultEnumSelection(for type: String) -> RCP3ScriptGraph.Node.EnumSelection? {
+        guard let policy = enumPinPolicy(for: type), let selected = policy.schema.cases.first else {
+            return nil
+        }
+        return enumSelection(policy: policy, selectedCase: selected)
+    }
+
+    public static func enumSelection(
+        for type: String,
+        caseName: String
+    ) -> RCP3ScriptGraph.Node.EnumSelection? {
+        guard
+            let policy = enumPinPolicy(for: type),
+            let selected = policy.schema.cases.first(where: { $0.name == caseName })
+        else { return nil }
+        return enumSelection(policy: policy, selectedCase: selected)
+    }
+
+    private static func enumSelection(
+        policy: EnumPinPolicy,
+        selectedCase: ScriptGraphValueSchema.EnumCase
+    ) -> RCP3ScriptGraph.Node.EnumSelection {
+        return .init(
+            typeHash: TMHash.murmur64a(policy.schema.typeName),
+            caseName: selectedCase.name,
+            associatedValues: selectedCase.associatedValues.enumerated().map { index, value in
+                .init(index: UInt32(index), typeHash: TMHash.murmur64a(value.swiftType))
+            }
+        )
+    }
+
+    /// Fixed Break/Write interfaces derived from Apple's public
+    /// `RealityKitScripting` property registry and restricted to node types in the
+    /// shipped RCP3 catalog. Existing directly observed specs win when both exist.
+    ///
+    /// Enum Make/Break nodes use the first public registry case as their insert-time
+    /// interface; parsed nodes resolve their actual selected case dynamically.
+    static let schemaDerivedSpecsByType: [String: NodeSpec] = {
+        var result: [String: NodeSpec] = [:]
+        for (type, schema) in ScriptGraphValueSchema.breakNodes {
+            result[type] = NodeSpec(
+                inputs: [.data("source", "Source")],
+                outputs: schema.properties.map {
+                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                },
+                category: .make
+            )
+        }
+        for (type, schema) in ScriptGraphValueSchema.writeNodes {
+            result[type] = NodeSpec(
+                inputs: [.data("source", "Source")] + schema.properties.map {
+                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                },
+                outputs: [.data("source", "Source")],
+                category: .make
+            )
+        }
+        // Enum interfaces are selected-case dependent. The fixed dictionary carries
+        // their default (first registry case) so they are insertable; the resolver
+        // replaces it with the actual selected case for every parsed/edited node.
+        for (type, schema) in ScriptGraphValueSchema.enumMakeNodes {
+            guard let selected = schema.cases.first else { continue }
+            result[type] = NodeSpec(
+                inputs: selected.associatedValues.map {
+                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                },
+                outputs: [.data("value", "Value")],
+                category: .make
+            )
+        }
+        for (type, schema) in ScriptGraphValueSchema.enumBreakNodes {
+            guard let selected = schema.cases.first else { continue }
+            result[type] = NodeSpec(
+                inputs: [.data("source", "Source")],
+                outputs: selected.associatedValues.map {
+                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                },
+                category: .make
+            )
+        }
+        return result
+    }()
+
+    private static func displayName(forSchemaProperty name: String) -> String {
+        let separated = name.reduce(into: "") { result, character in
+            if character.isUppercase, !result.isEmpty { result.append(" ") }
+            result.append(character)
+        }
+        return separated
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}

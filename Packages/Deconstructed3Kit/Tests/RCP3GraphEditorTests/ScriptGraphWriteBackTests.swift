@@ -89,6 +89,231 @@ import RCP3Document
         return ScriptGraphEditorModel(graph: RCP3ScriptGraph(tmGraph: tmGraph))
     }
 
+    /// Covers both settings layouts observed in the RKS schemas: String and typed
+    /// Array operators keep dynamic connectors directly; Array Create nests them in
+    /// `tm_array_create_node_settings` with the selected type hashes.
+    static func dynamicConnectorAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "dynamic-root"
+        graph: {
+        \t__uuid: "dynamic-graph"
+        \tnodes: [
+        \t\t{
+        \t\t\t__uuid: "string-node"
+        \t\t\ttype: "tm_to_string"
+        \t\t\tposition: { __uuid: "string-position" x: 10 y: 20 }
+        \t\t\tsettings: {
+        \t\t\t\t__type: "tm_graph_node_dynamic_connectors_settings"
+        \t\t\t\t__uuid: "string-settings"
+        \t\t\t\tinputs: [{
+        \t\t\t\t\t__type: "tm_graph_node_dynamic_connector"
+        \t\t\t\t\t__uuid: "string-input"
+        \t\t\t\t\tname: "source_value"
+        \t\t\t\t\tdisplay_name: "Source Value"
+        \t\t\t\t\ttype_hash: "1111111111111111"
+        \t\t\t\t\tedit_hash: "2222222222222222"
+        \t\t\t\t\torder: 3.5
+        \t\t\t\t\toptionality: 1
+        \t\t\t\t}]
+        \t\t\t\toutputs: []
+        \t\t\t}
+        \t\t}
+        \t\t{
+        \t\t\t__uuid: "array-node"
+        \t\t\ttype: "tm_array_get"
+        \t\t\tposition: { __uuid: "array-position" x: 30 y: 40 }
+        \t\t\tsettings: {
+        \t\t\t\t__type: "tm_graph_node_dynamic_connectors_settings"
+        \t\t\t\t__uuid: "array-settings"
+        \t\t\t\tinputs: [{
+        \t\t\t\t\t__type: "tm_graph_node_dynamic_connector"
+        \t\t\t\t\t__uuid: "array-input"
+        \t\t\t\t\tname: "array"
+        \t\t\t\t\ttype_hash: "aaaaaaaaaaaaaaaa"
+        \t\t\t\t\tedit_hash: "3333333333333333"
+        \t\t\t\t\torder: 0
+        \t\t\t\t\toptionality: 0
+        \t\t\t\t}]
+        \t\t\t\toutputs: []
+        \t\t\t}
+        \t\t}
+        \t\t{
+        \t\t\t__uuid: "create-node"
+        \t\t\ttype: "tm_array_create"
+        \t\t\tposition: { __uuid: "create-position" x: 50 y: 60 }
+        \t\t\tsettings: {
+        \t\t\t\t__type: "tm_array_create_node_settings"
+        \t\t\t\t__uuid: "create-settings"
+        \t\t\t\tarray_type: "aaaaaaaaaaaaaaaa"
+        \t\t\t\telement_type: "bbbbbbbbbbbbbbbb"
+        \t\t\t\tdynamic_connectors: {
+        \t\t\t\t\t__type: "tm_graph_node_dynamic_connectors_settings"
+        \t\t\t\t\t__uuid: "create-connectors"
+        \t\t\t\t\tinputs: []
+        \t\t\t\t\toutputs: []
+        \t\t\t\t}
+        \t\t\t}
+        \t\t}
+        \t]
+        \tconnections: []
+        \tdata: []
+        }
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    static func materialSettingsAsset() throws -> TMObject {
+        let text = """
+        __type: "re_scripting_source_graph"
+        __uuid: "material-root"
+        graph: {
+        \t__uuid: "material-graph"
+        \tnodes: [{
+        \t\t__uuid: "material-node"
+        \t\ttype: "tm_modify_any_material_123"
+        \t\tposition: { __uuid: "material-position" x: 10 y: 20 }
+        \t\tsettings: {
+        \t\t\t__type: "tm_material_node_settings"
+        \t\t\t__uuid: "material-settings"
+        \t\t\ttype: "1111111111111111"
+        \t\t\tobject_identifier: "RealityKit.PhysicallyBasedMaterial"
+        \t\t\tinputs: [{
+        \t\t\t\t__type: "tm_material_node_settings_property"
+        \t\t\t\t__uuid: "base-color-property"
+        \t\t\t\tname: "baseColor"
+        \t\t\t\ttype: "2222222222222222"
+        \t\t\t\tedit_type: "3333333333333333"
+        \t\t\t\toptional: false
+        \t\t\t\tvendor_extension: "preserve-me"
+        \t\t\t}]
+        \t\t\toutputs: [{
+        \t\t\t\t__type: "tm_material_node_settings_property"
+        \t\t\t\t__uuid: "roughness-property"
+        \t\t\t\tname: "roughness"
+        \t\t\t\ttype: "4444444444444444"
+        \t\t\t\tedit_type: "5555555555555555"
+        \t\t\t\toptional: true
+        \t\t\t}]
+        \t\t}
+        \t}]
+        \tconnections: []
+        \tdata: []
+        }
+        """
+        return try #require(try TM.parse(text).objectValue)
+    }
+
+    @Test("Material settings parse the exact Inspectable property schema")
+    func materialSettingsParse() throws {
+        let model = try Self.model(for: Self.materialSettingsAsset())
+        let node = try #require(model.node("material-node"))
+        let settings = try #require(node.materialSettings)
+        #expect(settings.typeHash == 0x1111_1111_1111_1111)
+        #expect(settings.objectIdentifier == "RealityKit.PhysicallyBasedMaterial")
+        #expect(settings.inputs == [.init(
+            name: "baseColor",
+            typeHash: 0x2222_2222_2222_2222,
+            editTypeHash: 0x3333_3333_3333_3333,
+            isOptional: false
+        )])
+        #expect(settings.outputs == [.init(
+            name: "roughness",
+            typeHash: 0x4444_4444_4444_4444,
+            editTypeHash: 0x5555_5555_5555_5555,
+            isOptional: true
+        )])
+        #expect(node.dynamicConnectorSettings == nil)
+    }
+
+    @Test("Material settings write-back preserves identities and unknown members")
+    func materialSettingsRoundTrip() throws {
+        let asset = try Self.materialSettingsAsset()
+        let model = try Self.model(for: asset)
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let graph = try #require(reparsed["graph"]?.objectValue)
+        let node = try #require(graph["nodes"]?.arrayValue?.first?.objectValue)
+        let settings = try #require(node["settings"]?.objectValue)
+        #expect(settings.type == "tm_material_node_settings")
+        #expect(settings.uuid == "material-settings")
+        #expect(settings["type"]?.stringValue == "1111111111111111")
+        #expect(settings["object_identifier"]?.stringValue == "RealityKit.PhysicallyBasedMaterial")
+        let input = try #require(settings["inputs"]?.arrayValue?.first?.objectValue)
+        #expect(input.type == "tm_material_node_settings_property")
+        #expect(input.uuid == "base-color-property")
+        #expect(input["vendor_extension"]?.stringValue == "preserve-me")
+        #expect(input["optional"]?.boolValue == false)
+
+        let projected = RCP3ScriptGraph(tmGraph: graph)
+        #expect(projected.node(id: "material-node")?.materialSettings ==
+            model.node("material-node")?.materialSettings)
+    }
+
+    @Test("Dynamic connector settings resolve exact pins from direct and nested schemas")
+    func dynamicConnectorSettingsResolvePins() throws {
+        let model = try Self.model(for: Self.dynamicConnectorAsset())
+
+        let string = try #require(model.node("string-node"))
+        #expect(string.dynamicConnectorSettings?.inputs.map(\.name) == ["source_value"])
+        #expect(string.payload.inputPins.map(\.label) == ["Source Value"])
+        #expect(string.payload.outputPins.map(\.label) == ["Value"])
+
+        let array = try #require(model.node("array-node"))
+        #expect(array.dynamicConnectorSettings?.container == .direct)
+        #expect(array.payload.inputPins.map(\.label) == ["Index", "Array"])
+        #expect(array.payload.outputPins.map(\.label) == ["Element"])
+
+        let create = try #require(model.node("create-node"))
+        #expect(create.dynamicConnectorSettings?.container == .array(
+            arrayType: 0xaaaa_aaaa_aaaa_aaaa,
+            elementType: 0xbbbb_bbbb_bbbb_bbbb
+        ))
+    }
+
+    @Test("Dynamic connector write-back preserves settings and connector identities")
+    func dynamicConnectorSettingsRoundTrip() throws {
+        let asset = try Self.dynamicConnectorAsset()
+        let model = try Self.model(for: asset)
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let graphObject = try #require(reparsed["graph"]?.objectValue)
+        let nodes = try #require(graphObject["nodes"]?.arrayValue).compactMap(\.objectValue)
+
+        let stringSettings = try #require(
+            nodes.first { $0.uuid == "string-node" }?["settings"]?.objectValue
+        )
+        #expect(stringSettings.uuid == "string-settings")
+        let stringInput = try #require(stringSettings["inputs"]?.arrayValue?.first?.objectValue)
+        #expect(stringInput.uuid == "string-input")
+        #expect(stringInput["type_hash"]?.stringValue == "1111111111111111")
+        #expect(stringInput["edit_hash"]?.stringValue == "2222222222222222")
+
+        let arraySettings = try #require(
+            nodes.first { $0.uuid == "array-node" }?["settings"]?.objectValue
+        )
+        #expect(arraySettings.uuid == "array-settings")
+        let arrayInput = try #require(arraySettings["inputs"]?.arrayValue?.first?.objectValue)
+        #expect(arrayInput.uuid == "array-input")
+
+        let createSettings = try #require(
+            nodes.first { $0.uuid == "create-node" }?["settings"]?.objectValue
+        )
+        #expect(createSettings.uuid == "create-settings")
+        #expect(createSettings["array_type"]?.stringValue == "aaaaaaaaaaaaaaaa")
+        #expect(createSettings["element_type"]?.stringValue == "bbbbbbbbbbbbbbbb")
+        let nested = try #require(createSettings["dynamic_connectors"]?.objectValue)
+        #expect(nested.uuid == "create-connectors")
+
+        let projected = RCP3ScriptGraph(tmGraph: graphObject)
+        #expect(projected.node(id: "string-node")?.dynamicConnectorSettings ==
+            model.node("string-node")?.dynamicConnectorSettings)
+        #expect(projected.node(id: "array-node")?.dynamicConnectorSettings ==
+            model.node("array-node")?.dynamicConnectorSettings)
+        #expect(projected.node(id: "create-node")?.dynamicConnectorSettings ==
+            model.node("create-node")?.dynamicConnectorSettings)
+    }
+
     // MARK: - Node move + label preserved members
 
     @Test func movingANodeUpdatesPositionAndPreservesOtherMembers() throws {
@@ -228,6 +453,7 @@ import RCP3Document
         #expect(inserted["type"]?.stringValue == "tm_get_component")
         #expect(inserted["label"]?.stringValue == "Reader")
         let position = try #require(inserted["position"]?.objectValue)
+        #expect(position.uuid != nil)
         #expect(position["x"]?.doubleValue == 50)
         #expect(position["y"]?.doubleValue == 60)
 
@@ -238,6 +464,35 @@ import RCP3Document
         // The data literal still targets n2 (a live node), so it is kept.
         let data = try #require(graph["data"]?.arrayValue)
         #expect(data.count == 1)
+    }
+
+    @Test func insertedEnumNodeSettingsRoundTripAndDrivePins() throws {
+        let asset = try Self.handBuiltAsset()
+        let model = try Self.model(for: asset)
+        let id = model.addNode(
+            type: "tm_make_anchoring_component_target", at: CGPoint(x: 80, y: 90)
+        )
+        model.setEnumCase(nodeID: id, caseName: "plane")
+
+        let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+        let reparsed = try #require(try TM.parse(patched.tmText()).objectValue)
+        let graphObject = try #require(reparsed["graph"]?.objectValue)
+        let object = try #require(
+            graphObject["nodes"]?.arrayValue?.compactMap(\.objectValue).first { $0.uuid == id }
+        )
+        let settings = try #require(object["settings"]?.objectValue)
+        #expect(settings.type == "script_graph_enum")
+        #expect(settings["case"]?.stringValue == "plane")
+        #expect(settings["type"]?.stringValue == TMHash.murmur64aHex("AnchoringComponent.Target"))
+        #expect(settings["associated_values"]?.arrayValue?.count == 3)
+
+        let reopened = RCP3ScriptGraph(tmGraph: graphObject)
+        let node = try #require(reopened.node(id: id))
+        #expect(node.enumSelection?.caseName == "plane")
+        #expect(node.enumSelection?.associatedValues.map(\.index) == [0, 1, 2])
+        let payload = ScriptGraphPinResolver.payload(for: node, in: reopened)
+        #expect(payload.inputPins.map(\.label) == ["Value 0", "Value 1", "Value 2"])
+        #expect(payload.outputPins.map(\.label) == ["Value"])
     }
 
     @Test func deletingTargetNodeDropsItsDataLiteral() throws {
@@ -1259,6 +1514,74 @@ import RCP3Document
         }
     }
 
+    /// Headless certification of the serialization templates which interaction
+    /// examples do not cover. Each graph completes two parse/write cycles; this
+    /// catches settings that survive insertion but disappear when a node is patched.
+    @Test func representativeAuthoringFamiliesSurviveTwoStructuralCycles() throws {
+        let stringType = TMHash.murmur64a("String")
+        let floatType = TMHash.murmur64a("Float")
+        let dynamic = RCP3ScriptGraph.Node.DynamicConnectorSettings(
+            container: .direct,
+            inputs: [
+                .init(name: "first", displayName: "First", typeHash: stringType, order: 0),
+                .init(name: "second", displayName: "Second", typeHash: stringType, order: 1, optionality: 2),
+            ],
+            outputs: [.init(name: "result", displayName: "Result", typeHash: stringType, order: 0)]
+        )
+        let material = RCP3ScriptGraph.Node.MaterialSettings(
+            typeHash: TMHash.murmur64a("PhysicallyBasedMaterial"),
+            objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
+            inputs: [.init(name: "roughness", typeHash: floatType, editTypeHash: floatType, isOptional: false)],
+            outputs: [.init(name: "baseColor", typeHash: TMHash.murmur64a("MaterialColorParameter"), editTypeHash: 0, isOptional: true)]
+        )
+        let families: [(String, RCP3ScriptGraph)] = [
+            ("Fixed", .init(nodes: [.init(id: "update", type: "tm_update"), .init(id: "delay", type: "tm_delay", label: "Wait")], wires: [.init(id: "flow", from: "update", to: "delay")], data: [])),
+            ("Dynamic", .init(nodes: [.init(id: "concat", type: "tm_string_concatenate", dynamicConnectorSettings: dynamic)], wires: [], data: [])),
+            ("EnumSchema", .init(nodes: [.init(id: "enum", type: "tm_make_triangle_fill_mode", enumSelection: .init(typeHash: TMHash.murmur64a("TriangleFillMode"), caseName: "lines", associatedValues: [.init(index: 0, typeHash: floatType)]))], wires: [], data: [])),
+            ("ScopedControlFlow", .init(nodes: [.init(id: "start", type: "tm_update"), .init(id: "loop", type: "tm_for_loop"), .init(id: "body", type: "tm_set_component")], wires: [.init(id: "to-loop", from: "start", to: "loop"), .init(id: "loop-body", from: "loop", to: "body")], data: [])),
+            ("InspectableMaterial", .init(nodes: [.init(id: "material", type: "tm_modify_any_material", materialSettings: material)], wires: [], data: [])),
+            // Imported NodeLib nodes are opaque identifiers at graph level; their
+            // authored connector interface follows the dynamic-settings path.
+            ("ImportedNodeLib", .init(nodes: [.init(id: "custom", type: "example_custom_node", label: "NodeLib fixture", dynamicConnectorSettings: dynamic)], wires: [], data: [])),
+        ]
+
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "rcp3-template-corpus-\(UUID().uuidString).realitycomposerpro")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        FileManager.default.createFile(atPath: dir.appending(path: "project.rcp").path, contents: Data())
+        try "__type: \"tm_entity\"\n__uuid: \"w\"\nname: \"world\""
+            .write(to: dir.appending(path: "world.tm_entity"), atomically: true, encoding: .utf8)
+        let bundle = try RCP3Bundle.open(dir)
+
+        for (name, source) in families {
+            // Fresh inserted nodes are assigned the writer's canonical origin.
+            let canonicalSource = RCP3ScriptGraph(
+                id: source.id,
+                nodes: source.nodes.map { node in
+                    .init(
+                        id: node.id, type: node.type, label: node.label,
+                        x: node.x ?? 0, y: node.y ?? 0,
+                        variableName: node.variableName, variableRefUUID: node.variableRefUUID,
+                        instanceOf: node.instanceOf, enumSelection: node.enumSelection,
+                        dynamicConnectorSettings: node.dynamicConnectorSettings,
+                        materialSettings: node.materialSettings
+                    )
+                },
+                wires: source.wires, data: source.data, variables: source.variables
+            )
+            let asset = try bundle.createScriptGraphAsset(named: name)
+            try ScriptGraphWriteBack.write(model: ScriptGraphEditorModel(graph: source), toAssetWithRootUUID: asset.id, in: bundle.url)
+            let firstBundle = try RCP3Bundle.open(dir)
+            let first = try #require(firstBundle.scriptGraph(assetID: asset.id))
+            assertStructurallyEqual(first, to: canonicalSource, corpus: "\(name)/materialize", comparePositions: false)
+
+            try ScriptGraphWriteBack.write(model: ScriptGraphEditorModel(graph: first), toAssetWithRootUUID: asset.id, in: firstBundle.url)
+            let second = try #require(RCP3Bundle.open(dir).scriptGraph(assetID: asset.id))
+            assertStructurallyEqual(second, to: first, corpus: "\(name)/rewrite")
+        }
+    }
+
     /// The automated half of the certification procedure's "reopen intact" gate:
     /// a reopened materialized graph must carry the SAME structure as its source —
     /// every node (type, label, position), every wire's connectivity including pin
@@ -1266,7 +1589,8 @@ import RCP3Document
     private func assertStructurallyEqual(
         _ reopened: RCP3ScriptGraph,
         to source: RCP3ScriptGraph,
-        corpus name: String
+        corpus name: String,
+        comparePositions: Bool = true
     ) {
         let sourceNodes = Dictionary(uniqueKeysWithValues: source.nodes.map { ($0.id, $0) })
         let reopenedNodes = Dictionary(uniqueKeysWithValues: reopened.nodes.map { ($0.id, $0) })
@@ -1275,12 +1599,17 @@ import RCP3Document
             guard let actual = reopenedNodes[id] else { continue }
             #expect(actual.type == expected.type, "\(name)/\(id): type")
             #expect(actual.label == expected.label, "\(name)/\(id): label")
-            #expect(actual.x == expected.x && actual.y == expected.y, "\(name)/\(id): position")
+            if comparePositions {
+                #expect(actual.x == expected.x && actual.y == expected.y, "\(name)/\(id): position")
+            }
             #expect(actual.variableName == expected.variableName, "\(name)/\(id): variableName")
             #expect(
                 actual.variableRefUUID == expected.variableRefUUID,
                 "\(name)/\(id): variableRefUUID"
             )
+            #expect(actual.enumSelection == expected.enumSelection, "\(name)/\(id): enum settings")
+            #expect(actual.dynamicConnectorSettings == expected.dynamicConnectorSettings, "\(name)/\(id): dynamic settings")
+            #expect(actual.materialSettings == expected.materialSettings, "\(name)/\(id): material settings")
         }
 
         // Wire and literal identities are serialization details; connectivity and
@@ -1302,13 +1631,15 @@ import RCP3Document
         struct Literal: Hashable {
             let toNode: String
             let toPin: UInt64
+            let valueType: String?
+            let valueHash: UInt64?
             let value: TMGraphValue?
         }
         let sourceLiterals = Set(source.data.map {
-            Literal(toNode: $0.toNode, toPin: $0.toPin, value: $0.value)
+            Literal(toNode: $0.toNode, toPin: $0.toPin, valueType: $0.valueType, valueHash: $0.valueHash, value: $0.value)
         })
         let reopenedLiterals = Set(reopened.data.map {
-            Literal(toNode: $0.toNode, toPin: $0.toPin, value: $0.value)
+            Literal(toNode: $0.toNode, toPin: $0.toPin, valueType: $0.valueType, valueHash: $0.valueHash, value: $0.value)
         })
         #expect(reopenedLiterals == sourceLiterals, "\(name): data literals")
 

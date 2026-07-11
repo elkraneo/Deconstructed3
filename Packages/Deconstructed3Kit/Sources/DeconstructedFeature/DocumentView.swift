@@ -1400,6 +1400,14 @@ struct NodeInspectorView: View {
                 }
             }
 
+            if ScriptGraphNodeLibrary.enumPinPolicy(
+                for: model.node(nodeID)?.payload.type ?? ""
+            ) != nil {
+                Section("Enum") {
+                    EnumCaseRow(model: model, nodeID: nodeID)
+                }
+            }
+
             let literals = model.editableLiterals(forNode: nodeID)
             if literals.isEmpty {
                 Section("Inputs") {
@@ -1417,6 +1425,31 @@ struct NodeInspectorView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(model.node(nodeID)?.payload.title ?? "Node")
+    }
+}
+
+/// Selected-case control for an enum Make/Break node. The model owns the setting
+/// and pin rebuild; this view only supplies the narrow node identity.
+private struct EnumCaseRow: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    private var selectedCase: Binding<String> {
+        Binding(
+            get: { model.node(nodeID)?.enumSelection?.caseName ?? "" },
+            set: { model.setEnumCase(nodeID: nodeID, caseName: $0) }
+        )
+    }
+
+    var body: some View {
+        if let node = model.node(nodeID),
+           let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.payload.type) {
+            Picker("Case", selection: selectedCase) {
+                ForEach(policy.schema.cases, id: \.name) { item in
+                    Text(item.name).tag(item.name)
+                }
+            }
+        }
     }
 }
 

@@ -118,6 +118,8 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byType["tm_constant_sqrt1_2"] == "Sqrt(0.5)")
         #expect(byType["tm_make_vector3"] == "Vector3")
         #expect(byType["tm_make_color"] == "Color")
+        #expect(byType["tm_cgcolor_to_color"] == "CGColor to Color")
+        #expect(byType["tm_color_to_cgcolor"] == "Color to CGColor")
         #expect(byType["tm_string_has_prefix"] == "Has Prefix")
         #expect(byType["tm_string_length"] == "String Length")
 
@@ -158,7 +160,7 @@ struct ScriptGraphNodeLibraryTests {
             "tm_make_vector2", "tm_make_vector3", "tm_make_vector4",
             "tm_make_vector4_with_vector3", "tm_make_matrix2x2", "tm_make_matrix3x3",
             "tm_make_matrix4x4", "tm_make_cgcolor", "tm_make_color", "tm_make_cgsize",
-            "tm_make_edge_insets",
+            "tm_make_edge_insets", "tm_cgcolor_to_color", "tm_color_to_cgcolor",
             // Break
             "tm_break_vector2", "tm_break_vector3", "tm_break_vector4",
             "tm_break_cgpoint", "tm_break_cgsize", "tm_break_color", "tm_break_cgcolor",
@@ -196,8 +198,165 @@ struct ScriptGraphNodeLibraryTests {
             "tm_get_remote_variable_node", "tm_set_remote_variable_node",
             "tm_clear_remote_variable_node",
         ]
-        #expect(items.count == expectedTypes.count)
-        #expect(Set(items.map(\.type)) == Set(expectedTypes))
+        let schemaDerivedTypes = Set(ScriptGraphValueSchema.breakNodes.keys)
+            .union(ScriptGraphValueSchema.writeNodes.keys)
+            .union(ScriptGraphValueSchema.enumMakeNodes.keys)
+            .union(ScriptGraphValueSchema.enumBreakNodes.keys)
+        let newlySourceBackedTypes: Set<String> = [
+            "tm_make_bool", "tm_make_number", "tm_make_string",
+            "tm_in_editor", "tm_host_is_ios", "tm_host_is_macos",
+            "tm_host_is_simulator", "tm_host_is_tvos", "tm_host_is_visionos",
+            "tm_host_time",
+            "tm_is_head_tracking_available", "tm_is_hand_tracking_available",
+            "tm_hand_joint", "tm_head_tracking",
+            "tm_stop_all_animations", "tm_stop_animation", "tm_pause_animation",
+            "tm_play_animation_by_name", "tm_play_animation_by_index",
+            "tm_input_get_gamepad", "tm_input_get_keyboard", "tm_input_get_mouse",
+            "tm_input_gamepad_axes", "tm_input_gamepad_button",
+            "tm_input_keyboard_key", "tm_input_mouse_button", "tm_input_mouse_motion",
+            "tm_get_material",
+            "tm_scene_raycast_v2", "tm_scene_convex_cast",
+            "tm_make_audio_mix_group", "tm_make_collision_group_number",
+            "tm_make_font", "tm_make_attributed_string",
+            "tm_attributed_string_size",
+            "tm_make_collision_filter_number", "tm_make_collision_filter",
+            "tm_make_sphere_shape", "tm_make_capsule_shape", "tm_make_box_shape",
+            "tm_entity_equals", "tm_entity_get_relative_transform",
+            "tm_entity_get_local_direction_vectors", "tm_entity_get_world_direction_vectors",
+            "tm_physics_clear_forces_and_torques", "tm_physics_reset_transform",
+            "tm_physics_add_force", "tm_physics_add_torque",
+            "tm_physics_apply_linear_impulse", "tm_physics_apply_angular_impulse",
+            "tm_physics_apply_impulse",
+            "tm_make_material_parameter_types_texture_coordinate_transform",
+            "tm_make_physically_based_material_anisotropy_angle",
+            "tm_make_physically_based_material_anisotropy_level",
+            "tm_make_physically_based_material_base_color",
+            "tm_make_physically_based_material_clearcoat",
+            "tm_make_physically_based_material_clearcoat_roughness",
+            "tm_make_physically_based_material_emissive_color",
+            "tm_make_physically_based_material_metallic",
+            "tm_make_physically_based_material_roughness",
+            "tm_make_physically_based_material_sheen_color",
+            "tm_make_physics_mass_properties", "tm_make_physics_material_resource",
+            "tm_audio_mix_groups_component_add_group",
+            "tm_audio_mix_groups_component_remove_group",
+            "tm_remove_component",
+            "tm_pause_audio", "tm_seek_audio", "tm_fade_audio",
+            "tm_pause_audio_group", "tm_seek_audio_group", "tm_fade_audio_group",
+            "tm_stop_all_audio",
+            "tm_stop_audio", "tm_stop_audio_group",
+            "tm_play_audio_at_time", "tm_play_audio_group_at_time",
+            "tm_fade_audio_mix_group", "tm_play_audio_by_name",
+            "tm_play_audio_group_by_name",
+            "tm_entity_convert_matrix_to", "tm_entity_convert_matrix_from",
+            "tm_entity_convert_direction_to", "tm_entity_convert_direction_from",
+            "tm_entity_convert_normal_to", "tm_entity_convert_normal_from",
+            "tm_entity_convert_position_to", "tm_entity_convert_position_from",
+            "tm_entity_move_character", "tm_entity_teleport_character", "tm_entity_move",
+            "tm_constant_bitset", "tm_bool_to_any", "tm_cgcolor_to_color", "tm_color_to_cgcolor",
+            "tm_variable_add", "tm_variable_subtract", "tm_variable_multiply",
+            "tm_variable_divide", "tm_variable_multiply_by_scalar",
+            "tm_variable_multiply_by_quaternion", "tm_variable_multiply_by_matrix",
+            "tm_math_inverse",
+        ]
+        let expectedTypeSet = Set(expectedTypes)
+            .union(schemaDerivedTypes)
+            .union(newlySourceBackedTypes)
+        #expect(items.count == expectedTypeSet.count)
+        #expect(Set(items.map(\.type)) == expectedTypeSet)
+    }
+
+    @Test("Public value schemas author fixed Break and Write interfaces")
+    func schemaDerivedBreakAndWriteSpecs() throws {
+        let breakMatrix = try #require(ScriptGraphNodeLibrary.spec(for: "tm_break_matrix2x2"))
+        #expect(breakMatrix.inputs.map(\.connectorName) == ["source"])
+        #expect(breakMatrix.outputs.map(\.connectorName) == [
+            "col0", "col1", "determinant", "inverse", "transpose",
+        ])
+
+        let writeMatrix = try #require(ScriptGraphNodeLibrary.spec(for: "tm_write_matrix2x2"))
+        #expect(writeMatrix.inputs.map(\.connectorName) == ["source", "col0", "col1"])
+        #expect(writeMatrix.outputs.map(\.connectorName) == ["source"])
+
+        let breakContact = try #require(ScriptGraphNodeLibrary.spec(for: "tm_break_contact"))
+        #expect(breakContact.outputs.map(\.connectorName) == ["impulse", "normal", "point"])
+        #expect(ScriptGraphNodeLibrary.paletteItems.contains { $0.type == "tm_write_entity" })
+    }
+
+    @Test("Public enum schemas author case-dependent connectors")
+    func schemaDerivedEnumPolicies() throws {
+        let make = try #require(
+            ScriptGraphNodeLibrary.enumPinPolicy(for: "tm_make_anchoring_component_target")
+        )
+        #expect(make.direction == .make)
+        #expect(make.fixedPins.map(\.connectorName) == ["value"])
+        let plane = try #require(make.schema.cases.first { $0.name == "plane" })
+        #expect(plane.associatedValues.map(\.name) == ["value0", "value1", "value2"])
+
+        let breakPolicy = try #require(
+            ScriptGraphNodeLibrary.enumPinPolicy(for: "tm_break_audio_directivity")
+        )
+        #expect(breakPolicy.direction == .break)
+        #expect(breakPolicy.fixedPins.map(\.connectorName) == ["source"])
+        #expect(ScriptGraphNodeLibrary.paletteItems.contains {
+            $0.type == "tm_make_anchoring_component_target"
+        })
+
+        let selection = try #require(ScriptGraphNodeLibrary.enumSelection(
+            for: "tm_make_anchoring_component_target", caseName: "plane"
+        ))
+        let node = RCP3ScriptGraph.Node(
+            id: "enum", type: "tm_make_anchoring_component_target",
+            enumSelection: selection
+        )
+        let graph = RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+        let payload = ScriptGraphPinResolver.payload(for: node, in: graph)
+        #expect(payload.inputPins.map(\.label) == ["Value 0", "Value 1", "Value 2"])
+        #expect(payload.outputPins.map(\.label) == ["Value"])
+    }
+
+    @Test("Material settings derive exact typed connector names without Any placeholders")
+    func materialSettingsDerivedSpecs() throws {
+        typealias Property = RCP3ScriptGraph.Node.MaterialSettings.Property
+        let settings = RCP3ScriptGraph.Node.MaterialSettings(
+            typeHash: 0x101,
+            objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
+            inputs: [
+                Property(name: "value", typeHash: 0x201, editTypeHash: 0x301, isOptional: false),
+                Property(name: "clearcoat_roughness", typeHash: 0x202, editTypeHash: 0x302, isOptional: true),
+            ],
+            outputs: [
+                Property(name: "result", typeHash: 0x201, editTypeHash: 0x301, isOptional: false),
+                Property(name: "base_color", typeHash: 0x203, editTypeHash: 0x303, isOptional: false),
+            ]
+        )
+
+        let get = try #require(ScriptGraphNodeLibrary.materialSpec(
+            for: "tm_get_material_parameter", settings: settings
+        ))
+        #expect(get.inputs.map(\.connectorName) == ["entity", "slot", "parameter"])
+        #expect(get.outputs.map(\.connectorName) == ["result", "base_color"])
+
+        let set = try #require(ScriptGraphNodeLibrary.materialSpec(
+            for: "tm_set_material_parameter_v2", settings: settings
+        ))
+        #expect(set.inputs.map(\.connectorName) == ["", "entity", "slot", "parameter", "value", "clearcoat_roughness"])
+        #expect(set.outputs.map(\.connectorName) == [""])
+
+        let modify = try #require(ScriptGraphNodeLibrary.materialSpec(
+            for: "tm_modify_any_material", settings: settings
+        ))
+        #expect(modify.inputs.map(\.connectorName) == ["", "entity", "slot", "value", "clearcoat_roughness"])
+        #expect(modify.outputs.map(\.connectorName) == ["", "result", "base_color"])
+
+        let node = RCP3ScriptGraph.Node(
+            id: "material", type: "tm_modify_any_material", materialSettings: settings
+        )
+        let graph = RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+        let payload = ScriptGraphPinResolver.payload(for: node, in: graph)
+        #expect(payload.inputPins.map(\.label) == ["exec", "Entity", "Slot", "Value", "Clearcoat Roughness"])
+        #expect(payload.outputPins.map(\.label) == ["exec", "Result", "Base Color"])
+        #expect(payload.pins.allSatisfy { !$0.label.contains("Any") })
     }
 
     @Test("New data-only node specs declare faithful pin connector names, no exec")
@@ -218,6 +377,19 @@ struct ScriptGraphNodeLibraryTests {
         // Make Vector3: x, y, z → vec3 (output connector name is faithful too).
         let vec3 = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_vector3"))
         #expect(vec3.inputs.map(\.connectorName) == ["x", "y", "z"])
+        let makeBool = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_bool"))
+        #expect(makeBool.inputs.map(\.connectorName) == ["initial_value"])
+        #expect(makeBool.outputs.map(\.connectorName) == ["value"])
+        let macOS = try #require(ScriptGraphNodeLibrary.spec(for: "tm_host_is_macos"))
+        #expect(macOS.inputs.isEmpty)
+        #expect(macOS.outputs.map(\.connectorName) == ["status"])
+        let iOS = try #require(ScriptGraphNodeLibrary.spec(for: "tm_host_is_ios"))
+        #expect(iOS.outputs.map(\.connectorName) == ["result"])
+        let collisionFilter = try #require(
+            ScriptGraphNodeLibrary.spec(for: "tm_make_collision_filter")
+        )
+        #expect(collisionFilter.inputs.map(\.connectorName) == ["group", "mask"])
+        #expect(collisionFilter.outputs.map(\.connectorName) == ["filter"])
         #expect(vec3.outputs.map(\.connectorName) == ["vec3"])
 
         // Look-at Rotation uses the camelCase `upVector` connector.
@@ -238,6 +410,317 @@ struct ScriptGraphNodeLibraryTests {
         #expect(hasPrefix.outputs.map(\.connectorName) == ["result"])
         let length = try #require(ScriptGraphNodeLibrary.spec(for: "tm_string_length"))
         #expect(length.outputs.map(\.connectorName) == ["length"])
+    }
+
+    @Test("Variable math operations share the harvested mutation contract")
+    func variableMutationSpecs() throws {
+        let expectedOperands: [String: String] = [
+            "tm_variable_add": "value",
+            "tm_variable_subtract": "value",
+            "tm_variable_multiply": "value",
+            "tm_variable_divide": "value",
+            "tm_variable_multiply_by_scalar": "scalar",
+            "tm_variable_multiply_by_quaternion": "quaternion",
+            "tm_variable_multiply_by_matrix": "matrix",
+        ]
+        for (type, operand) in expectedOperands {
+            let spec = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(spec.inputs.map(\.connectorName) == ["", operand])
+            #expect(spec.outputs.map(\.connectorName) == ["", "result"])
+        }
+    }
+
+    @Test("Shape constructors use the source-harvested interfaces")
+    func shapeConstructorSpecs() throws {
+        let sphere = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_sphere_shape"))
+        #expect(sphere.inputs.map(\.connectorName) == ["radius"])
+        #expect(sphere.outputs.map(\.connectorName) == ["shape"])
+
+        let capsule = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_capsule_shape"))
+        #expect(capsule.inputs.map(\.connectorName) == ["height", "radius"])
+        #expect(capsule.outputs.map(\.connectorName) == ["shape"])
+
+        let box = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_box_shape"))
+        #expect(box.inputs.map(\.connectorName) == ["extents"])
+        #expect(box.outputs.map(\.connectorName) == ["shape"])
+    }
+
+    @Test("Material and physics Make nodes use harvested connector contracts")
+    func materialAndPhysicsMakeSpecs() throws {
+        let textureTransform = try #require(ScriptGraphNodeLibrary.spec(
+            for: "tm_make_material_parameter_types_texture_coordinate_transform"
+        ))
+        #expect(textureTransform.inputs.map(\.connectorName) == ["offset", "scale", "rotation"])
+        #expect(textureTransform.outputs.map(\.connectorName) == ["textureCoordinateTransform"])
+
+        let baseColor = try #require(ScriptGraphNodeLibrary.spec(
+            for: "tm_make_physically_based_material_base_color"
+        ))
+        #expect(baseColor.inputs.map(\.connectorName) == ["red", "green", "blue", "alpha"])
+        #expect(baseColor.outputs.map(\.connectorName) == ["baseColor"])
+
+        let scalarContracts: [(String, String, String)] = [
+            ("tm_make_physically_based_material_anisotropy_angle", "angle", "angle"),
+            ("tm_make_physically_based_material_anisotropy_level", "level", "level"),
+            ("tm_make_physically_based_material_clearcoat", "clearcoat", "clearcoat"),
+            ("tm_make_physically_based_material_clearcoat_roughness", "roughness", "roughness"),
+            ("tm_make_physically_based_material_metallic", "metallic", "metallic"),
+            ("tm_make_physically_based_material_roughness", "roughness", "roughness"),
+        ]
+        for (type, input, output) in scalarContracts {
+            let spec = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(spec.inputs.map(\.connectorName) == [input])
+            #expect(spec.outputs.map(\.connectorName) == [output])
+        }
+
+        let mass = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_physics_mass_properties"))
+        #expect(mass.inputs.map(\.connectorName) == ["mass", "inertia", "position", "orientation"])
+        #expect(mass.outputs.map(\.connectorName) == ["massProperties"])
+
+        let material = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_physics_material_resource"))
+        #expect(material.inputs.map(\.connectorName) == ["staticFriction", "dynamicFriction", "restitution"])
+        #expect(material.outputs.map(\.connectorName) == ["material"])
+    }
+
+    @Test("Text constructors use source-harvested capitalization and modifier order")
+    func textConstructorSpecs() throws {
+        let font = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_font"))
+        #expect(font.inputs.map(\.connectorName) == [
+            "name", "size", "weight", "italic", "monospaced", "monospacedDigit",
+        ])
+        #expect(font.outputs.map(\.connectorName) == ["font"])
+
+        let attributed = try #require(ScriptGraphNodeLibrary.spec(for: "tm_make_attributed_string"))
+        #expect(attributed.inputs.map(\.connectorName) == [
+            "Text", "font", "alignment", "foregroundColor", "backgroundColor",
+        ])
+        #expect(attributed.outputs.map(\.connectorName) == ["string"])
+
+        let size = try #require(ScriptGraphNodeLibrary.spec(for: "tm_attributed_string_size"))
+        #expect(size.inputs.map(\.connectorName) == ["string", "maxWidth", "padding"])
+        #expect(size.outputs.map(\.connectorName) == ["size"])
+    }
+
+    @Test("Tracking input nodes expose the source-harvested records")
+    func trackingInputSpecs() throws {
+        for type in ["tm_is_head_tracking_available", "tm_is_hand_tracking_available"] {
+            let spec = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(spec.inputs.isEmpty)
+            #expect(spec.outputs.map(\.connectorName) == ["status"])
+        }
+        let joint = try #require(ScriptGraphNodeLibrary.spec(for: "tm_hand_joint"))
+        #expect(joint.inputs.map(\.connectorName) == ["hand", "joint"])
+        #expect(joint.outputs.map(\.connectorName) == ["position", "orientation"])
+        let head = try #require(ScriptGraphNodeLibrary.spec(for: "tm_head_tracking"))
+        #expect(head.inputs.isEmpty)
+        #expect(head.outputs.map(\.connectorName) == ["position", "orientation"])
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_get_keyboard")).outputs.map(\.connectorName) == ["keyboard"])
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_get_mouse")).outputs.map(\.connectorName) == ["mouse"])
+        let gamepad = try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_get_gamepad"))
+        #expect(gamepad.inputs.map(\.connectorName) == ["player", "gamepad"])
+        #expect(gamepad.outputs.map(\.connectorName) == ["gamepad"])
+        let axes = try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_gamepad_axes"))
+        #expect(axes.outputs.map(\.connectorName) == ["leftThumbstickAxes", "rightThumbstickAxes", "leftTriggerPressure", "rightTriggerPressure"])
+        for type in ["tm_input_gamepad_button", "tm_input_mouse_button"] {
+            let button = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(button.inputs.map(\.connectorName).last == "button")
+            #expect(button.outputs.map(\.connectorName) == ["down", "pressed", "released", "pressCount"])
+        }
+        let key = try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_keyboard_key"))
+        #expect(key.inputs.map(\.connectorName) == ["keyboard", "key"])
+        #expect(key.outputs.map(\.connectorName) == ["down", "pressed", "released", "pressesCount"])
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_input_mouse_motion")).outputs.map(\.connectorName) == ["delta"])
+
+        let stopAll = try #require(ScriptGraphNodeLibrary.spec(for: "tm_stop_all_animations"))
+        #expect(stopAll.inputs.map(\.connectorName) == ["", "entity", "recursive"])
+        let stop = try #require(ScriptGraphNodeLibrary.spec(for: "tm_stop_animation"))
+        #expect(stop.inputs.map(\.connectorName) == ["", "playbackController", "blendOutDuration"])
+        let pause = try #require(ScriptGraphNodeLibrary.spec(for: "tm_pause_animation"))
+        #expect(pause.inputs.map(\.connectorName) == ["", "playbackController", "pause"])
+        let playName = try #require(ScriptGraphNodeLibrary.spec(for: "tm_play_animation_by_name"))
+        #expect(playName.inputs.map(\.connectorName) == ["", "entity", "name", "repeat", "transitionDuration", "startsPaused"])
+        #expect(playName.outputs.map(\.connectorName) == ["", "playbackController"])
+        let playIndex = try #require(ScriptGraphNodeLibrary.spec(for: "tm_play_animation_by_index"))
+        #expect(playIndex.inputs.map(\.connectorName) == ["", "entity", "index", "repeat", "transitionDuration", "startsPaused"])
+        let material = try #require(ScriptGraphNodeLibrary.spec(for: "tm_get_material"))
+        #expect(material.inputs.map(\.connectorName) == ["entity", "index"])
+        #expect(material.outputs.map(\.connectorName) == ["material"])
+        let ray = try #require(ScriptGraphNodeLibrary.spec(for: "tm_scene_raycast_v2"))
+        #expect(ray.inputs.map(\.connectorName) == ["", "from", "direction", "length", "mask", "relativeTo"])
+        #expect(ray.outputs.map(\.connectorName) == ["hit", "miss", "entity", "position", "normal"])
+        let convex = try #require(ScriptGraphNodeLibrary.spec(for: "tm_scene_convex_cast"))
+        #expect(convex.inputs.map(\.connectorName) == ["", "shape", "from", "to", "mask", "relativeTo"])
+        #expect(convex.outputs.map(\.connectorName) == ray.outputs.map(\.connectorName))
+    }
+
+    @Test("Audio mix-group and Entity motion specs use shipped connector order")
+    func audioAndEntityMotionSpecs() throws {
+        let add = try #require(ScriptGraphNodeLibrary.spec(
+            for: "tm_audio_mix_groups_component_add_group"
+        ))
+        #expect(add.inputs.map(\.connectorName) == ["", "source", "mixGroup"])
+        #expect(add.outputs.map(\.connectorName) == [""])
+
+        let remove = try #require(ScriptGraphNodeLibrary.spec(
+            for: "tm_audio_mix_groups_component_remove_group"
+        ))
+        #expect(remove.inputs.map(\.connectorName) == ["", "source", "name"])
+
+        let removeComponent = try #require(ScriptGraphNodeLibrary.spec(for: "tm_remove_component"))
+        #expect(removeComponent.inputs.map(\.connectorName) == ["", "source", "component_type"])
+        #expect(removeComponent.outputs.map(\.connectorName) == [""])
+
+        let audioContracts: [(String, [String])] = [
+            ("tm_pause_audio", ["", "source"]),
+            ("tm_seek_audio", ["", "source", "time"]),
+            ("tm_fade_audio", ["", "source", "gain", "duration"]),
+            ("tm_pause_audio_group", ["", "source", "pause"]),
+            ("tm_seek_audio_group", ["", "source", "time"]),
+            ("tm_fade_audio_group", ["", "source", "gain", "duration"]),
+        ]
+        for (type, inputs) in audioContracts {
+            let spec = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(spec.inputs.map(\.connectorName) == inputs)
+            #expect(spec.outputs.map(\.connectorName) == [""])
+        }
+        let fadeMix = try #require(ScriptGraphNodeLibrary.spec(for: "tm_fade_audio_mix_group"))
+        #expect(fadeMix.inputs.map(\.connectorName) == ["", "source", "gain", "duration"])
+        #expect(fadeMix.outputs.map(\.connectorName) == [""])
+        let named = try #require(ScriptGraphNodeLibrary.spec(for: "tm_play_audio_by_name"))
+        #expect(named.inputs.map(\.connectorName) == ["", "entity", "name", "target", "prepareOnly"])
+        #expect(named.outputs.map(\.connectorName) == ["source"])
+        let group = try #require(ScriptGraphNodeLibrary.spec(for: "tm_play_audio_group_by_name"))
+        #expect(group.inputs.map(\.connectorName) == ["", "entities", "names", "source", "prepareOnly"])
+        #expect(group.outputs.map(\.connectorName) == ["source"])
+
+        let matrixTo = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_convert_matrix_to"))
+        #expect(matrixTo.inputs.map(\.connectorName) == ["entity", "matrix", "toEntity"])
+        #expect(matrixTo.outputs.map(\.connectorName) == ["matrix"])
+        let matrixFrom = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_convert_matrix_from"))
+        #expect(matrixFrom.inputs.map(\.connectorName) == ["entity", "matrix", "fromEntity"])
+
+        for value in ["direction", "normal", "position"] {
+            let to = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_convert_\(value)_to"))
+            #expect(to.inputs.map(\.connectorName) == ["entity", value, "toEntity"])
+            #expect(to.outputs.map(\.connectorName) == [value])
+            let from = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_convert_\(value)_from"))
+            #expect(from.inputs.map(\.connectorName) == ["entity", value, "fromEntity"])
+            #expect(from.outputs.map(\.connectorName) == [value])
+        }
+
+        let teleport = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_teleport_character"))
+        #expect(teleport.inputs.map(\.connectorName) == ["", "entity", "to", "relativeTo"])
+
+        let move = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_move"))
+        #expect(move.inputs.map(\.connectorName) == [
+            "", "entity", "scale", "orientation", "position", "relativeTo",
+            "duration", "timingFunction",
+        ])
+        #expect(move.outputs.map(\.connectorName) == ["", "controller"])
+
+        let character = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_move_character"))
+        #expect(character.inputs.map(\.connectorName) == ["", "entity", "by", "deltaTime", "relativeTo"])
+        #expect(character.outputs.map(\.connectorName) == [
+            "", "collision", "hitEntity", "hitPosition", "hitNormal",
+            "moveDirection", "moveDistance",
+        ])
+
+        let bitset = try #require(ScriptGraphNodeLibrary.spec(for: "tm_constant_bitset"))
+        #expect(bitset.inputs.map(\.connectorName) == ["count"])
+        #expect(bitset.outputs.map(\.connectorName) == ["value"])
+
+        let boolToAny = try #require(ScriptGraphNodeLibrary.spec(for: "tm_bool_to_any"))
+        #expect(boolToAny.inputs.map(\.connectorName) == ["bool", "true", "false"])
+        #expect(boolToAny.outputs.map(\.connectorName) == ["result"])
+    }
+
+    @Test("Source-harvested dynamic policies stay out of the palette until authorable")
+    func dynamicPinPolicies() throws {
+        let toString = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_to_string"))
+        #expect(toString.minimumInputCount == 1)
+        #expect(toString.maximumInputCount == 1)
+        #expect(toString.fixedInputs.isEmpty)
+        #expect(toString.fixedOutputs.map(\.connectorName) == ["value"])
+        #expect(toString.acceptsMixedInputTypes)
+        #expect(!toString.requiresArrayInput)
+
+        let join = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_string_merge"))
+        #expect(join.minimumInputCount == 3)
+        #expect(join.maximumInputCount == nil)
+        #expect(join.fixedInputs.map(\.connectorName) == ["separator"])
+        #expect(join.fixedOutputs.map(\.connectorName) == ["result"])
+        #expect(join.acceptsMixedInputTypes)
+
+        let isValid = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_is_valid"))
+        #expect(isValid.minimumInputCount == 1)
+        #expect(isValid.maximumInputCount == 1)
+        #expect(isValid.fixedOutputs.map(\.connectorName) == ["result"])
+        #expect(isValid.acceptsMixedInputTypes)
+
+        let validBranch = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(
+            for: "tm_is_valid_branch"
+        ))
+        #expect(validBranch.minimumInputCount == 1)
+        #expect(validBranch.maximumInputCount == 1)
+        #expect(validBranch.fixedInputs.map(\.connectorName) == [""])
+        #expect(validBranch.fixedOutputs.map(\.connectorName) == ["valid", "invalid"])
+
+        let count = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_count"))
+        #expect(count.minimumInputCount == 1)
+        #expect(count.maximumInputCount == 1)
+        #expect(count.fixedOutputs.map(\.connectorName) == ["count"])
+        #expect(count.requiresArrayInput)
+
+        let get = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_get"))
+        #expect(get.fixedInputs.map(\.connectorName) == ["index"])
+        #expect(get.fixedOutputs.map(\.connectorName) == ["element"])
+        #expect(get.requiresArrayInput)
+
+        let set = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_set"))
+        #expect(set.fixedInputs.map(\.connectorName) == ["", "index", "element"])
+        #expect(set.fixedOutputs.map(\.connectorName) == [""])
+        #expect(set.requiresArrayInput)
+
+        let add = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_add"))
+        #expect(add.fixedInputs.map(\.connectorName) == ["", "element"])
+        #expect(add.fixedOutputs.map(\.connectorName) == [""])
+        let create = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_create"))
+        #expect(create.minimumInputCount == 0)
+        #expect(create.fixedOutputs.map(\.connectorName) == ["array"])
+        let remove = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_remove"))
+        #expect(remove.fixedInputs.map(\.connectorName) == ["", "index"])
+        #expect(remove.fixedOutputs.map(\.connectorName) == [""])
+        let each = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_for_each"))
+        #expect(each.fixedInputs.map(\.connectorName) == [""])
+        #expect(each.fixedOutputs.map(\.connectorName) == ["step", "end", "index", "element"])
+        let find = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_find"))
+        #expect(find.fixedInputs.map(\.connectorName) == ["", "searchValue"])
+        #expect(find.fixedOutputs.map(\.connectorName) == ["found", "not found", "index", "element"])
+        for type in [
+            "tm_custom_event", "tm_on_scene_event", "tm_on_entity_event",
+            "tm_trigger_event", "tm_send_scene_event", "tm_send_entity_event",
+            "tm_get_entity_parameter", "tm_set_entity_parameter",
+        ] {
+            #expect(ScriptGraphNodeLibrary.dynamicPinPolicy(for: type) != nil)
+            #expect(ScriptGraphNodeLibrary.spec(for: type) == nil)
+        }
+
+        // Policy evidence is not authoring parity: none is insertable until the
+        // editor can persist its graph-defined connectors.
+        let paletteTypes = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
+        #expect(!paletteTypes.contains("tm_to_string"))
+        #expect(!paletteTypes.contains("tm_string_merge"))
+        #expect(!paletteTypes.contains("tm_array_count"))
+        #expect(!paletteTypes.contains("tm_array_get"))
+        #expect(!paletteTypes.contains("tm_array_set"))
+        #expect(!paletteTypes.contains("tm_array_add"))
+        #expect(!paletteTypes.contains("tm_array_create"))
+        #expect(!paletteTypes.contains("tm_array_remove"))
+        #expect(!paletteTypes.contains("tm_array_for_each"))
+        #expect(!paletteTypes.contains("tm_array_find"))
+        #expect(ScriptGraphNodeLibrary.spec(for: "tm_to_string") == nil)
+        #expect(ScriptGraphNodeLibrary.spec(for: "tm_string_merge") == nil)
+        #expect(ScriptGraphNodeLibrary.spec(for: "tm_array_count") == nil)
     }
 
     @Test("Logic/arithmetic/constant/variable specs declare faithful pins")
@@ -355,6 +838,33 @@ struct ScriptGraphNodeLibraryTests {
         let scene = try #require(ScriptGraphNodeLibrary.spec(for: "tm_scene"))
         #expect(scene.inputs.isEmpty)
         #expect(scene.outputs.map(\.connectorName) == ["scene"])
+
+        let entityEquals = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_equals"))
+        #expect(entityEquals.inputs.map(\.connectorName) == ["a", "b"])
+        #expect(entityEquals.outputs.map(\.connectorName) == ["result"])
+        #expect(entityEquals.inputs.allSatisfy { !$0.isExec })
+
+        let getRelative = try #require(ScriptGraphNodeLibrary.spec(for: "tm_entity_get_relative_transform"))
+        #expect(getRelative.inputs.map(\.connectorName) == ["entity", "relativeTo"])
+        #expect(getRelative.outputs.map(\.connectorName) == ["scale", "orientation", "position", "matrix"])
+
+        for type in ["tm_entity_get_local_direction_vectors", "tm_entity_get_world_direction_vectors"] {
+            let directions = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(directions.inputs.map(\.connectorName) == ["entity"])
+            #expect(directions.outputs.map(\.connectorName) == ["up", "right", "forward"])
+        }
+
+        for type in ["tm_physics_clear_forces_and_torques", "tm_physics_reset_transform"] {
+            let physics = try #require(ScriptGraphNodeLibrary.spec(for: type))
+            #expect(physics.inputs.map(\.connectorName) == ["", "entity", "recursive"])
+            #expect(physics.outputs.map(\.connectorName) == [""])
+        }
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_physics_add_force")).inputs.map(\.connectorName) == ["", "entity", "force", "at", "relativeTo"])
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_physics_apply_impulse")).inputs.map(\.connectorName) == ["", "entity", "impulse", "at", "relativeTo"])
+        #expect(try #require(ScriptGraphNodeLibrary.spec(for: "tm_physics_add_torque")).inputs.map(\.connectorName) == ["", "entity", "torque", "relativeTo"])
+        for type in ["tm_physics_apply_linear_impulse", "tm_physics_apply_angular_impulse"] {
+            #expect(try #require(ScriptGraphNodeLibrary.spec(for: type)).inputs.map(\.connectorName) == ["", "entity", "impulse", "relativeTo"])
+        }
     }
 
     @Test("Palette sections group the library by category in display order")
@@ -363,7 +873,7 @@ struct ScriptGraphNodeLibraryTests {
 
         // Sections appear in Category.order: Events, Control Flow, Logic, Entity, Math,
         // Make, String, Components, Variables.
-        #expect(sections.map(\.category) == [.events, .controlFlow, .logic, .entity, .math, .make, .string, .components, .variables])
+        #expect(sections.map(\.category) == [.events, .controlFlow, .logic, .entity, .math, .make, .string, .components, .variables, .utility])
 
         let byCategory = Dictionary(uniqueKeysWithValues: sections.map { ($0.category, $0) })
 
@@ -475,9 +985,8 @@ struct ScriptGraphNodeLibraryTests {
         let inputLabels = Set(inputs.map(\.label))
         #expect(inputLabels.isDisjoint(with: ["Translation", "Rotation", "Scale", "Matrix"]))
 
-        // Get Component is also a passthrough — exec input and output.
-        #expect(get.pins.contains { $0.isExec && $0.isInput })
-        #expect(get.pins.contains { $0.isExec && !$0.isInput })
+        // RCP renders Get Component as a pure value node with no exec pins.
+        #expect(!get.pins.contains { $0.isExec })
     }
 
     @Test("Get Component without a component_type literal adds no Transform properties")

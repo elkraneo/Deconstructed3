@@ -59,6 +59,12 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
     public let id: String
     public var position: CGPoint
     public var payload: ScriptGraphNodePayload
+    /// Selected enum case for source-generated enum Make/Break nodes.
+    public var enumSelection: RCP3ScriptGraph.Node.EnumSelection?
+    /// Typed dynamic connectors, including their source settings container.
+    public var dynamicConnectorSettings: RCP3ScriptGraph.Node.DynamicConnectorSettings?
+    /// Inspectable-derived connector schema for generated Material nodes.
+    public var materialSettings: RCP3ScriptGraph.Node.MaterialSettings?
 
     /// PROVENANCE for an instance-override graph (mirrors ``RCP3ScriptGraph/Node/instanceOf``):
     /// the `__prototype_uuid` of the prototype node this box INSTANCES, when it came from the
@@ -80,6 +86,9 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
         id: String,
         position: CGPoint,
         payload: ScriptGraphNodePayload,
+        enumSelection: RCP3ScriptGraph.Node.EnumSelection? = nil,
+        dynamicConnectorSettings: RCP3ScriptGraph.Node.DynamicConnectorSettings? = nil,
+        materialSettings: RCP3ScriptGraph.Node.MaterialSettings? = nil,
         instanceOf: String? = nil,
         authoredX: Bool = true,
         authoredY: Bool = true
@@ -87,6 +96,9 @@ public struct GraphNodeBox: Identifiable, Hashable, Sendable {
         self.id = id
         self.position = position
         self.payload = payload
+        self.enumSelection = enumSelection
+        self.dynamicConnectorSettings = dynamicConnectorSettings
+        self.materialSettings = materialSettings
         self.instanceOf = instanceOf
         self.authoredX = authoredX
         self.authoredY = authoredY
@@ -220,6 +232,9 @@ public final class ScriptGraphEditorModel {
                 id: node.id,
                 position: position,
                 payload: payload,
+                enumSelection: node.enumSelection,
+                dynamicConnectorSettings: node.dynamicConnectorSettings,
+                materialSettings: node.materialSettings,
                 instanceOf: node.instanceOf,
                 authoredX: node.x != nil,
                 authoredY: node.y != nil
@@ -332,12 +347,17 @@ public final class ScriptGraphEditorModel {
     @discardableResult
     public func addNode(type: String, label: String? = nil, at position: CGPoint) -> String {
         let newID = UUID().uuidString
-        let node = RCP3ScriptGraph.Node(id: newID, type: type, label: label)
+        let enumSelection = ScriptGraphNodeLibrary.defaultEnumSelection(for: type)
+        let node = RCP3ScriptGraph.Node(
+            id: newID, type: type, label: label, enumSelection: enumSelection
+        )
         let payload = ScriptGraphPinResolver.payload(
             for: node,
             in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
         )
-        nodes.append(GraphNodeBox(id: newID, position: position, payload: payload))
+        nodes.append(GraphNodeBox(
+            id: newID, position: position, payload: payload, enumSelection: enumSelection
+        ))
         selectNode(newID)
         markDirty()
         return newID
@@ -360,6 +380,38 @@ public final class ScriptGraphEditorModel {
         let newLabel = trimmed.isEmpty ? nil : trimmed
         guard nodes[index].payload.label != newLabel else { return }
         nodes[index].payload.label = newLabel
+        markDirty()
+    }
+
+    /// Changes an enum Make/Break node's selected case and rebuilds its dynamic
+    /// associated-value pins. Connections to pins absent from the new case are
+    /// removed, matching the editor invariant that every endpoint resolves.
+    public func setEnumCase(nodeID: String, caseName: String) {
+        guard
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            let selection = ScriptGraphNodeLibrary.enumSelection(
+                for: nodes[index].payload.type, caseName: caseName
+            ),
+            nodes[index].enumSelection != selection
+        else { return }
+
+        let old = nodes[index]
+        let node = RCP3ScriptGraph.Node(
+            id: old.id,
+            type: old.payload.type,
+            label: old.payload.label,
+            enumSelection: selection
+        )
+        nodes[index].enumSelection = selection
+        nodes[index].payload = ScriptGraphPinResolver.payload(
+            for: node,
+            in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+        )
+        let validPins = Set(nodes[index].payload.pins.map(\.id))
+        connections.removeAll {
+            ($0.from.nodeID == nodeID && !validPins.contains($0.from.pinID))
+                || ($0.to.nodeID == nodeID && !validPins.contains($0.to.pinID))
+        }
         markDirty()
     }
 

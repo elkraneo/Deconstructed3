@@ -93,7 +93,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "RCP3Dump",
-            dependencies: ["RCP3Document", "RCP3GraphEditor"]
+            dependencies: ["RCP3Document", "RCP3GraphEditor", "TMFormat"]
         ),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),

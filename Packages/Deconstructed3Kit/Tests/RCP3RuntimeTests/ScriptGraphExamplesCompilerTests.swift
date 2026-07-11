@@ -112,6 +112,31 @@ import RCP3Runtime
         #expect(ScriptGraphExamples.coveredNodeTypes.contains("tm_do_once"))
     }
 
+    @Test func everyComponentNodeHasAConcreteTransformSelectorForRCP3() {
+        let componentTypePin = TMHash.murmur64a("component_type")
+        let transformHash = TMHash.murmur64a("Transform")
+        for example in ScriptGraphExamples.all {
+            for node in example.graph.nodes where ["tm_set_component", "tm_get_component"].contains(node.type) {
+                let literal = example.graph.data.first {
+                    $0.toNode == node.id && $0.toPin == componentTypePin
+                }
+                #expect(literal?.valueType == "re_scripting_graph_component_type", "\(example.name)/\(node.id): missing component_type literal")
+                #expect(literal?.valueHash == transformHash, "\(example.name)/\(node.id): component_type is not Transform")
+            }
+        }
+    }
+
+    @Test func everyVariableNodeResolvesToAGraphVariableDeclarationForRCP3() {
+        for example in ScriptGraphExamples.all {
+            let declared = Set(example.graph.variables.map { $0.name.lowercased() })
+            for node in example.graph.nodes {
+                if let name = node.variableName {
+                    #expect(declared.contains(name.lowercased()), "\(example.name)/\(node.id): variable \(name) is not declared")
+                }
+            }
+        }
+    }
+
     @Test func random2CapturedEntityRelativeTransformPathCompiles() throws {
         guard let url = Self.referenceBundle(named: "Random2.realitycomposerpro") else { return }
         let bundle = try RCP3Bundle.open(url)
@@ -257,6 +282,229 @@ import RCP3Runtime
         // to (0,0,0) — it scales around 1.
         #expect(js.contains("this.entity.scale = new Math3D.Vector3(1, (1 + (0.5 * Math.sin((this.\(t) ?? 0)))), 1)"))
         #expect(!js.contains("RemoteValue"))
+    }
+
+    @Test func schemaDerivedWriteMutatesOnlyAuthoredPropertiesAndReturnsSource() {
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "event", type: "tm_did_add"),
+                .init(id: "vector", type: "tm_make_vector3"),
+                .init(id: "write", type: "tm_write_vector3"),
+                .init(id: "set", type: "tm_set_component"),
+            ],
+            wires: [
+                .init(id: "exec", from: "event", to: "set"),
+                .init(
+                    id: "vector-source", from: "vector", to: "write",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("source")
+                ),
+                .init(
+                    id: "write-position", from: "write", to: "set",
+                    fromPin: TMHash.murmur64a("source"), toPin: TMHash.murmur64a("translation")
+                ),
+            ],
+            data: [
+                .init(id: "x", toNode: "vector", toPin: TMHash.murmur64a("x"), scalarValue: 1),
+                .init(id: "y", toNode: "vector", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+                .init(id: "z", toNode: "vector", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+                .init(id: "new-x", toNode: "write", toPin: TMHash.murmur64a("x"), scalarValue: 5),
+                .init(
+                    id: "component", toNode: "set", toPin: TMHash.murmur64a("component_type"),
+                    valueType: "re_scripting_graph_component_type",
+                    valueHash: TMHash.murmur64a("Transform")
+                ),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        expectNoUnsupported(js, "Write Vector3")
+        #expect(js.contains("const source = new Math3D.Vector3(1, 2, 3); source.x = 5; return source;"))
+        #expect(!js.contains("source.y ="))
+        #expect(!js.contains("source.z ="))
+    }
+
+    @Test func makeNumberUsesTheCapturedInitialValueConnector() {
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "event", type: "tm_did_add"),
+                .init(id: "number", type: "tm_make_number"),
+                .init(id: "vector", type: "tm_make_vector3"),
+                .init(id: "set", type: "tm_set_component"),
+            ],
+            wires: [
+                .init(id: "exec", from: "event", to: "set"),
+                .init(
+                    id: "number-x", from: "number", to: "vector",
+                    fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("x")
+                ),
+                .init(
+                    id: "vector-translation", from: "vector", to: "set",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("translation")
+                ),
+            ],
+            data: [
+                .init(
+                    id: "initial", toNode: "number",
+                    toPin: TMHash.murmur64a("initial_value"), scalarValue: 7
+                ),
+                .init(id: "y", toNode: "vector", toPin: TMHash.murmur64a("y"), scalarValue: 2),
+                .init(id: "z", toNode: "vector", toPin: TMHash.murmur64a("z"), scalarValue: 3),
+                .init(
+                    id: "component", toNode: "set", toPin: TMHash.murmur64a("component_type"),
+                    valueType: "re_scripting_graph_component_type",
+                    valueHash: TMHash.murmur64a("Transform")
+                ),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        expectNoUnsupported(js, "Make Number")
+        #expect(js.contains("this.entity.position = new Math3D.Vector3(7, 2, 3);"))
+    }
+
+    @Test func hostTimeLowersToTheSourceHarvestedRuntimeProperty() {
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "event", type: "tm_did_add"),
+                .init(id: "time", type: "tm_host_time"),
+                .init(id: "vector", type: "tm_make_vector3"),
+                .init(id: "set", type: "tm_set_component"),
+            ],
+            wires: [
+                .init(id: "exec", from: "event", to: "set"),
+                .init(
+                    id: "time-x", from: "time", to: "vector",
+                    fromPin: TMHash.murmur64a("time"), toPin: TMHash.murmur64a("x")
+                ),
+                .init(
+                    id: "vector-translation", from: "vector", to: "set",
+                    fromPin: TMHash.murmur64a("vec3"), toPin: TMHash.murmur64a("translation")
+                ),
+            ],
+            data: [
+                .init(id: "y", toNode: "vector", toPin: TMHash.murmur64a("y"), scalarValue: 0),
+                .init(id: "z", toNode: "vector", toPin: TMHash.murmur64a("z"), scalarValue: 0),
+                .init(
+                    id: "component", toNode: "set", toPin: TMHash.murmur64a("component_type"),
+                    valueType: "re_scripting_graph_component_type",
+                    valueHash: TMHash.murmur64a("Transform")
+                ),
+            ]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        expectNoUnsupported(js, "Host Time")
+        #expect(js.contains("new Math3D.Vector3(this.hostTime, 0, 0)"))
+    }
+
+    @Test func collisionGroupConstructorUsesTheRealityKitType() {
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "event", type: "tm_did_add"),
+                .init(id: "group", type: "tm_make_collision_group_number"),
+                .init(id: "set", type: "tm_set_variable_node", variableName: "filter"),
+            ],
+            wires: [
+                .init(id: "exec", from: "event", to: "set"),
+                .init(
+                    id: "group-value", from: "group", to: "set",
+                    fromPin: TMHash.murmur64a("group"), toPin: TMHash.murmur64a("value")
+                ),
+            ],
+            data: [
+                .init(id: "value", toNode: "group", toPin: TMHash.murmur64a("value"), scalarValue: 3),
+            ],
+            variables: [.init(uuid: "filter-variable", name: "filter")]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        expectNoUnsupported(js, "Collision Group")
+        #expect(js.contains("const RealityKit = require(\"RealityKit\")"))
+        #expect(js.contains("this.\(slot("filter")) = new RealityKit.CollisionGroup(3);"))
+    }
+
+    @Test func enumMakeAndBreakUseSelectedCaseAndAssociatedValueOrder() {
+        let selection = RCP3ScriptGraph.Node.EnumSelection(
+            typeHash: TMHash.murmur64a("Audio.Directivity"),
+            caseName: "beam",
+            associatedValues: [
+                .init(index: 0, typeHash: TMHash.murmur64a("Double")),
+            ]
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "event", type: "tm_did_add"),
+                .init(id: "make", type: "tm_make_audio_directivity", enumSelection: selection),
+                .init(id: "break", type: "tm_break_audio_directivity", enumSelection: selection),
+                .init(id: "set", type: "tm_set_variable_node", variableName: "beam"),
+            ],
+            wires: [
+                .init(id: "exec", from: "event", to: "set"),
+                .init(
+                    id: "made", from: "make", to: "break",
+                    fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("source")
+                ),
+                .init(
+                    id: "broken", from: "break", to: "set",
+                    fromPin: TMHash.murmur64a("value0"), toPin: TMHash.murmur64a("value")
+                ),
+            ],
+            data: [
+                .init(
+                    id: "focus", toNode: "make",
+                    toPin: TMHash.murmur64a("value0"), scalarValue: 0.75
+                ),
+            ],
+            variables: [.init(uuid: "beam-variable", name: "beam")]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        expectNoUnsupported(js, "Enum Make/Break")
+        #expect(js.contains("const RealityKit = require(\"RealityKit\")"))
+        #expect(js.contains("(RealityKit.Audio.Directivity.beam(0.75))[0]"))
+    }
+
+    @Test func shapeConstructorsUseRealityKitShapeResourceFactories() {
+        func compiled(type: String, literals: [(String, Double)]) -> String {
+            let graph = RCP3ScriptGraph(
+                nodes: [
+                    .init(id: "event", type: "tm_did_add"),
+                    .init(id: "shape", type: type),
+                    .init(id: "set", type: "tm_set_variable_node", variableName: "shape"),
+                ],
+                wires: [
+                    .init(id: "exec", from: "event", to: "set"),
+                    .init(
+                        id: "value", from: "shape", to: "set",
+                        fromPin: TMHash.murmur64a("shape"), toPin: TMHash.murmur64a("value")
+                    ),
+                ],
+                data: literals.enumerated().map { index, literal in
+                    .init(
+                        id: "literal-\(index)", toNode: "shape",
+                        toPin: TMHash.murmur64a(literal.0), scalarValue: literal.1
+                    )
+                },
+                variables: [.init(uuid: "shape-variable", name: "shape")]
+            )
+            return CanonicalScriptGraphCompiler().compile(graph)
+        }
+
+        let sphere = compiled(type: "tm_make_sphere_shape", literals: [("radius", 2)])
+        #expect(sphere.contains("RealityKit.ShapeResource.generateSphere(2)"))
+
+        let capsule = compiled(
+            type: "tm_make_capsule_shape", literals: [("height", 3), ("radius", 1)]
+        )
+        #expect(capsule.contains("RealityKit.ShapeResource.generateCapsule(3, 1)"))
+
+        let box = compiled(type: "tm_make_box_shape", literals: [("extents", 4)])
+        #expect(box.contains("RealityKit.ShapeResource.generateBox(4)"))
     }
 
     // MARK: - Local-variable-driven: per-example shape
