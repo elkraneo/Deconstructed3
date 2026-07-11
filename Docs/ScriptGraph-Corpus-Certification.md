@@ -98,7 +98,20 @@ runtime validation.
 
 ## Current corpus
 
-The corpus is declared by `ScriptGraphExamples.all`. Automated tests enforce:
+The corpus has two intentionally separate layers:
+
+- `ScriptGraphExamples.all` contains a small set of human-designed behavioral
+  scenarios with observable outcomes and manual RCP procedures.
+- `ScriptGraphGeneratedCorpus.all` deterministically creates one minimal fixture
+  for every insertable type with an authoring recipe. It is grouped by palette
+  category and topology, so broad interface/serialization coverage does not require
+  maintaining hundreds of hand-written demos.
+
+Generated fixtures certify authoring mechanics, not useful runtime behavior. A type
+therefore remains only behaviorally certified when it also appears in a curated
+scenario and passes its runtime procedure.
+
+Automated tests enforce:
 
 - stable and unique example identities;
 - compilation without unsupported wired paths;
@@ -109,3 +122,5 @@ The corpus is declared by `ScriptGraphExamples.all`. Automated tests enforce:
 - materialize → reopen structural equality for every example: node identities,
   types, labels, positions, variable references, wire connectivity including
   connector hashes, authored data-literal values, and the variable table.
+- deterministic IDs, complete recipe coverage, valid subject-node topology, and
+  family grouping for the generated authoring corpus.
