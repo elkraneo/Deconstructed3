@@ -130,4 +130,49 @@ import RCP3Runtime
         #expect(number(slot("source"), in: context) == 12.5)
         #expect(number(slot("copy"), in: context) == 12.5)
     }
+
+    @Test func case5SchemaValueAccessReadsSelectedEnumAssociatedValue() throws {
+        let planeSelection = RCP3ScriptGraph.Node.EnumSelection(
+            typeHash: 0xfbcb65d98823de74,
+            caseName: "plane",
+            associatedValues: [
+                .init(index: 0, typeHash: 0x7c899dc3ffa1603b),
+                .init(index: 1, typeHash: 0x6bb355a28ed0d03c),
+                .init(index: 2, typeHash: 0xe21127b812fa38ef),
+            ]
+        )
+        let update = RCP3ScriptGraph.Node(id: "update", type: "tm_update")
+        let make = RCP3ScriptGraph.Node(
+            id: "make", type: "tm_make_anchoring_component_target",
+            enumSelection: planeSelection
+        )
+        let access = RCP3ScriptGraph.Node(
+            id: "access", type: "tm_break_anchoring_component_target",
+            enumSelection: planeSelection
+        )
+        let capture = RCP3ScriptGraph.Node(
+            id: "capture", type: "tm_set_variable_node", variableName: "extent"
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, make, access, capture], wires: [
+            .init(id: "start", from: "update", to: "capture"),
+            .init(
+                id: "source", from: "make", to: "access",
+                fromPin: TMHash.murmur64a("value"), toPin: TMHash.murmur64a("source")
+            ),
+            .init(
+                id: "associated-value", from: "access", to: "capture",
+                fromPin: TMHash.murmur64a("value2"), toPin: TMHash.murmur64a("value")
+            ),
+        ], data: [
+            .init(id: "alignment", toNode: "make", toPin: TMHash.murmur64a("value0"), value: .string("horizontal")),
+            .init(id: "classification", toNode: "make", toPin: TMHash.murmur64a("value1"), value: .string("wall")),
+            .init(id: "extent", toNode: "make", toPin: TMHash.murmur64a("value2"), value: .number(2.5)),
+        ])
+
+        let context = try runUpdate(
+            graph,
+            setup: "require = function(_) { return { AnchoringComponent: { Target: { plane: function(a, c, e) { return [a, c, e]; } } } }; };"
+        )
+        #expect(number(slot("extent"), in: context) == 2.5)
+    }
 }
