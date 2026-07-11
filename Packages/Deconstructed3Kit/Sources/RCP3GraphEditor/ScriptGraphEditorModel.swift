@@ -152,6 +152,8 @@ public struct EditableLiteral: Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 public final class ScriptGraphEditorModel {
+    /// Built-in plus document-provided NodeLib authoring metadata.
+    @ObservationIgnored public let nodeRegistry: ScriptGraphNodeRegistry
     public private(set) var nodes: [GraphNodeBox]
     public private(set) var connections: [GraphConnection]
 
@@ -215,10 +217,18 @@ public final class ScriptGraphEditorModel {
     /// Builds the editor state from a parsed script graph. Node interfaces (the full
     /// named pin set + exposed values) come from the shared pin derivation; node
     /// positions come from the file (`x`/`y`), falling back to a left-to-right lane.
-    public init(graph: RCP3ScriptGraph) {
+    public init(
+        graph: RCP3ScriptGraph,
+        nodeRegistry: ScriptGraphNodeRegistry = .builtins
+    ) {
+        self.nodeRegistry = nodeRegistry
         var boxes: [GraphNodeBox] = []
         for (index, node) in graph.nodes.enumerated() {
-            let payload = ScriptGraphPinResolver.payload(for: node, in: graph)
+            let payload = ScriptGraphPinResolver.payload(
+                for: node,
+                in: graph,
+                registry: nodeRegistry
+            )
             let position = CGPoint(
                 x: node.x ?? Double(index) * Self.fallbackLaneSpacing,
                 y: node.y ?? 0
@@ -353,7 +363,8 @@ public final class ScriptGraphEditorModel {
         )
         let payload = ScriptGraphPinResolver.payload(
             for: node,
-            in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+            in: RCP3ScriptGraph(nodes: [node], wires: [], data: []),
+            registry: nodeRegistry
         )
         nodes.append(GraphNodeBox(
             id: newID, position: position, payload: payload, enumSelection: enumSelection
@@ -405,7 +416,8 @@ public final class ScriptGraphEditorModel {
         nodes[index].enumSelection = selection
         nodes[index].payload = ScriptGraphPinResolver.payload(
             for: node,
-            in: RCP3ScriptGraph(nodes: [node], wires: [], data: [])
+            in: RCP3ScriptGraph(nodes: [node], wires: [], data: []),
+            registry: nodeRegistry
         )
         let validPins = Set(nodes[index].payload.pins.map(\.id))
         connections.removeAll {

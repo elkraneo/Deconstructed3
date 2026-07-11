@@ -1574,9 +1574,10 @@ import RCP3Document
             ("EnumSchema", .init(nodes: [.init(id: "enum", type: "tm_make_triangle_fill_mode", enumSelection: .init(typeHash: TMHash.murmur64a("TriangleFillMode"), caseName: "lines", associatedValues: [.init(index: 0, typeHash: floatType)]))], wires: [], data: [])),
             ("ScopedControlFlow", .init(nodes: [.init(id: "start", type: "tm_update"), .init(id: "loop", type: "tm_for_loop"), .init(id: "body", type: "tm_set_component")], wires: [.init(id: "to-loop", from: "start", to: "loop"), .init(id: "loop-body", from: "loop", to: "body")], data: [])),
             ("InspectableMaterial", .init(nodes: [.init(id: "material", type: "tm_modify_any_material", materialSettings: material)], wires: [], data: [])),
-            // Imported NodeLib nodes are opaque identifiers at graph level; their
-            // authored connector interface follows the dynamic-settings path.
-            ("ImportedNodeLib", .init(nodes: [.init(id: "custom", type: "example_custom_node", label: "NodeLib fixture", dynamicConnectorSettings: dynamic)], wires: [], data: [])),
+            // NodeLib registration supplies a static interface. The serialized
+            // graph stores only the derived node identity, never fabricated
+            // dynamic-connector settings.
+            ("ImportedNodeLib", .init(nodes: [.init(id: "custom", type: "node_17854906811712824314", label: "NodeLib fixture")], wires: [], data: [])),
         ]
 
         let dir = FileManager.default.temporaryDirectory

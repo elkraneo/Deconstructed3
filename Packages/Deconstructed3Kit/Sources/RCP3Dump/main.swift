@@ -33,22 +33,28 @@ private struct CertificationMatrix: Decodable {
         let kind: String
         let mechanism: String
         let subject: String
+        let registeredNodeType: String?
     }
     let cases: [Case]
 }
 
-private func certificationGraph(for item: CertificationMatrix.Case) -> RCP3ScriptGraph {
+private func certificationGraph(
+    for item: CertificationMatrix.Case,
+    resolvedType: String? = nil
+) -> RCP3ScriptGraph {
+    let type = resolvedType ?? item.subject
     if let graph = ScriptGraphAuthoringRecipes.makeGraph(
-        requestedType: item.subject,
+        requestedType: type,
         label: item.mechanism,
         graphID: "certification-\(item.mechanism)"
     ) {
         return graph
     }
     let subjectID = UUID().uuidString
-    let node = RCP3ScriptGraph.Node(id: subjectID, type: item.subject, label: item.mechanism)
+    let node = RCP3ScriptGraph.Node(id: subjectID, type: type, label: item.mechanism)
 
-    let needsExecRoot = ScriptGraphNodeLibrary.spec(for: node.type)?.inputs.contains(where: \.isExec)
+    let needsExecRoot = item.kind == "nodelib-fixture"
+        || ScriptGraphNodeLibrary.spec(for: node.type)?.inputs.contains(where: \.isExec)
         ?? ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type)?.fixedInputs.contains(where: \.isExec)
         ?? false
     let root = RCP3ScriptGraph.Node(id: UUID().uuidString, type: "tm_update", label: "Certification Start")
@@ -105,13 +111,16 @@ do {
             )
         }
         for (index, item) in matrix.cases.enumerated() {
-            // NodeLib declarations acquire their real graph-node IDs only after
-            // importJSONToTruth/APIRegistry registration. Never fabricate an ID.
-            if item.kind == "nodelib-fixture" {
-                print("SKIP\t\(item.id)\tpending Truth/APIRegistry registration")
+            // The matrix carries an identity derived from the fixture's stable
+            // uniqueID. Materialization proves the portable authoring surface;
+            // canonical execution remains a separate same-process registration
+            // certification tier.
+            if item.kind == "nodelib-fixture", item.registeredNodeType == nil {
+                print("SKIP\t\(item.id)\tmissing derived NodeLib identity")
                 continue
             }
-            let graph = certificationGraph(for: item)
+            let resolvedType = item.registeredNodeType ?? item.subject
+            let graph = certificationGraph(for: item, resolvedType: resolvedType)
             let asset = try bundle.createScriptGraphAsset(
                 named: certificationAssetName(index: index, mechanism: item.mechanism)
             )
@@ -120,7 +129,7 @@ do {
                 toAssetWithRootUUID: asset.id,
                 in: bundle.url
             )
-            print("\(asset.name)\t\(asset.id)\t\(item.subject)\t\(graph.nodes.count) nodes")
+            print("\(asset.name)\t\(asset.id)\t\(resolvedType)\t\(graph.nodes.count) nodes")
         }
         exit(0)
     }

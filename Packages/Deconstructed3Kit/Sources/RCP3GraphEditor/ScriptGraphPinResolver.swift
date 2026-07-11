@@ -70,13 +70,17 @@ public enum ScriptGraphPinResolver {
     // MARK: - Payload
 
     /// The payload (data) carried by a node: id, type, label, role, and pins.
-    static func payload(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> ScriptGraphNodePayload {
+    static func payload(
+        for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry = .builtins
+    ) -> ScriptGraphNodePayload {
         ScriptGraphNodePayload(
             id: node.id,
             type: node.type,
             label: node.label,
             role: ScriptGraphNodeRole.role(forType: node.type),
-            pins: pins(for: node, in: graph)
+            pins: pins(for: node, in: graph, registry: registry)
         )
     }
 
@@ -85,7 +89,11 @@ public enum ScriptGraphPinResolver {
     /// Builds the ordered pins for a single node, preferring its declared interface
     /// from ``ScriptGraphNodeLibrary`` (full named pin set, parity with RCP) and
     /// falling back to wire-derived pins for unknown node types.
-    static func pins(for node: RCP3ScriptGraph.Node, in graph: RCP3ScriptGraph) -> [ScriptGraphNodePayload.Pin] {
+    static func pins(
+        for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry = .builtins
+    ) -> [ScriptGraphNodePayload.Pin] {
         if node.type == "tm_constant_bitset" {
             let count = Int(graph.literal(node: node.id, pin: TMHash.murmur64a("count"))?.number ?? 0)
             let bitPins = (0..<min(max(count, 0), 32)).map {
@@ -120,7 +128,7 @@ public enum ScriptGraphPinResolver {
             }
             return libraryPins(for: node, spec: spec, in: graph)
         }
-        if let spec = ScriptGraphNodeLibrary.spec(for: node.type) {
+        if let spec = registry.spec(for: node.type) {
             return libraryPins(for: node, spec: spec, in: graph)
         }
         return wireDerivedPins(for: node, in: graph)

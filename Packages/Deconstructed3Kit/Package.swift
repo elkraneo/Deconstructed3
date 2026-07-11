@@ -21,6 +21,7 @@ let package = Package(
     platforms: [.macOS("27.0")],
     products: [
         .library(name: "TMFormat", targets: ["TMFormat"]),
+        .library(name: "RCP3NodeLib", targets: ["RCP3NodeLib"]),
         .library(name: "RCP3Document", targets: ["RCP3Document"]),
         .library(name: "RCP3Runtime", targets: ["RCP3Runtime"]),
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
@@ -45,6 +46,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "TMFormat"),
+        .target(name: "RCP3NodeLib", dependencies: ["TMFormat"]),
         .target(name: "RCP3Document", dependencies: ["TMFormat"]),
         // Path-2 script-graph runtime: a public-JavaScriptCore host that runs a
         // compiled graph against an entity model, plus the `tm_graph`→JS compiler.
@@ -88,6 +90,7 @@ let package = Package(
             name: "RCP3GraphEditor",
             dependencies: [
                 "RCP3Document",
+                "RCP3NodeLib",
                 "TMFormat",
             ]
         ),
@@ -96,6 +99,7 @@ let package = Package(
             dependencies: ["RCP3Document", "RCP3GraphEditor", "TMFormat"]
         ),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
+        .testTarget(name: "RCP3NodeLibTests", dependencies: ["RCP3NodeLib"]),
         .testTarget(name: "RCP3DocumentTests", dependencies: ["RCP3Document"]),
         .testTarget(
             name: "RCP3RuntimeTests",
