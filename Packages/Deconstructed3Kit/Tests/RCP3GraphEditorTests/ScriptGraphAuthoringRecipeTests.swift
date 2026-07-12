@@ -5,7 +5,8 @@ import RCP3Document
 @Suite struct ScriptGraphAuthoringRecipeTests {
     private let verifiedTypes = [
         "tm_get_component", "tm_collision_event_began", "tm_add_child",
-        "tm_get_material_parameter", "tm_break_anchoring_component_target",
+        "tm_get_material_parameter", "tm_set_material_parameter_v2",
+        "tm_modify_any_material", "tm_break_anchoring_component_target",
         "tm_if", "tm_array_for_each", "tm_variable_add", "tm_make_bool",
         "tm_get_variable_node",
     ]
@@ -78,6 +79,24 @@ import RCP3Document
         let node = try #require(graph.nodes.last)
         #expect(node.dynamicConnectorSettings == nil)
         #expect(node.entityParameterSettings?.typeHash == 0xaed3caa5c516d191)
+    }
+
+    @Test func materialFamilyUsesInspectableSettingsForEveryOperation() throws {
+        for type in [
+            "tm_get_material_parameter", "tm_set_material_parameter_v2",
+            "tm_modify_any_material",
+        ] {
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: type, label: type, graphID: type
+            ))
+            let node = try #require(graph.nodes.last)
+            let settings = try #require(node.materialSettings, "\(type) lost material settings")
+            #expect(settings.objectIdentifier == "RealityKit.PhysicallyBasedMaterial")
+            #expect(settings.inputs.map(\.name) == ["roughness"])
+            #expect(settings.outputs.map(\.name) == ["roughness"])
+            let needsRoot = type != "tm_get_material_parameter"
+            #expect(graph.wires.count == (needsRoot ? 1 : 0))
+        }
     }
 
     @Test func numberVariableIsFullyTypedAndBound() throws {

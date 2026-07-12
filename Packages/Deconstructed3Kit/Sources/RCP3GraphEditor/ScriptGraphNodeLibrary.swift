@@ -481,6 +481,7 @@ public enum ScriptGraphNodeLibrary {
         "tm_set_entity_enable": "Set Enabled",
         "tm_find_entity": "Find Entity",
         "tm_find_parent_entity": "Find Parent Entity",
+        "tm_find_scene_entity": "Find Scene Entity",
         "tm_find_entity_with_component": "Find Entity With Component",
         "tm_has_component": "Has Component",
         "tm_remove_component": "Remove Component",
@@ -490,6 +491,7 @@ public enum ScriptGraphNodeLibrary {
         "tm_add_child": "Add Child",
         "tm_remove_child": "Remove Child",
         "tm_remove_from_parent": "Remove From Parent",
+        "tm_spawn_entity": "Spawn Entity",
         "tm_self": "Self",
         "tm_scene": "Scene",
         // Components
@@ -730,6 +732,16 @@ public enum ScriptGraphNodeLibrary {
     /// and serialization exist; otherwise the palette would promise an incomplete
     /// node that cannot be connected from scratch.
     private static let dynamicPoliciesByType: [String: DynamicPinPolicy] = [
+        "tm_clone": DynamicPinPolicy(
+            // cloneNode_Test establishes the unseeded event/`+`/event topology;
+            // setup permits exactly one clonable-type input named `source` and
+            // mirrors that selected type as the sole data output.
+            minimumInputCount: 1,
+            maximumInputCount: 1,
+            fixedInputs: [exec],
+            fixedOutputs: [exec],
+            acceptsMixedInputTypes: false
+        ),
         "tm_to_string": DynamicPinPolicy(
             minimumInputCount: 1,
             maximumInputCount: 1,
@@ -1066,6 +1078,14 @@ public enum ScriptGraphNodeLibrary {
             outputs: [data("entity", "Entity")],
             category: .entity
         ),
+        // registerEntityNodes: the input is a tm_local_entity_asset_reference
+        // connector named `name`; the result is an optional Entity named `entity`.
+        // The unusual input name is Apple's shipped authoring contract, not a typo.
+        "tm_find_scene_entity": NodeSpec(
+            inputs: [data("name", "Name")],
+            outputs: [data("entity", "Entity")],
+            category: .entity
+        ),
         "tm_find_entity_with_component": NodeSpec(
             inputs: [
                 data("entity", "Entity"),
@@ -1134,6 +1154,13 @@ public enum ScriptGraphNodeLibrary {
                 data("preservingWorldTransform", "Preserving World Transform"),
             ],
             outputs: [exec],
+            category: .entity
+        ),
+        // registerEntityNodes: event + tm_entity_asset_reference `entity` +
+        // RealityKit.Entity `parent`, returning event + spawned Entity `entity`.
+        "tm_spawn_entity": NodeSpec(
+            inputs: [exec, data("entity", "Entity"), data("parent", "Parent")],
+            outputs: [exec, data("entity", "Entity")],
             category: .entity
         ),
         "tm_self": NodeSpec(inputs: [], outputs: [data("entity", "Entity")], category: .entity),

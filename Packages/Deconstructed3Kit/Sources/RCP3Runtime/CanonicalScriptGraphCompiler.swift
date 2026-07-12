@@ -1995,6 +1995,19 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("\(source.code).findEntity(\(name.code))")
             }
 
+            if node.type == "tm_clone" {
+                let source = inputExpression(
+                    into: node, pinName: "source", context: context, seen: &seen
+                )
+                if hasDataInput(into: node, pinName: "recursive") {
+                    let recursive = inputExpression(
+                        into: node, pinName: "recursive", context: context, seen: &seen
+                    )
+                    return Expr("\(source.code).clone(\(recursive.code))")
+                }
+                return Expr("\(source.code).clone()")
+            }
+
             if node.type == "tm_find_parent_entity" {
                 let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
                 let name = inputExpression(into: node, pinName: "name", context: context, seen: &seen)

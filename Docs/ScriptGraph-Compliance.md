@@ -18,7 +18,7 @@ swift run rcp3-dump audit-compliance \
 - Harvested catalogue: 382 rows, 360 unique public-candidate identifiers. The
   ledger contains duplicate rows for `tm_set_entity_parameter` and
   `tm_make_collision_group`.
-- Live fixed/schema/typed-dynamic palette: 336 node types; every palette type has an authoring
+- Live fixed/schema/typed-dynamic palette: 338 node types; every palette type has an authoring
   recipe.
 - Settings-backed material authoring adds `tm_get_material_parameter`,
   `tm_set_material_parameter_v2`, and `tm_modify_any_material` outside the fixed
@@ -33,9 +33,9 @@ swift run rcp3-dump audit-compliance \
   two pending public schemas; three feature-flagged diagnostics; three nodes not
   recovered from `libtm`; six unregistered catalogue entries; six validation-test
   nodes; one deprecated validation no-op; one alias; and one proven non-node form.
-- Behavioral corpus: 15 scenarios using 20 unique node types. Of the 336 palette
-  types, 316 do not yet occur in a curated end-to-end behavioral scenario. A
-  separate deterministic authoring corpus covers all 336 palette types.
+- Behavioral corpus: 15 scenarios using 20 unique node types. Of the 338 palette
+  types, 318 do not yet occur in a curated end-to-end behavioral scenario. A
+  separate deterministic authoring corpus covers all 338 palette types.
 - RCP authoring certification: ten representative built-in mechanisms passed
   RCP open/save/reopen. These certify mechanisms, not every node using them.
 - Runtime certification: zero matrix cases are currently marked `pass`.

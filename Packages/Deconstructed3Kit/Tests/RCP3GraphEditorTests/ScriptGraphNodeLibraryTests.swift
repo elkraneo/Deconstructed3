@@ -84,6 +84,21 @@ struct ScriptGraphNodeLibraryTests {
         ])
     }
 
+    @Test("Asset-reference entity nodes match the shipped registration")
+    func assetReferenceEntitySpecs() throws {
+        let find = try #require(ScriptGraphNodeLibrary.spec(for: "tm_find_scene_entity"))
+        #expect(find.inputs.map(\.connectorName) == ["name"])
+        #expect(find.outputs.map(\.connectorName) == ["entity"])
+        #expect(find.inputs.allSatisfy { !$0.isExec })
+        #expect(find.outputs.allSatisfy { !$0.isExec })
+
+        let spawn = try #require(ScriptGraphNodeLibrary.spec(for: "tm_spawn_entity"))
+        #expect(spawn.inputs.map(\.connectorName) == ["", "entity", "parent"])
+        #expect(spawn.outputs.map(\.connectorName) == ["", "entity"])
+        #expect(spawn.inputs.map(\.isExec) == [true, false, false])
+        #expect(spawn.outputs.map(\.isExec) == [true, false])
+    }
+
     @Test("Palette lists every node type that has a spec, with readable names")
     func paletteItems() throws {
         let items = ScriptGraphNodeLibrary.paletteItems
@@ -174,9 +189,10 @@ struct ScriptGraphNodeLibraryTests {
             // Entity
             "tm_entity_set_relative_transform", "tm_entity_get_world_transform",
             "tm_entity_set_world_transform", "tm_entity_look_at", "tm_set_entity_enable",
-            "tm_find_entity", "tm_find_parent_entity", "tm_find_entity_with_component",
+            "tm_find_entity", "tm_find_parent_entity", "tm_find_scene_entity",
+            "tm_find_entity_with_component",
             "tm_has_component", "tm_get_parent", "tm_get_children", "tm_set_parent", "tm_add_child",
-            "tm_remove_child", "tm_remove_from_parent", "tm_self", "tm_scene",
+            "tm_remove_child", "tm_remove_from_parent", "tm_spawn_entity", "tm_self", "tm_scene",
             // Logic
             "tm_and", "tm_or", "tm_equals", "tm_not_equals", "tm_not",
             // Math — Arithmetic & trig
@@ -678,6 +694,14 @@ struct ScriptGraphNodeLibraryTests {
 
     @Test("Source-harvested dynamic policies stay out of the palette until authorable")
     func dynamicPinPolicies() throws {
+        let clone = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_clone"))
+        #expect(clone.minimumInputCount == 1)
+        #expect(clone.maximumInputCount == 1)
+        #expect(clone.fixedInputs.map(\.connectorName) == [""])
+        #expect(clone.fixedOutputs.map(\.connectorName) == [""])
+        #expect(!clone.acceptsMixedInputTypes)
+        #expect(!clone.requiresArrayInput)
+
         let toString = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_to_string"))
         #expect(toString.minimumInputCount == 1)
         #expect(toString.maximumInputCount == 1)

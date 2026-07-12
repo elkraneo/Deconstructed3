@@ -71,6 +71,14 @@ public enum ScriptGraphAuthoringRecipes {
             requestedType: "tm_get_material_parameter", topology: .pure,
             settings: .physicallyBasedMaterial
         ),
+        "tm_set_material_parameter_v2": .init(
+            requestedType: "tm_set_material_parameter_v2", topology: .action,
+            settings: .physicallyBasedMaterial
+        ),
+        "tm_modify_any_material": .init(
+            requestedType: "tm_modify_any_material", topology: .action,
+            settings: .physicallyBasedMaterial
+        ),
         "tm_break_anchoring_component_target": .init(
             requestedType: "tm_break_anchoring_component_target", topology: .pure,
             settings: .enumCase("plane")

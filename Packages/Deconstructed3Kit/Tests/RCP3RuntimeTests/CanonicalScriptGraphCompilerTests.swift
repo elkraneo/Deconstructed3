@@ -2410,6 +2410,44 @@ import RCP3Runtime
         }
     }
 
+    @Test func cloneCompilesWithOptionalRecursiveArgument() {
+        let cases: [(Double?, String)] = [(nil, "7.clone()"), (1.0, "7.clone(1)")]
+        for (recursive, expected) in cases {
+            let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(
+                id: "set", type: "tm_set_variable_node", variableName: "clone"
+            )
+            let clone = RCP3ScriptGraph.Node(id: "clone", type: "tm_clone")
+            var data = [
+                RCP3ScriptGraph.DataLiteral(
+                    id: "source", toNode: "clone",
+                    toPin: TMHash.murmur64a("source"), scalarValue: 7
+                ),
+            ]
+            if let recursive {
+                data.append(.init(
+                    id: "recursive", toNode: "clone",
+                    toPin: TMHash.murmur64a("recursive"), scalarValue: recursive
+                ))
+            }
+            let graph = RCP3ScriptGraph(
+                nodes: [update, set, clone],
+                wires: [
+                    .init(id: "e", from: "u", to: "set"),
+                    .init(
+                        id: "value", from: "clone", to: "set",
+                        fromPin: TMHash.murmur64a("source"),
+                        toPin: TMHash.murmur64a("value")
+                    ),
+                ],
+                data: data
+            )
+            let js = CanonicalScriptGraphCompiler().compile(graph)
+            #expect(js.contains(expected))
+            #expect(!js.contains("unsupported"))
+        }
+    }
+
     @Test func hasComponentCompilesToHasComponentCall() {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "hasComponent")
