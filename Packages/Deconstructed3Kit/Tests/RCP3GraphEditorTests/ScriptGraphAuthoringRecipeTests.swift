@@ -1,10 +1,11 @@
 import Testing
 import RCP3Document
+import TMFormat
 @testable import RCP3GraphEditor
 
 @Suite struct ScriptGraphAuthoringRecipeTests {
     private let verifiedTypes = [
-        "tm_get_component", "tm_collision_event_began", "tm_add_child",
+        "tm_set_component", "tm_get_component", "tm_collision_event_began", "tm_add_child",
         "tm_get_material_parameter", "tm_set_material_parameter_v2",
         "tm_modify_any_material", "tm_break_anchoring_component_target",
         "tm_if", "tm_array_for_each", "tm_variable_add", "tm_variable_subtract",
@@ -16,6 +17,21 @@ import RCP3Document
         for type in verifiedTypes {
             #expect(ScriptGraphAuthoringRecipes.recipe(for: type) != nil, "Missing recipe for \(type)")
         }
+    }
+
+    @Test func setComponentStartsWithAConcreteComponentSelection() throws {
+        let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+            requestedType: "tm_set_component", label: "Set Transform", graphID: "set-component"
+        ))
+        let set = try #require(graph.nodes.first { $0.type == "tm_set_component" })
+        let selector = try #require(graph.data.first {
+            $0.toNode == set.id && $0.toPin == TMHash.murmur64a("component_type")
+        })
+        #expect(selector.valueType == "re_scripting_graph_component_type")
+        #expect(selector.valueHash == TMHash.murmur64a("Transform"))
+        #expect(ScriptGraphPinResolver.pins(for: set, in: graph).contains {
+            $0.isInput && $0.label == "Translation"
+        })
     }
 
     @Test func topologyCreatesOnlyValidExecRoots() throws {

@@ -1,6 +1,6 @@
 import Testing
 import TMFormat
-import RCP3GraphEditor
+@testable import RCP3GraphEditor
 
 /// The component registry, populated from the per-category
 /// `ScriptGraphComponentLibrary+*.swift` files, resolves component types (by name
@@ -39,5 +39,20 @@ import RCP3GraphEditor
         #expect(propertyNames("SpotLightComponent").contains("outerAngleInDegrees"))
         #expect(propertyNames("OpacityComponent").contains("opacity"))
         #expect(propertyNames("SpatialAudioComponent").contains("gain"))
+    }
+
+    @Test func completeRegistryHasStableUniqueComponentAndPropertyIdentity() {
+        let components = ScriptGraphNodeLibrary.registeredComponents
+        #expect(components.count == 46)
+        #expect(Set(components.map(\.name)).count == components.count)
+        #expect(Set(components.map(\.typeHash)).count == components.count)
+
+        for component in components {
+            let propertyNames = component.properties.map(\.connectorName)
+            let propertyHashes = component.properties.map(\.connectorHash)
+            #expect(Set(propertyNames).count == propertyNames.count, "duplicate property name in \(component.name)")
+            #expect(Set(propertyHashes).count == propertyHashes.count, "duplicate property hash in \(component.name)")
+            #expect(component.properties.allSatisfy { !$0.isExec })
+        }
     }
 }

@@ -611,9 +611,15 @@ declared type (an unresolved reference falls back to an "any" type id).
   getter/setter pair plus a `set_<name>` change message; a simpler faithful emission is
   a single `this.variable_<id>` property read on Get and assigned on Set — behaviorally
   identical for in-script accumulators, which is all our examples need.)
-- **Remote** variables compile to `this.getRemoteValue(...)` / `this.setRemoteValue(...)`
-  over a per-entity storage bag, keyed by the variable, and consume the `Variable`
-  Entity input pin. Clear gates on whether the key is present before clearing.
+- **Remote** variable emitters receive a resolved runtime reference with `entity` and
+  `variable` identities. They resolve `target = this.data_storage[reference.entity]`,
+  then load the target's bag with `this.getRemoteValue(target, "data_storage")`; both
+  lookups are guarded. Get reads `bag[reference.variable]`, reporting
+  `Unknown Variable.` and returning `undefined` when absent. Set updates only an
+  existing member, then persists the complete bag with
+  `this.setRemoteValue(target, "data_storage", bag)`; an unknown member is logged and
+  not created. Clear uses `Object.hasOwn(bag, reference.variable)`, assigns
+  `undefined`, and persists through the same three-argument call.
 
 The remote `Variable` value is not interchangeable with a local variable-table entry.
 The recovered type index defines it as `tm_graph_remote_variable_ref` with three
@@ -622,9 +628,10 @@ minimal palette node with only an exec wire is a **configuration-required author
 fixture**, not an executable remote-variable program. The executable corpus records
 that distinction explicitly and does not count the missing remote identity as a
 compiler reachability failure. Full remote-variable parity nevertheless remains open:
-the parser currently preserves this object as an unmodeled literal, and its exact
-entity/reference emission contract still needs a configured RCP capture or emitter
-harvest before we can lower it without inventing behavior.
+the parser currently preserves this object as an unmodeled literal, and the serialized
+Truth `entity`/`ref` references have not yet been mapped to the emitter's runtime
+`entity`/`variable` identities. The runtime algorithm is recovered; this identity
+bridge still needs a configured capture before lowering can be implemented safely.
 
 **On-disk serialization (confirmed from a captured graph).** A graph that uses
 variables stores, inside its `graph` object:
@@ -743,6 +750,14 @@ This documents the real API directly (no inference needed):
   unsupported diagnostic describes an incomplete audit fixture—not a missing Set
   Component dispatcher. Arbitrary component/property parity remains separately tied
   to the recovered component schema and a concrete input value.
+- **Set/Get Component schema template.** Both nodes use the same
+  `component_type` selector and the same Inspectable-derived property list. Get exposes
+  that list as outputs; Set exposes it as inputs. Deconstructed3 therefore creates a
+  new Set Component with the verified `Transform` selector already present, rather
+  than emitting the invalid context-free node. This establishes the authoring shape;
+  runtime parity for a non-Transform component still requires the selected component's
+  public JS construction or copy-mutate-writeback contract, and must not be inferred
+  from an editable node label.
 - **Path-2 options for Deconstructed 3:** (a) **depend on the public package** and run
   genuine RCP scripts on Apple's runtime (most honest); or (b) keep our own public-
   JavaScriptCore host for portability/injection. Either way the target API is public
@@ -1073,6 +1088,16 @@ also add `receiver`. Existing settings parse/write back losslessly and compile t
 payload-type selection remains gated on the typed hash picker. The private
 listener payload accessor is isolated as `event.eventData[name]` pending public-runtime
 certification.
+
+Typed authoring now has a shared, source-backed core registry rather than scattered
+hash literals. Live calls into RCP 3's `TypeManagement` ABI established independent
+runtime and editor identities for Bool, String, Number, Vector2/3/4, Entity,
+Quaternion, Matrix4x4, Array<String>, and PhysicallyBasedMaterial. In particular,
+all probed Swift numeric types canonicalize to the same Script Graph Number pair;
+the editor hash is not Murmur-derived from the runtime name. The registry exposes a
+single connector factory that writes both identities. It is intentionally a proven
+core, not a claim that the picker universe is closed: custom RKS/plugin schemas still
+require extraction after RCP's host initialization callback populates TypeManagement.
 
 - [ ] Grammar edge cases: enums, asset references, and how text objects link to
       binary `*.tm_buffers/<uuid>.<hash>` payloads (the `<uuid>.<hash>` naming).

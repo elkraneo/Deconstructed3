@@ -63,6 +63,10 @@ public enum ScriptGraphAuthoringRecipes {
 
     /// The representative mechanisms manually accepted by RCP 3.
     public static let verified: [String: ScriptGraphAuthoringRecipe] = [
+        "tm_set_component": .init(
+            requestedType: "tm_set_component", topology: .action,
+            literals: [.componentType(pin: "component_type", name: "Transform")]
+        ),
         "tm_get_component": .init(
             requestedType: "tm_get_component", topology: .pure,
             literals: [.componentType(pin: "component_type", name: "Transform")]
