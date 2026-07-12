@@ -91,6 +91,22 @@ public enum ScriptGraphAuthoringRecipes {
         "tm_variable_add": .init(
             requestedType: "tm_variable_add", topology: .action, variable: numberVariable
         ),
+        "tm_variable_subtract": .init(
+            requestedType: "tm_variable_subtract", topology: .action, variable: numberVariable
+        ),
+        "tm_variable_multiply": .init(
+            requestedType: "tm_variable_multiply", topology: .action, variable: numberVariable
+        ),
+        "tm_variable_divide": .init(
+            requestedType: "tm_variable_divide", topology: .action, variable: numberVariable
+        ),
+        "tm_variable_multiply_by_scalar": .init(
+            requestedType: "tm_variable_multiply_by_scalar", topology: .action,
+            variable: numberVariable
+        ),
+        "tm_clear_variable_node": .init(
+            requestedType: "tm_clear_variable_node", topology: .action, variable: numberVariable
+        ),
         "tm_constant": .init(
             requestedType: "tm_constant", authoredType: "tm_make_bool", topology: .pure,
             literals: [.bool(pin: "initial_value", value: true)],

@@ -31,20 +31,17 @@ import RCP3Runtime
 
     @Test func reportsCompilerReachabilityDelta() {
         let diagnostic = ScriptGraphExecutableCorpus.all.filter {
+            $0.synthesis != .noDataOutput &&
             CanonicalScriptGraphCompiler().compile($0.graph).contains("unsupported")
         }
         // Baseline evidence only. The generic Double sink is intentionally
         // type-unsafe and this count must not be presented as semantic parity.
         let knownContextGaps: Set<String> = [
-            "tm_break_collision_group_number", "tm_break_physically_based_material_blending",
-            "tm_break_portal_component_clipping_mode", "tm_break_portal_component_crossing_mode",
-            "tm_break_spot_light_component_shadow_shadow_clipping_plane",
-            "tm_clear_remote_variable_node", "tm_clear_variable_node", "tm_find_scene_entity",
-            "tm_set_component", "tm_spawn_entity", "tm_variable_divide", "tm_variable_multiply",
+            "tm_clear_remote_variable_node", "tm_find_scene_entity",
+            "tm_set_component", "tm_spawn_entity",
             "tm_variable_multiply_by_matrix", "tm_variable_multiply_by_quaternion",
-            "tm_variable_multiply_by_scalar", "tm_variable_subtract",
         ]
-        #expect(diagnostic.count <= 16)
+        #expect(diagnostic.count <= 6)
         #expect(Set(diagnostic.map(\.requestedType)).isSubset(of: knownContextGaps))
     }
 }

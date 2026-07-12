@@ -886,6 +886,19 @@ This documents the real API directly (no inference needed):
   source schema is sufficient to model values and many node interfaces, but cannot
   alone recover fresh dynamic connector `edit_hash` values.
 
+### Generated executable-corpus boundary
+
+- Local Number/Double variable actions share one authoring recipe: Add, Subtract,
+  Multiply, Divide, Multiply by Scalar, and Clear all receive a concrete graph
+  variable with the certified type/edit hashes and `tm_double` data type.
+- Quaternion and Matrix variable mutation remain explicit metadata gaps; assigning
+  them the Number/Double variable recipe would produce a structurally valid but
+  semantically false graph.
+- Pure enum Break nodes whose selected case has no associated values are classified
+  as `noDataOutput`. They remain covered by authoring and serialization tests, but
+  are excluded from compiler-reachability diagnostics because no observation sink
+  can be connected to that valid zero-output interface.
+
 ### Break Material dynamic settings
 
 - `tm_break_material` and `tm_break_physically_based_material_types` use the same

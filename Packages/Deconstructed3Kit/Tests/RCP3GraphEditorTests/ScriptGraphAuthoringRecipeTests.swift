@@ -7,8 +7,9 @@ import RCP3Document
         "tm_get_component", "tm_collision_event_began", "tm_add_child",
         "tm_get_material_parameter", "tm_set_material_parameter_v2",
         "tm_modify_any_material", "tm_break_anchoring_component_target",
-        "tm_if", "tm_array_for_each", "tm_variable_add", "tm_make_bool",
-        "tm_get_variable_node",
+        "tm_if", "tm_array_for_each", "tm_variable_add", "tm_variable_subtract",
+        "tm_variable_multiply", "tm_variable_divide", "tm_variable_multiply_by_scalar",
+        "tm_clear_variable_node", "tm_make_bool", "tm_get_variable_node",
     ]
 
     @Test func allRCPVerifiedRepresentativesHaveRecipes() {
@@ -58,6 +59,7 @@ import RCP3Document
             "tm_custom_event", "tm_is_valid", "tm_is_valid_branch",
             "tm_on_entity_event", "tm_on_scene_event", "tm_send_entity_event",
             "tm_send_scene_event", "tm_trigger_event",
+            "tm_break_material", "tm_break_physically_based_material_types",
         ]
         let palette = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
         for type in authorable {
@@ -99,15 +101,20 @@ import RCP3Document
         }
     }
 
-    @Test func numberVariableIsFullyTypedAndBound() throws {
-        let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
-            requestedType: "tm_variable_add", label: "variable", graphID: "variable"
-        ))
-        let variable = try #require(graph.variables.first)
-        #expect(variable.typeHash == 0x3c2f3d0fe92dd9a0)
-        #expect(variable.editHash == 0x0ef2dd9a55accbe4)
-        #expect(variable.dataType == "tm_double")
-        #expect(graph.nodes.last?.variableRefUUID == variable.uuid)
+    @Test func numberVariableFamilyIsFullyTypedAndBound() throws {
+        for type in [
+            "tm_variable_add", "tm_variable_subtract", "tm_variable_multiply",
+            "tm_variable_divide", "tm_variable_multiply_by_scalar", "tm_clear_variable_node",
+        ] {
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: type, label: "variable", graphID: type
+            ))
+            let variable = try #require(graph.variables.first)
+            #expect(variable.typeHash == 0x3c2f3d0fe92dd9a0)
+            #expect(variable.editHash == 0x0ef2dd9a55accbe4)
+            #expect(variable.dataType == "tm_double")
+            #expect(graph.nodes.last?.variableRefUUID == variable.uuid)
+        }
     }
 
     @Test func fixedSpecsDeriveTopologyButUnknownNodesDoNot() throws {
