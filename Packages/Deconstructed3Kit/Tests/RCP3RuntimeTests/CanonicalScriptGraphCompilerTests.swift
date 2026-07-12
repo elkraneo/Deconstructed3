@@ -1025,6 +1025,38 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func findSceneEntityForwardsResolvedAssetReference() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let resolved = RCP3ScriptGraph.Node(id: "resolved", type: "tm_self")
+        let find = RCP3ScriptGraph.Node(id: "find", type: "tm_find_scene_entity")
+        let sink = RCP3ScriptGraph.Node(
+            id: "sink", type: "tm_set_variable_node", variableName: "found"
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, resolved, find, sink],
+            wires: [
+                .init(id: "exec", from: update.id, to: sink.id),
+                .init(
+                    id: "asset", from: resolved.id, to: find.id,
+                    fromPin: TMHash.murmur64a("entity"),
+                    toPin: TMHash.murmur64a("name")
+                ),
+                .init(
+                    id: "result", from: find.id, to: sink.id,
+                    fromPin: TMHash.murmur64a("entity"),
+                    toPin: TMHash.murmur64a("value")
+                ),
+            ],
+            data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+        let slot = "variable_\(TMHash.murmur64a("found"))"
+        #expect(js.contains("this.\(slot) = this.entity;"))
+        #expect(!js.contains("findEntity"))
+        #expect(!js.contains("unsupported"))
+    }
+
     /// A LOCAL clear node resets its slot to the numeric default `0`.
     @Test func localVariableClearResetsSlotToZero() {
         let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")

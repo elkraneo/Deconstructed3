@@ -894,10 +894,25 @@ This documents the real API directly (no inference needed):
 - Quaternion and Matrix variable mutation remain explicit metadata gaps; assigning
   them the Number/Double variable recipe would produce a structurally valid but
   semantically false graph.
+- A live TypeManagement ABI probe establishes Quaternion (`simd_quatf`) type/edit
+  hashes `c0151474cbd67fcc` / `a4d2f46b41c9d717` and Matrix4x4
+  (`simd_float4x4`) hashes `32e0e9614b5964e2` / `571323c7ad582d5f`.
+  Authoring remains gated on the independent default-data object identifiers; the
+  hashes alone do not produce an initialized graph variable.
 - Pure enum Break nodes whose selected case has no associated values are classified
   as `noDataOutput`. They remain covered by authoring and serialization tests, but
   are excluded from compiler-reachability diagnostics because no observation sink
   can be connected to that valid zero-output interface.
+
+### Find Scene Entity
+
+- `tm_find_scene_entity` takes a `tm_local_entity_asset_reference` connector named
+  `name` and returns optional Entity on `entity`.
+- Its shipped contextual emitter is a direct expression-forwarding template: when
+  the output variable already exists it assigns `entity = name`; otherwise it
+  declares `entity` initialized from `name`. Despite the UI label, it does not call
+  a String/name-search API at runtime—the authoring layer resolves the asset
+  reference before emission.
 
 ### Break Material dynamic settings
 

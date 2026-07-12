@@ -37,11 +37,11 @@ import RCP3Runtime
         // Baseline evidence only. The generic Double sink is intentionally
         // type-unsafe and this count must not be presented as semantic parity.
         let knownContextGaps: Set<String> = [
-            "tm_clear_remote_variable_node", "tm_find_scene_entity",
+            "tm_clear_remote_variable_node",
             "tm_set_component", "tm_spawn_entity",
             "tm_variable_multiply_by_matrix", "tm_variable_multiply_by_quaternion",
         ]
-        #expect(diagnostic.count <= 6)
+        #expect(diagnostic.count <= 5)
         #expect(Set(diagnostic.map(\.requestedType)).isSubset(of: knownContextGaps))
     }
 }

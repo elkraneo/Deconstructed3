@@ -2014,6 +2014,21 @@ public struct CanonicalScriptGraphCompiler {
                 return Expr("\(source.code).findParent(\(name.code))")
             }
 
+            if node.type == "tm_find_scene_entity" {
+                // The shipped contextual emitter treats the
+                // `tm_local_entity_asset_reference` connector as an already
+                // resolved Entity expression. It forwards connector 0 (`name`)
+                // directly to connector 0 (`entity`), declaring the output when
+                // no destination variable exists; it does not search by String.
+                return inputExpression(
+                    into: node,
+                    pinName: "name",
+                    context: context,
+                    seen: &seen,
+                    defaultValue: Expr("undefined")
+                )
+            }
+
             if node.type == "tm_find_entity_with_component" {
                 let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
                 let component = inputExpression(into: node, pinName: "component_type", context: context, seen: &seen)
