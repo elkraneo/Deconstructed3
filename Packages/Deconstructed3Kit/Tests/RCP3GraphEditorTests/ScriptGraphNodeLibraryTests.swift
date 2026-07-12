@@ -702,6 +702,21 @@ struct ScriptGraphNodeLibraryTests {
         #expect(!clone.acceptsMixedInputTypes)
         #expect(!clone.requiresArrayInput)
 
+        for type in ["tm_break_material", "tm_break_physically_based_material_types"] {
+            let materialBreak = try #require(
+                ScriptGraphNodeLibrary.dynamicPinPolicy(for: type)
+            )
+            #expect(materialBreak.minimumInputCount == 1)
+            #expect(materialBreak.maximumInputCount == 1)
+            #expect(materialBreak.fixedInputs.isEmpty)
+            #expect(materialBreak.fixedOutputs.isEmpty)
+            #expect(!materialBreak.acceptsMixedInputTypes)
+            #expect(!materialBreak.requiresArrayInput)
+            // A concrete Inspectable selection is required before the complete
+            // descriptor-derived interface can be authored.
+            #expect(ScriptGraphNodeLibrary.spec(for: type) == nil)
+        }
+
         let toString = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_to_string"))
         #expect(toString.minimumInputCount == 1)
         #expect(toString.maximumInputCount == 1)

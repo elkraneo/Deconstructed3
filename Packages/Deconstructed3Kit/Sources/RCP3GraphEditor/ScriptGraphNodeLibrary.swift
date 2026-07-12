@@ -742,6 +742,24 @@ public enum ScriptGraphNodeLibrary {
             fixedOutputs: [exec],
             acceptsMixedInputTypes: false
         ),
+        "tm_break_material": DynamicPinPolicy(
+            // registerMaterialNodes uses dynamicSettingsTypeHash and
+            // breakMaterialNode_SetupTest writes exactly one selected material
+            // input. `materialConnectors(inspectable:)` derives the outputs from
+            // that selected type's RKS Inspectable descriptor.
+            minimumInputCount: 1,
+            maximumInputCount: 1,
+            fixedOutputs: [],
+            acceptsMixedInputTypes: false
+        ),
+        "tm_break_physically_based_material_types": DynamicPinPolicy(
+            // Same single-input settings topology, restricted by
+            // AllowedTypes_MaterialPBRTypes. Output pins are descriptor-derived.
+            minimumInputCount: 1,
+            maximumInputCount: 1,
+            fixedOutputs: [],
+            acceptsMixedInputTypes: false
+        ),
         "tm_to_string": DynamicPinPolicy(
             minimumInputCount: 1,
             maximumInputCount: 1,
