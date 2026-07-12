@@ -131,6 +131,49 @@ import RCP3Runtime
         #expect(number(slot("copy"), in: context) == 12.5)
     }
 
+    @Test func entityParameterSetAndGetExecuteWithTheSelectedPrimitiveType() throws {
+        let settings = RCP3ScriptGraph.Node.EntityParameterSettings(
+            typeHash: TMHash.murmur64a("tm_double")
+        )
+        let update = RCP3ScriptGraph.Node(id: "update", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(
+            id: "set", type: "tm_set_entity_parameter", entityParameterSettings: settings
+        )
+        let get = RCP3ScriptGraph.Node(
+            id: "get", type: "tm_get_entity_parameter", entityParameterSettings: settings
+        )
+        let capture = RCP3ScriptGraph.Node(
+            id: "capture", type: "tm_set_variable_node", variableName: "parameter"
+        )
+        let graph = RCP3ScriptGraph(nodes: [update, set, get, capture], wires: [
+            .init(id: "start", from: "update", to: "set"),
+            .init(id: "next", from: "set", to: "capture"),
+            .init(
+                id: "result", from: "get", to: "capture",
+                fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+            ),
+        ], data: [
+            .init(id: "set-name", toNode: "set", toPin: TMHash.murmur64a("name"), value: .string("speed")),
+            .init(id: "set-value", toNode: "set", toPin: TMHash.murmur64a("value"), value: .number(4.5)),
+            .init(id: "get-name", toNode: "get", toPin: TMHash.murmur64a("name"), value: .string("speed")),
+        ])
+
+        let context = try runUpdate(graph, setup: """
+            entity.parameters = {};
+            entity.setParameter = function(parameter) {
+                this.lastParameterType = parameter.type;
+                this.parameters[parameter.name] = parameter.value;
+            };
+            entity.getParameter = function(name, type) {
+                this.lastGetType = type;
+                return this.parameters[name];
+            };
+            """)
+        #expect(number(slot("parameter"), in: context) == 4.5)
+        #expect(context.evaluateScript("entity.lastParameterType")?.toString() == "double")
+        #expect(context.evaluateScript("entity.lastGetType")?.toString() == "double")
+    }
+
     @Test func case5SchemaValueAccessReadsSelectedEnumAssociatedValue() throws {
         let planeSelection = RCP3ScriptGraph.Node.EnumSelection(
             typeHash: 0xfbcb65d98823de74,

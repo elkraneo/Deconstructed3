@@ -268,6 +268,7 @@ struct ScriptGraphNodeLibraryTests {
                 "tm_array_remove", "tm_array_set", "tm_custom_event", "tm_is_valid",
                 "tm_is_valid_branch", "tm_on_entity_event", "tm_on_scene_event",
                 "tm_send_entity_event", "tm_send_scene_event", "tm_trigger_event",
+                "tm_get_entity_parameter", "tm_set_entity_parameter",
             ])
         #expect(items.count == expectedTypeSet.count)
         #expect(Set(items.map(\.type)) == expectedTypeSet)

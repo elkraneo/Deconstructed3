@@ -420,6 +420,8 @@ public struct CanonicalScriptGraphCompiler {
                 return emitPlayAudioByName(node, grouped: true, context: context)
             case "tm_set_material_parameter_v2":
                 return emitSetMaterialParameter(node, context: context)
+            case "tm_set_entity_parameter":
+                return emitSetEntityParameter(node, context: context)
             case "tm_modify_any_material":
                 return emitModifyAnyMaterial(node, context: context)
             case "tm_trigger_event", "tm_send_scene_event":
@@ -1346,6 +1348,33 @@ public struct CanonicalScriptGraphCompiler {
             ]
         }
 
+        /// Lowers RCP's settings-selected Entity Parameter writer. The shipped
+        /// emitter passes one object literal to `Entity.setParameter`; its `type`
+        /// member is the lowercase primitive name selected by the node's dedicated
+        /// `tm_entity_parameter_node_settings` record.
+        mutating func emitSetEntityParameter(
+            _ node: RCP3ScriptGraph.Node,
+            context: ExprContext
+        ) -> [String] {
+            guard let type = Self.entityParameterPrimitiveName(for: node) else {
+                return ["// unsupported node: tm_set_entity_parameter (unsupported or missing parameter type)"]
+            }
+            var seen: Set<String> = []
+            let entity = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let name = inputExpression(
+                into: node, pinName: "name", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let value = inputExpression(
+                into: node, pinName: "value", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            return ["\(entity).setParameter({ name: \(name), type: \(Self.renderJSString(type)), value: \(value) });"]
+        }
+
         mutating func emitModifyAnyMaterial(
             _ node: RCP3ScriptGraph.Node,
             context: ExprContext
@@ -1738,6 +1767,20 @@ public struct CanonicalScriptGraphCompiler {
                     + "if (\(parameter) == null) { console.error(\"Get Material Parameter: parameter not found\"); return undefined; } "
                     + "return material.getParameter(\(parameter)); })()"
                 )
+            }
+            if node.type == "tm_get_entity_parameter" {
+                guard let type = Self.entityParameterPrimitiveName(for: node) else {
+                    return Expr("undefined /* unsupported or missing Entity Parameter type */")
+                }
+                let entity = inputExpression(
+                    into: node, pinName: "entity", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
+                ).code
+                let name = inputExpression(
+                    into: node, pinName: "name", context: context, seen: &seen,
+                    defaultValue: Expr("undefined")
+                ).code
+                return Expr("\(entity).getParameter(\(name), \(Self.renderJSString(type)))")
             }
             if node.type == "tm_modify_any_material",
                let property = node.materialSettings?.outputs.first(where: {
@@ -2699,6 +2742,20 @@ public struct CanonicalScriptGraphCompiler {
         }
 
         // MARK: Static maps
+
+        /// Exact primitive-name switch recovered from
+        /// `primitiveTypeName(for:)` in `registerEntityParameterNodes`.
+        static func entityParameterPrimitiveName(for node: RCP3ScriptGraph.Node) -> String? {
+            guard let hash = node.entityParameterSettings?.typeHash else { return nil }
+            switch hash {
+            case TMHash.murmur64a("tm_bool"): return "bool"
+            case TMHash.murmur64a("tm_int32_t"): return "int"
+            case TMHash.murmur64a("tm_string"): return "string"
+            case TMHash.murmur64a("tm_double"): return "double"
+            case TMHash.murmur64a("tm_float"): return "float"
+            default: return nil
+            }
+        }
 
         /// Math constant nodes → plain-JS `Math.*` constants (run anywhere).
         static func mathConstant(for type: String) -> String? {

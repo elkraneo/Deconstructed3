@@ -2869,6 +2869,54 @@ import RCP3Runtime
         #expect(js.contains("console.error(\"Get Material Parameter: material not found\")"))
     }
 
+    @Test func entityParameterNodesUseSettingsSelectedPrimitiveNames() {
+        let expected: [(String, String)] = [
+            ("tm_bool", "bool"), ("tm_int32_t", "int"), ("tm_string", "string"),
+            ("tm_double", "double"), ("tm_float", "float"),
+        ]
+        for (truthType, runtimeType) in expected {
+            let settings = RCP3ScriptGraph.Node.EntityParameterSettings(
+                typeHash: TMHash.murmur64a(truthType)
+            )
+            let update = RCP3ScriptGraph.Node(id: "update", type: "tm_update")
+            let set = RCP3ScriptGraph.Node(
+                id: "set", type: "tm_set_entity_parameter", entityParameterSettings: settings
+            )
+            let get = RCP3ScriptGraph.Node(
+                id: "get", type: "tm_get_entity_parameter", entityParameterSettings: settings
+            )
+            let capture = RCP3ScriptGraph.Node(
+                id: "capture", type: "tm_set_variable_node", variableName: "capture"
+            )
+            let graph = RCP3ScriptGraph(nodes: [update, set, get, capture], wires: [
+                .init(id: "start", from: "update", to: "set"),
+                .init(id: "next", from: "set", to: "capture"),
+                .init(
+                    id: "result", from: "get", to: "capture",
+                    fromPin: TMHash.murmur64a("result"), toPin: TMHash.murmur64a("value")
+                ),
+            ], data: [
+                .init(id: "set-name", toNode: "set", toPin: TMHash.murmur64a("name"), value: .string("speed")),
+                .init(id: "set-value", toNode: "set", toPin: TMHash.murmur64a("value"), value: .number(2)),
+                .init(id: "get-name", toNode: "get", toPin: TMHash.murmur64a("name"), value: .string("speed")),
+            ])
+            let js = CanonicalScriptGraphCompiler().compile(graph)
+            #expect(js.contains("this.entity.setParameter({ name: \"speed\", type: \"\(runtimeType)\", value: 2 });"))
+            #expect(js.contains("this.entity.getParameter(\"speed\", \"\(runtimeType)\")"))
+            #expect(!js.contains("unsupported node: tm_set_entity_parameter"))
+        }
+
+        let unknown = RCP3ScriptGraph.Node(
+            id: "set", type: "tm_set_entity_parameter",
+            entityParameterSettings: .init(typeHash: 0x1111)
+        )
+        let update = RCP3ScriptGraph.Node(id: "update", type: "tm_update")
+        let js = CanonicalScriptGraphCompiler().compile(RCP3ScriptGraph(
+            nodes: [update, unknown], wires: [.init(id: "start", from: "update", to: "set")], data: []
+        ))
+        #expect(js.contains("unsupported node: tm_set_entity_parameter (unsupported or missing parameter type)"))
+    }
+
     @Test func modifyAnyMaterialAssignsSerializedInspectableInputsAndPersistsMaterial() {
         let settings = RCP3ScriptGraph.Node.MaterialSettings(
             typeHash: 0x1234,
