@@ -962,6 +962,40 @@ import RCP3Document
         #expect(reparsed.nodes.first?.variableRefUUID == "typed-variable")
     }
 
+    @Test func quaternionAndMatrixVariablesWriteCanonicalTruthDefaultObjects() throws {
+        let cases: [(UInt64, UInt64, String)] = [
+            (0xc0151474cbd67fcc, 0xa4d2f46b41c9d717, "tm_rotation"),
+            (0x32e0e9614b5964e2, 0x571323c7ad582d5f, "tm_mat44_t"),
+        ]
+        for (index, item) in cases.enumerated() {
+            let asset = try Self.variableNodesAsset()
+            let variable = RCP3ScriptGraph.Variable(
+                uuid: "typed-spatial-\(index)", name: "Spatial \(index)",
+                typeHash: item.0, editHash: item.1, dataType: item.2
+            )
+            let node = RCP3ScriptGraph.Node(
+                id: "get1", type: "tm_get_variable_node",
+                variableName: variable.name, variableRefUUID: variable.uuid
+            )
+            let model = ScriptGraphEditorModel(graph: .init(
+                nodes: [node], wires: [], data: [], variables: [variable]
+            ))
+
+            let patched = ScriptGraphWriteBack.patched(asset: asset, with: model)
+            let root = try #require(try TM.parse(patched.tmText()).objectValue)
+            let stored = try #require(
+                root["graph"]?.objectValue?["variables"]?.arrayValue?.first?.objectValue
+            )
+            #expect(stored["type_hash"]?.stringValue == TMHash.hex(item.0))
+            #expect(stored["edit_hash"]?.stringValue == TMHash.hex(item.1))
+            #expect(stored["data"]?.objectValue?.type == item.2)
+            #expect(stored["data"]?.objectValue?.uuid != nil)
+
+            let reparsed = RCP3ScriptGraph(tmGraph: try #require(root["graph"]?.objectValue))
+            #expect(reparsed.variables == [variable])
+        }
+    }
+
     /// A hand-built deterministic graph with two variable nodes, exercising authoring
     /// from scratch: naming a variable on a node declares it in the table and emits a
     /// `tm_graph_variable_ref` on the `name` connector; both Get + Set sharing a name

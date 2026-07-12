@@ -30,18 +30,27 @@ import RCP3Runtime
     }
 
     @Test func reportsCompilerReachabilityDelta() {
+        let contextual = ScriptGraphExecutableCorpus.all.filter {
+            $0.requiredContext != .none
+        }
+        #expect(contextual.contains {
+            $0.requestedType == "tm_clear_remote_variable_node" &&
+            $0.requiredContext == .remoteVariableReference
+        })
+        #expect(contextual.contains {
+            $0.requestedType == "tm_set_component" &&
+            $0.requiredContext == .componentMutation
+        })
+
         let diagnostic = ScriptGraphExecutableCorpus.all.filter {
+            $0.requiredContext == .none &&
             $0.synthesis != .noDataOutput &&
             CanonicalScriptGraphCompiler().compile($0.graph).contains("unsupported")
         }
-        // Baseline evidence only. The generic Double sink is intentionally
-        // type-unsafe and this count must not be presented as semantic parity.
-        let knownContextGaps: Set<String> = [
-            "tm_clear_remote_variable_node",
-            "tm_set_component", "tm_spawn_entity",
-            "tm_variable_multiply_by_matrix", "tm_variable_multiply_by_quaternion",
-        ]
-        #expect(diagnostic.count <= 5)
-        #expect(Set(diagnostic.map(\.requestedType)).isSubset(of: knownContextGaps))
+        // This proves compiler reachability for mechanically observable fixtures,
+        // not semantic RCP/runtime certification. Cases requiring an identity or
+        // concrete mutation are accounted by `requiredContext` above; valid pure
+        // nodes with no selected-case output are accounted by `.noDataOutput`.
+        #expect(diagnostic.isEmpty)
     }
 }

@@ -19,6 +19,8 @@ public struct ScriptGraphAuthoringRecipe: Sendable, Hashable {
     public enum Variable: Sendable, Hashable {
         case none
         case numberDouble(name: String)
+        case quaternion(name: String)
+        case matrix4x4(name: String)
     }
     public enum Literal: Sendable, Hashable {
         case bool(pin: String, value: Bool)
@@ -104,6 +106,14 @@ public enum ScriptGraphAuthoringRecipes {
             requestedType: "tm_variable_multiply_by_scalar", topology: .action,
             variable: numberVariable
         ),
+        "tm_variable_multiply_by_quaternion": .init(
+            requestedType: "tm_variable_multiply_by_quaternion", topology: .action,
+            variable: .quaternion(name: "Certification Value")
+        ),
+        "tm_variable_multiply_by_matrix": .init(
+            requestedType: "tm_variable_multiply_by_matrix", topology: .action,
+            variable: .matrix4x4(name: "Certification Value")
+        ),
         "tm_clear_variable_node": .init(
             requestedType: "tm_clear_variable_node", topology: .action, variable: numberVariable
         ),
@@ -188,6 +198,24 @@ public enum ScriptGraphAuthoringRecipes {
                 uuid: makeUUID(), name: name,
                 typeHash: 0x3c2f3d0fe92dd9a0, editHash: 0x0ef2dd9a55accbe4,
                 dataType: "tm_double"
+            )
+            variables = [variable]
+            node.variableName = variable.name
+            node.variableRefUUID = variable.uuid
+        case let .quaternion(name):
+            let variable = RCP3ScriptGraph.Variable(
+                uuid: makeUUID(), name: name,
+                typeHash: 0xc0151474cbd67fcc, editHash: 0xa4d2f46b41c9d717,
+                dataType: "tm_rotation"
+            )
+            variables = [variable]
+            node.variableName = variable.name
+            node.variableRefUUID = variable.uuid
+        case let .matrix4x4(name):
+            let variable = RCP3ScriptGraph.Variable(
+                uuid: makeUUID(), name: name,
+                typeHash: 0x32e0e9614b5964e2, editHash: 0x571323c7ad582d5f,
+                dataType: "tm_mat44_t"
             )
             variables = [variable]
             node.variableName = variable.name

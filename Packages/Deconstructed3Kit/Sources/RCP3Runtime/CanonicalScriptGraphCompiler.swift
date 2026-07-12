@@ -223,7 +223,8 @@ public struct CanonicalScriptGraphCompiler {
         /// stream) shows the handler fired without flooding — critical for `update`,
         /// which runs every frame, so the log is guarded by a per-handler instance flag.
         func emitFunctionHandler(name: String, params: String, body: [String], logEvent: String) -> String {
-            var lines = ["this.\(name) = function(\(params)) {"]
+            let async = body.contains { $0.contains("await ") } ? "async " : ""
+            var lines = ["this.\(name) = \(async)function(\(params)) {"]
             for statement in Self.handlerEntryLog(logEvent) { lines.append("    " + statement) }
             for statement in body { lines.append("    " + statement) }
             lines.append("};")
@@ -368,6 +369,8 @@ public struct CanonicalScriptGraphCompiler {
                 return emitRemoveChild(node, context: context)
             case "tm_remove_from_parent":
                 return emitRemoveFromParent(node, context: context)
+            case "tm_spawn_entity":
+                return emitSpawnEntity(node, context: context)
             case "tm_remove_component":
                 return emitRemoveComponent(node, context: context)
             case "tm_array_set":
@@ -744,6 +747,30 @@ public struct CanonicalScriptGraphCompiler {
                 "\(entity).isEnabled = false;",
                 "\(entity).removeFromParent(\(preserving));",
             ]
+        }
+
+        /// Loads the selected entity asset from the app bundle and optionally
+        /// attaches it to the supplied parent. The shipped emitter performs the
+        /// load asynchronously and always disables world-transform preservation.
+        mutating func emitSpawnEntity(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            usesRealityKit = true
+            usesFoundation = true
+            var seen: Set<String> = []
+            let asset = inputExpression(
+                into: node, pinName: "entity", context: context, seen: &seen,
+                defaultValue: Expr("undefined")
+            ).code
+            let spawned = Self.spawnedEntityName(for: node)
+            var statements = [
+                "let \(spawned) = await RealityKit.Entity.load(\(asset), Foundation.Bundle.main);"
+            ]
+            if hasDataInput(into: node, pinName: "parent") {
+                let parent = inputExpression(
+                    into: node, pinName: "parent", context: context, seen: &seen
+                ).code
+                statements.append("if (\(parent) !== undefined) \(parent).addChild(\(spawned), false);")
+            }
+            return statements
         }
 
         mutating func emitEntityBooleanMethod(
@@ -2029,6 +2056,10 @@ public struct CanonicalScriptGraphCompiler {
                 )
             }
 
+            if node.type == "tm_spawn_entity" {
+                return Expr(Self.spawnedEntityName(for: node))
+            }
+
             if node.type == "tm_find_entity_with_component" {
                 let source = inputExpression(into: node, pinName: "entity", context: context, seen: &seen, defaultValue: Expr("this.entity"))
                 let component = inputExpression(into: node, pinName: "component_type", context: context, seen: &seen)
@@ -3096,6 +3127,10 @@ public struct CanonicalScriptGraphCompiler {
 
         static func modifiedMaterialName(for node: RCP3ScriptGraph.Node) -> String {
             "__d3_modified_material_\(sanitize(node.id))"
+        }
+
+        static func spawnedEntityName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_spawned_entity_\(sanitize(node.id))"
         }
 
         static let moveCharacterOutputPins = [

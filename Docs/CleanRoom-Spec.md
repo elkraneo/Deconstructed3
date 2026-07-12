@@ -615,12 +615,24 @@ declared type (an unresolved reference falls back to an "any" type id).
   over a per-entity storage bag, keyed by the variable, and consume the `Variable`
   Entity input pin. Clear gates on whether the key is present before clearing.
 
+The remote `Variable` value is not interchangeable with a local variable-table entry.
+The recovered type index defines it as `tm_graph_remote_variable_ref` with three
+fields: `entity` (reference), `ref` (reference), and `name` (string). Consequently, a
+minimal palette node with only an exec wire is a **configuration-required authoring
+fixture**, not an executable remote-variable program. The executable corpus records
+that distinction explicitly and does not count the missing remote identity as a
+compiler reachability failure. Full remote-variable parity nevertheless remains open:
+the parser currently preserves this object as an unmodeled literal, and its exact
+entity/reference emission contract still needs a configured RCP capture or emitter
+harvest before we can lower it without inventing behavior.
+
 **On-disk serialization (confirmed from a captured graph).** A graph that uses
 variables stores, inside its `graph` object:
 
-- A **variable table** under `variables:` — one entry per declared variable, each
-  `{ __uuid, name }` (a type/default presumably appears once set; a freshly-declared
-  variable carries just `__uuid` + `name`).
+- A **variable table** under `variables:` — one entry per declared variable. An
+  untyped declaration may carry only `{ __uuid, name }`; an initialized declaration
+  additionally persists `type_hash`, `edit_hash`, and a concrete default-data object
+  such as `tm_double`.
 - A **per-node reference** in the graph's `data:` array — one entry per variable node,
   shaped exactly like a pin data-literal: `{ __uuid, to_node: <variable-node uuid>,
   to_connector_hash: <murmur64a("name")>, data: { __type: "tm_graph_variable_ref",
@@ -633,12 +645,11 @@ data entry, attach its `name` to the node identified by `to_node`. Writing back 
 `variables:` table plus one `tm_graph_variable_ref` data entry per variable node. The
 compile slot remains `variable_<MurmurHash64A(lowercase(name))>`.
 
-**Deferred — dynamic pins, pending a follow-up harvest.** A residual family still
-presents a fully **dynamic** pin set the editor grows from configuration, beyond the
-fixed seed transcribed above: `tm_to_string` and `tm_string_merge`. These are omitted
-from the library until their dynamic interfaces are pinned down. The variadic logic /
-arithmetic nodes above are seeded with their first inputs; their "+" grow affordance is
-likewise a deferred follow-up.
+**Typed dynamic pins.** To String, Join, arrays, validity branches, custom events,
+and the two material Break families now share parsed, authorable, identity-preserving
+dynamic settings adapters. Insertion uses concrete certified seeds rather than an
+`Any` placeholder. Arbitrary user-selected types still require the type-picker/
+inference registry; this does not prevent insertion with the certified defaults.
 
 ## Script-graph runtime — execution model (observed)
 
@@ -725,6 +736,13 @@ This documents the real API directly (no inference needed):
     });
   };
   ```
+- **Set Component corpus qualification.** The canonical compiler already lowers
+  wired Transform `translation`/`rotation`/`scale` mutations and the harvested
+  component-type-only constructors known to exist in the public runtime. A generated
+  `tm_set_component` carrying only an exec wire has selected neither contract, so its
+  unsupported diagnostic describes an incomplete audit fixture—not a missing Set
+  Component dispatcher. Arbitrary component/property parity remains separately tied
+  to the recovered component schema and a concrete input value.
 - **Path-2 options for Deconstructed 3:** (a) **depend on the public package** and run
   genuine RCP scripts on Apple's runtime (most honest); or (b) keep our own public-
   JavaScriptCore host for portability/injection. Either way the target API is public
@@ -751,9 +769,10 @@ This documents the real API directly (no inference needed):
   `splice(index, 1)`; For Each emits an indexed loop with Step and End scopes and
   exposes the current `index` and `element`; Find compares against `searchValue`,
   yielding Found/Not Found with Index initialized to `-1` and the matched Element.
-- Parsing, pin resolution, identity-preserving write-back, and canonical compilation
-  are implemented. Fresh insertion remains gated on an exact typed-connector type
-  picker/inference path; a placeholder hash would not be RCP-compatible authoring.
+- Parsing, pin resolution, identity-preserving write-back, canonical compilation,
+  and fresh insertion with certified concrete defaults are implemented. Selecting
+  arbitrary alternative connector types still requires the exact type-picker/
+  inference registry; a placeholder hash would not be RCP-compatible authoring.
 
 ### Fixed Entity queries
 
@@ -891,14 +910,17 @@ This documents the real API directly (no inference needed):
 - Local Number/Double variable actions share one authoring recipe: Add, Subtract,
   Multiply, Divide, Multiply by Scalar, and Clear all receive a concrete graph
   variable with the certified type/edit hashes and `tm_double` data type.
-- Quaternion and Matrix variable mutation remain explicit metadata gaps; assigning
-  them the Number/Double variable recipe would produce a structurally valid but
+- Quaternion and Matrix variable mutation use distinct typed-variable recipes;
+  assigning them the Number/Double recipe would produce a structurally valid but
   semantically false graph.
 - A live TypeManagement ABI probe establishes Quaternion (`simd_quatf`) type/edit
   hashes `c0151474cbd67fcc` / `a4d2f46b41c9d717` and Matrix4x4
   (`simd_float4x4`) hashes `32e0e9614b5964e2` / `571323c7ad582d5f`.
-  Authoring remains gated on the independent default-data object identifiers; the
-  hashes alone do not produce an initialized graph variable.
+  RCP's fallback edit-type mapper identifies their default-data objects as
+  `tm_rotation` and `tm_mat44_t`. Their Murmur hashes exactly equal the probed edit
+  hashes, and the shipped Truth schema defines identity defaults (`w: 1` and the
+  four diagonal matrix elements set to `1`). Empty instances of those types are
+  therefore initialized identity values, matching RCP's sparse serialization.
 - Pure enum Break nodes whose selected case has no associated values are classified
   as `noDataOutput`. They remain covered by authoring and serialization tests, but
   are excluded from compiler-reachability diagnostics because no observation sink
@@ -913,6 +935,21 @@ This documents the real API directly (no inference needed):
   declares `entity` initialized from `name`. Despite the UI label, it does not call
   a String/name-search API at runtime—the authoring layer resolves the asset
   reference before emission.
+
+### Spawn Entity
+
+- `tm_spawn_entity` takes event flow, a `tm_entity_asset_reference` connector named
+  `entity`, and an Entity connector named `parent`; it returns event flow and the
+  spawned Entity on `entity`.
+- The runtime contextual emitter requires the Foundation and RealityKit modules,
+  asynchronously loads the selected asset from `Bundle.main`, and assigns or
+  declares the output connector from the loaded Entity.
+- When `parent` is connected, the emitter checks it against `undefined` and calls
+  `parent.addChild(spawnedEntity, false)`. The fixed `false` means the operation
+  does not preserve the spawned entity's world transform.
+- RCP's editor-preview path uses its editor module's `spawnEntity` facility instead
+  of the runtime bundle loader. This is a host distinction, not a second node
+  authoring schema.
 
 ### Break Material dynamic settings
 
@@ -1032,7 +1069,8 @@ Custom/scene/entity events are now represented as one typed dynamic policy famil
 Listeners have fixed `eventName` input and exec output followed by graph-authored
 payload outputs; scene sends add exec and graph-authored payload inputs; entity sends
 also add `receiver`. Existing settings parse/write back losslessly and compile through
-`on`/`send`; fresh insertion remains gated on the typed hash picker. The private
+`on`/`send`; fresh insertion uses the certified String payload seed, while arbitrary
+payload-type selection remains gated on the typed hash picker. The private
 listener payload accessor is isolated as `event.eventData[name]` pending public-runtime
 certification.
 

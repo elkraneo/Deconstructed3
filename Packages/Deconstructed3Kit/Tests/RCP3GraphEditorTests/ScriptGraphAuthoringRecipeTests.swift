@@ -117,6 +117,23 @@ import RCP3Document
         }
     }
 
+    @Test func quaternionAndMatrixVariablesUseTruthIdentityDefaults() throws {
+        let cases: [(String, UInt64, UInt64, String)] = [
+            ("tm_variable_multiply_by_quaternion", 0xc0151474cbd67fcc, 0xa4d2f46b41c9d717, "tm_rotation"),
+            ("tm_variable_multiply_by_matrix", 0x32e0e9614b5964e2, 0x571323c7ad582d5f, "tm_mat44_t"),
+        ]
+        for (type, typeHash, editHash, dataType) in cases {
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: type, label: "variable", graphID: type
+            ))
+            let variable = try #require(graph.variables.first)
+            #expect(variable.typeHash == typeHash)
+            #expect(variable.editHash == editHash)
+            #expect(variable.dataType == dataType)
+            #expect(graph.nodes.last?.variableRefUUID == variable.uuid)
+        }
+    }
+
     @Test func fixedSpecsDeriveTopologyButUnknownNodesDoNot() throws {
         let action = try #require(ScriptGraphAuthoringRecipes.recipe(for: "tm_remove_from_parent"))
         #expect(action.topology == .action)

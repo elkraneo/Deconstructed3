@@ -1057,6 +1057,50 @@ import RCP3Runtime
         #expect(!js.contains("unsupported"))
     }
 
+    @Test func spawnEntityLoadsAssetAndOptionallyParentsResult() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let asset = RCP3ScriptGraph.Node(id: "asset", type: "tm_self")
+        let parent = RCP3ScriptGraph.Node(id: "parent", type: "tm_self")
+        let spawn = RCP3ScriptGraph.Node(id: "spawn", type: "tm_spawn_entity")
+        let sink = RCP3ScriptGraph.Node(
+            id: "sink", type: "tm_set_variable_node", variableName: "spawned"
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, asset, parent, spawn, sink],
+            wires: [
+                .init(id: "e1", from: update.id, to: spawn.id),
+                .init(id: "e2", from: spawn.id, to: sink.id),
+                .init(
+                    id: "asset", from: asset.id, to: spawn.id,
+                    fromPin: TMHash.murmur64a("entity"),
+                    toPin: TMHash.murmur64a("entity")
+                ),
+                .init(
+                    id: "parent", from: parent.id, to: spawn.id,
+                    fromPin: TMHash.murmur64a("entity"),
+                    toPin: TMHash.murmur64a("parent")
+                ),
+                .init(
+                    id: "result", from: spawn.id, to: sink.id,
+                    fromPin: TMHash.murmur64a("entity"),
+                    toPin: TMHash.murmur64a("value")
+                ),
+            ],
+            data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+        let spawned = "__d3_spawned_entity_spawn"
+        let slot = "variable_\(TMHash.murmur64a("spawned"))"
+        #expect(js.contains("const RealityKit = require(\"RealityKit\");"))
+        #expect(js.contains("const Foundation = require(\"Foundation\");"))
+        #expect(js.contains("this.update = async function(deltaTime)"))
+        #expect(js.contains("let \(spawned) = await RealityKit.Entity.load(this.entity, Foundation.Bundle.main);"))
+        #expect(js.contains("if (this.entity !== undefined) this.entity.addChild(\(spawned), false);"))
+        #expect(js.contains("this.\(slot) = \(spawned);"))
+        #expect(!js.contains("unsupported node: tm_spawn_entity"))
+    }
+
     /// A LOCAL clear node resets its slot to the numeric default `0`.
     @Test func localVariableClearResetsSlotToZero() {
         let added = RCP3ScriptGraph.Node(id: "a", type: "tm_did_add")
