@@ -1296,11 +1296,22 @@ public struct CanonicalScriptGraphCompiler {
             let target = context == .gesture ? "event.entity" : "this.entity"
             var statements: [String] = []
 
-            for (pin, property) in [
-                (CanonicalScriptGraphCompiler.translationPin, "position"),
-                (CanonicalScriptGraphCompiler.rotationPin, "orientation"),
-                (CanonicalScriptGraphCompiler.scalePin, "scale"),
-            ] {
+            let selectedCapability = componentRuntimeCapability(for: node)
+            let propertyMutations: [ScriptGraphComponentRuntimeCapabilities.PropertyMutation]
+            if case let .entityProperties(properties) = selectedCapability?.strategy {
+                propertyMutations = properties
+            } else if selectedCapability == nil && hasTransformPropertyInput(node) {
+                // Legacy/captured graphs may omit the selector while still wiring one
+                // of Transform's distinctive property pins. Preserve that established
+                // lowering without pretending an arbitrary bare Set has a component.
+                propertyMutations = Self.transformPropertyMutations
+            } else {
+                propertyMutations = []
+            }
+
+            for mutation in propertyMutations {
+                let pin = TMHash.murmur64a(mutation.connectorName)
+                let property = mutation.entityPropertyName
                 guard let wire = dataWire(into: node.id, pin: pin) else { continue }
                 var seen: Set<String> = []
                 let expr = emitExpression(from: wire, context: context, seen: &seen)
@@ -1318,23 +1329,38 @@ public struct CanonicalScriptGraphCompiler {
             }
 
             if statements.isEmpty {
-                if let componentName = defaultConstructibleComponentName(for: node) {
+                if let selectedCapability,
+                   selectedCapability.strategy == .defaultConstructor {
                     usesRealityKit = true
-                    statements.append("\(target).setComponent(new RealityKit.\(componentName)());")
+                    statements.append("\(target).setComponent(new RealityKit.\(selectedCapability.componentName)());")
                     return statements
                 }
-                statements.append("// unsupported node: tm_set_component (no transform input wired)")
+                if let selectedHash = selectedComponentTypeHash(for: node) {
+                    statements.append("// unsupported node: tm_set_component (selected component \(TMHash.hex(selectedHash)) has no certified public JS mutation contract)")
+                } else {
+                    statements.append("// unsupported node: tm_set_component (component type not selected)")
+                }
             }
             return statements
         }
 
-        func defaultConstructibleComponentName(for node: RCP3ScriptGraph.Node) -> String? {
-            guard let hash = graph.data.first(where: {
+        func selectedComponentTypeHash(for node: RCP3ScriptGraph.Node) -> UInt64? {
+            graph.data.first(where: {
                 $0.toNode == node.id && $0.toPin == CanonicalScriptGraphCompiler.componentTypePin
-            })?.valueHash else {
-                return nil
+            })?.valueHash
+        }
+
+        func componentRuntimeCapability(for node: RCP3ScriptGraph.Node) -> ScriptGraphComponentRuntimeCapabilities.Capability? {
+            selectedComponentTypeHash(for: node).flatMap(
+                ScriptGraphComponentRuntimeCapabilities.capability(forTypeHash:)
+            )
+        }
+
+        func hasTransformPropertyInput(_ node: RCP3ScriptGraph.Node) -> Bool {
+            Self.transformPropertyMutations.contains { mutation in
+                let pin = TMHash.murmur64a(mutation.connectorName)
+                return dataWire(into: node.id, pin: pin) != nil
             }
-            return Self.defaultConstructibleComponentNamesByHash[hash]
         }
 
         /// RCP's material writers do not mutate a detached material and stop there.
@@ -1476,19 +1502,29 @@ public struct CanonicalScriptGraphCompiler {
             } else {
                 valueExpr = "undefined /* no value wired */"
             }
+            // A remote reference is a distinct `tm_graph_remote_variable_ref`, not a
+            // local variable name. Apple's emitter resolves its serialized
+            // `{ entity, ref, name }` into a runtime `{ entity, variable }`, then uses
+            // the three-argument storage-bag ABI
+            // `setRemoteValue(target, "data_storage", bag)`. Until that identity
+            // conversion is captured, emitting the local-name shortcut here would be
+            // fabricated behavior.
+            if node.type == "tm_set_remote_variable_node" {
+                return ["// unsupported node: tm_set_remote_variable_node (remote-variable identity unresolved)"]
+            }
             if let name = node.variableName {
                 let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
                 return ["this.\(slot) = \(valueExpr);"]
             }
-            // No resolvable name → honest remote-value placeholder rather than fabricated.
-            return [
-                "this.setRemoteValue(/* variable name unresolved */ \"\", \(valueExpr));"
-            ]
+            return ["// unsupported node: \(node.type) (variable-name reference not resolvable here)"]
         }
 
         /// A variable-clear action. A LOCAL variable resets its slot to the numeric
         /// default: `this.variable_<slot> = 0;`. Without a name it stays an honest no-op.
         func emitClearVariable(_ node: RCP3ScriptGraph.Node) -> [String] {
+            if node.type == "tm_clear_remote_variable_node" {
+                return ["// unsupported node: tm_clear_remote_variable_node (remote-variable identity unresolved)"]
+            }
             if let name = node.variableName {
                 let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
                 return ["this.\(slot) = 0;"]
@@ -2632,11 +2668,14 @@ public struct CanonicalScriptGraphCompiler {
             // scalar (our accumulators are scalar), so the result is left scalar-typed.
             // Without a resolvable name it falls back to the honest remote-read placeholder.
             if node.type == "tm_get_variable_node" || node.type == "tm_get_remote_variable_node" {
+                if node.type == "tm_get_remote_variable_node" {
+                    return Expr("undefined /* unsupported: tm_get_remote_variable_node (remote-variable identity unresolved) */")
+                }
                 if let name = node.variableName {
                     let slot = CanonicalScriptGraphCompiler.variableSlot(for: name)
                     return Expr("(this.\(slot) ?? 0)")
                 }
-                return Expr("this.getRemoteValue(/* variable name unresolved */ \"\")")
+                return Expr("undefined /* tm_get_variable_node name unresolved */")
             }
 
             if node.type.hasPrefix("tm_variable_"), let name = node.variableName {
@@ -2947,15 +2986,11 @@ public struct CanonicalScriptGraphCompiler {
             }
         }
 
-        /// Component types observed as `component_type`-only Set Component nodes and
-        /// known to be constructible through the public `RealityKit` JS module.
-        static let defaultConstructibleComponentNamesByHash: [UInt64: String] = {
-            let names = [
-                "AccessibilityComponent",
-                "BillboardComponent",
-                "InputTargetComponent",
-            ]
-            return Dictionary(uniqueKeysWithValues: names.map { (TMHash.murmur64a($0), $0) })
+        static let transformPropertyMutations: [ScriptGraphComponentRuntimeCapabilities.PropertyMutation] = {
+            guard let capability = ScriptGraphComponentRuntimeCapabilities.capability(
+                forTypeHash: TMHash.murmur64a("Transform")
+            ), case let .entityProperties(properties) = capability.strategy else { return [] }
+            return properties
         }()
 
         /// The operand expressions of a variadic logic node (`tm_and` / `tm_or`). The

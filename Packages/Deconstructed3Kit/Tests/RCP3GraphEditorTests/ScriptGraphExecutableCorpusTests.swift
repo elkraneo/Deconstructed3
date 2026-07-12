@@ -38,6 +38,10 @@ import RCP3Runtime
             $0.requiredContext == .remoteVariableReference
         })
         #expect(contextual.contains {
+            $0.requestedType == "tm_set_variable_node" &&
+            $0.requiredContext == .localVariableReference
+        })
+        #expect(contextual.contains {
             $0.requestedType == "tm_set_component" &&
             $0.requiredContext == .componentMutation
         })

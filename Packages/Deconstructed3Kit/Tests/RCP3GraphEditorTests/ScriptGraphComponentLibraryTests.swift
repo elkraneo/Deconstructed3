@@ -55,4 +55,15 @@ import TMFormat
             #expect(component.properties.allSatisfy { !$0.isExec })
         }
     }
+
+    @Test func runtimeCapabilityAccountingIsAnExplicitSubsetOfTheEditorSchema() {
+        let components = ScriptGraphNodeLibrary.registeredComponents
+        let supported = components.filter {
+            ScriptGraphNodeLibrary.componentRuntimeCapability(forHash: $0.typeHash) != nil
+        }
+        #expect(supported.map(\.name).sorted() == [
+            "AccessibilityComponent", "BillboardComponent", "InputTargetComponent", "Transform",
+        ])
+        #expect(components.count - supported.count == 42)
+    }
 }

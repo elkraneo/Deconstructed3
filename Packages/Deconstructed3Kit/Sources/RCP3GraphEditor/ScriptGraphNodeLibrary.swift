@@ -1676,6 +1676,13 @@ public enum ScriptGraphNodeLibrary {
         componentSpecsByHash[hash]?.name
     }
 
+    /// Runtime mutation behavior is deliberately narrower than the authoring picker.
+    /// A component may have an Inspectable-derived editor schema while still lacking
+    /// an independently evidenced public JavaScript mutation contract.
+    public static func componentRuntimeCapability(forHash hash: UInt64) -> ScriptGraphComponentRuntimeCapabilities.Capability? {
+        ScriptGraphComponentRuntimeCapabilities.capability(forTypeHash: hash)
+    }
+
     /// The property pins a `tm_set_component` node exposes once its component type is
     /// resolved — i.e. the editable fields of that component. Returned as data
     /// *inputs* (they sit on the leading edge of the set node). `nil` for component

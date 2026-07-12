@@ -43,6 +43,8 @@ public enum ScriptGraphTypeRegistry {
     public static let vector2 = Identity(id: "Vector2", typeHash: 0xb535d7f05b25297b, editHash: 0x5ea1bb7b6537de46)
     public static let vector3 = Identity(id: "Vector3", typeHash: 0xacb19c32c360b8b0, editHash: 0x8d1487af36b1e3e1)
     public static let vector4 = Identity(id: "Vector4", typeHash: 0x1c85011070fccc98, editHash: 0xdf81286b1233bab6)
+    public static let matrix2x2 = Identity(id: "Matrix2x2", typeHash: 0xff093e8136386a0a, editHash: 0xf28735b2c996ac59)
+    public static let matrix3x3 = Identity(id: "Matrix3x3", typeHash: 0xa2310ffa46bc59bb, editHash: 0xc67c260c9c733693)
     public static let entity = Identity(id: "Entity", typeHash: 0x11fef190dc0c34a1, editHash: 0xf04a971fe569b002)
     public static let quaternion = Identity(id: "Quaternion", typeHash: 0xc0151474cbd67fcc, editHash: 0xa4d2f46b41c9d717)
     public static let matrix4x4 = Identity(id: "Matrix4x4", typeHash: 0x32e0e9614b5964e2, editHash: 0x571323c7ad582d5f)
@@ -50,7 +52,7 @@ public enum ScriptGraphTypeRegistry {
     public static let physicallyBasedMaterial = Identity(id: "PhysicallyBasedMaterial", typeHash: 0xdb686b8dd1bb85e3, editHash: 0)
 
     public static let pickerCore: [Identity] = [
-        bool, string, number, vector2, vector3, vector4, entity,
+        bool, string, number, vector2, vector3, vector4, matrix2x2, matrix3x3, entity,
         quaternion, matrix4x4, stringArray, physicallyBasedMaterial,
     ]
 

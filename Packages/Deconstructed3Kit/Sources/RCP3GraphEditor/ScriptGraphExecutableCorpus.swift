@@ -14,6 +14,7 @@ public enum ScriptGraphExecutableCorpus {
     /// counted as a compiler-lowering failure.
     public enum RequiredContext: String, Sendable {
         case none
+        case localVariableReference
         case remoteVariableReference
         case componentMutation
     }
@@ -40,6 +41,8 @@ public enum ScriptGraphExecutableCorpus {
 
     private static func makeCase(_ item: ScriptGraphGeneratedCorpus.Case) -> Case {
         let requiredContext: RequiredContext = switch item.requestedType {
+        case "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node":
+            .localVariableReference
         case "tm_get_remote_variable_node", "tm_set_remote_variable_node",
              "tm_clear_remote_variable_node":
             .remoteVariableReference

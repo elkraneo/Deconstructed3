@@ -758,6 +758,12 @@ This documents the real API directly (no inference needed):
   runtime parity for a non-Transform component still requires the selected component's
   public JS construction or copy-mutate-writeback contract, and must not be inferred
   from an editable node label.
+- **Runtime capability accounting.** The non-cyclic shared catalog in `RCP3Document`
+  records only independently evidenced public-JS Set contracts: Transform's three
+  Entity property mappings plus the zero-argument Accessibility, Billboard, and Input
+  Target constructors. The editor currently knows 46 component schemas; the other 42
+  remain explicitly authorable-but-runtime-unresolved instead of receiving fabricated
+  constructors or label-derived lowering.
 - **Path-2 options for Deconstructed 3:** (a) **depend on the public package** and run
   genuine RCP scripts on Apple's runtime (most honest); or (b) keep our own public-
   JavaScriptCore host for portability/injection. Either way the target API is public
@@ -1098,6 +1104,17 @@ the editor hash is not Murmur-derived from the runtime name. The registry expose
 single connector factory that writes both identities. It is intentionally a proven
 core, not a claim that the picker universe is closed: custom RKS/plugin schemas still
 require extraction after RCP's host initialization callback populates TypeManagement.
+
+The headless extraction path does not require driving RCP's UI. A probe constructs
+the same public `RKS.Configuration` installed by gameplay_scripting, supplies its
+exported `RCP.modules()` from `onInitialize`, calls `RKS.initialize`, and walks the
+public Registry schema tables. Each schema's concrete `Inspectable.Type` metadata
+can then be passed to TypeManagement's exported type/edit-hash functions. This
+enumerates the public RKS module surface reproducibly (and established Matrix2x2 and
+Matrix3x3 identities), while `typeHashOfAllTypes` remains an empty private picker
+catalogue outside the complete RCP plugin host. Custom `@Scriptable` support can use
+the same schema-walk path by adding its macro-generated schema to the probe
+configuration; picker inclusion remains a separate RCP policy.
 
 - [ ] Grammar edge cases: enums, asset references, and how text objects link to
       binary `*.tm_buffers/<uuid>.<hash>` payloads (the `<uuid>.<hash>` naming).

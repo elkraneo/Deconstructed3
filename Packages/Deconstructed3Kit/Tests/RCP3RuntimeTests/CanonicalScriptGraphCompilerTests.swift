@@ -72,9 +72,9 @@ import RCP3Runtime
 
         #expect(js.contains("this.didAdd = function()"))
         #expect(js.contains("this.entity.on(RealityKit.DragGestureEvent.name"))
-        // No transform was wired, so the body honestly reports it rather than inventing
-        // a move.
-        #expect(js.contains("no transform input wired"))
+        // No component was selected, so the body reports the missing authoring context
+        // rather than assuming this editable-label-free node means Transform.
+        #expect(js.contains("component type not selected"))
         #expect(!js.contains("entity.transform.translation"))
     }
 
@@ -421,6 +421,24 @@ import RCP3Runtime
             #expect(js.contains("this.entity.setComponent(new RealityKit.\(componentName)());"))
             #expect(!js.contains("unsupported"))
         }
+    }
+
+    @Test func selectedComponentWithoutCertifiedPublicMutationContractIsExplicitlyAccounted() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_component")
+        let selector = RCP3ScriptGraph.DataLiteral(
+            id: "component", toNode: "s", toPin: TMHash.murmur64a("component_type"),
+            valueType: "re_scripting_graph_component_type",
+            valueHash: TMHash.murmur64a("PhysicsBodyComponent")
+        )
+        let graph = RCP3ScriptGraph(
+            nodes: [update, set], wires: [.init(id: "e", from: "u", to: "s")], data: [selector]
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("selected component \(TMHash.hex(TMHash.murmur64a("PhysicsBodyComponent"))) has no certified public JS mutation contract"))
+        #expect(!js.contains("new RealityKit.PhysicsBodyComponent()"))
     }
 
     @Test func constantFeedingSetTranslationCompilesToMathConstant() {
@@ -1227,11 +1245,45 @@ import RCP3Runtime
 
         let js = CanonicalScriptGraphCompiler().compile(graph)
 
-        // No name → the honest remote placeholder, and it did NOT fabricate a slot.
-        #expect(js.contains("variable name unresolved"))
-        #expect(js.contains("this.getRemoteValue("))
-        #expect(js.contains("this.setRemoteValue("))
+        // No name → an explicit unsupported diagnostic, and no fabricated remote ABI.
+        #expect(js.contains("variable-name reference not resolvable"))
+        #expect(js.contains("tm_get_variable_node name unresolved"))
+        #expect(!js.contains("this.getRemoteValue("))
+        #expect(!js.contains("this.setRemoteValue("))
         #expect(!js.contains("this.variable_"))
+    }
+
+    /// Remote variables use a distinct serialized identity and Apple's storage-bag
+    /// ABI. Until `{ entity, ref, name } -> { entity, variable }` is captured, the
+    /// compiler must diagnose the gap instead of emitting the old one/two-argument
+    /// `RemoteValue` placeholders (which are known to be wrong).
+    @Test func unresolvedRemoteVariableIdentityNeverEmitsFabricatedRemoteABI() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let set = RCP3ScriptGraph.Node(id: "s", type: "tm_set_remote_variable_node")
+        let clear = RCP3ScriptGraph.Node(id: "c", type: "tm_clear_remote_variable_node")
+        let get = RCP3ScriptGraph.Node(id: "g", type: "tm_get_remote_variable_node")
+        let sink = RCP3ScriptGraph.Node(id: "sink", type: "tm_set_component")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, set, clear, get, sink],
+            wires: [
+                .init(id: "e1", from: "u", to: "s"),
+                .init(id: "e2", from: "s", to: "c"),
+                .init(id: "e3", from: "c", to: "sink"),
+                .init(
+                    id: "value", from: "g", to: "sink",
+                    fromPin: TMHash.murmur64a("value"),
+                    toPin: TMHash.murmur64a("rotation")
+                ),
+            ],
+            data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+        #expect(js.contains("tm_set_remote_variable_node (remote-variable identity unresolved)"))
+        #expect(js.contains("tm_clear_remote_variable_node (remote-variable identity unresolved)"))
+        #expect(js.contains("tm_get_remote_variable_node (remote-variable identity unresolved)"))
+        #expect(!js.contains("this.getRemoteValue("))
+        #expect(!js.contains("this.setRemoteValue("))
     }
 
     // MARK: - Console observability (one-time guarded logs)
