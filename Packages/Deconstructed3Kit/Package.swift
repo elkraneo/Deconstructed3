@@ -108,7 +108,7 @@ let package = Package(
         .testTarget(name: "RCP3ViewportTests", dependencies: ["RCP3Viewport"]),
         .testTarget(
             name: "RCP3GraphEditorTests",
-            dependencies: ["RCP3GraphEditor", "RCP3Document", "TMFormat"]
+            dependencies: ["RCP3GraphEditor", "RCP3Document", "RCP3Runtime", "TMFormat"]
         ),
         .testTarget(
             name: "DeconstructedFeatureTests",
