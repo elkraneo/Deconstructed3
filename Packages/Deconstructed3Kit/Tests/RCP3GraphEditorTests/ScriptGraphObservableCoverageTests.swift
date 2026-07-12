@@ -75,6 +75,8 @@ struct ScriptGraphObservableCoverageTests {
         // consumer before the compiler can emit observable code. Curated wired
         // scenarios are accounted independently above.
         #expect(clean.count >= 83)
-        #expect(needsWiredContext.count <= 255)
+        // The two settings-backed material Break nodes are pure values as well;
+        // their one-node fixtures intentionally have no consumer.
+        #expect(needsWiredContext.count <= 257)
     }
 }

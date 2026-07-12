@@ -2261,7 +2261,16 @@ public struct CanonicalScriptGraphCompiler {
             // output per property of the value type; reading an output emits a member access
             // on the source, `(<source>).<property>`. Component properties are scalars.
             if Self.breakOutputNames(for: node.type) != nil {
-                let source = inputExpression(into: node, pinName: "source", context: context, seen: &seen)
+                // Inspectable-backed material breaks name their single serialized
+                // dynamic input after the selected canonical type. Fixed-schema
+                // breaks use the conventional `source` connector.
+                let sourcePin = node.dynamicConnectorSettings?.inputs.first?.name ?? "source"
+                let source = inputExpression(
+                    into: node,
+                    pinName: sourcePin,
+                    context: context,
+                    seen: &seen
+                )
                 let property = outputPin.flatMap { Self.breakPropertyName(forHash: $0) }
                     ?? outputPin.map { TMHash.hex($0) } ?? "value"
                 return Expr("(\(source.code)).\(property)")
@@ -3209,6 +3218,10 @@ public struct CanonicalScriptGraphCompiler {
                 return schema.properties.map(\.name)
             }
             switch type {
+            case "tm_break_material":
+                return physicallyBasedMaterialBreakProperties
+            case "tm_break_physically_based_material_types":
+                return ["scale"]
             case "tm_break_vector2": return ["x", "y"]
             case "tm_break_vector3": return ["x", "y", "z"]
             case "tm_break_vector4": return ["x", "y", "z", "w"]
@@ -3228,11 +3241,19 @@ public struct CanonicalScriptGraphCompiler {
         static let breakPropertyNamesByHash: [UInt64: String] = {
             let schemaNames = ScriptGraphValueSchema.breakNodes.values
                 .flatMap { $0.properties.map(\.name) }
-            let names = schemaNames + ["x", "y", "z", "w", "width", "height", "red", "green", "blue", "alpha"]
+            let names = schemaNames + physicallyBasedMaterialBreakProperties
+                + ["scale", "x", "y", "z", "w", "width", "height", "red", "green", "blue", "alpha"]
             var map: [UInt64: String] = [:]
             for name in names { map[TMHash.murmur64a(name)] = name }
             return map
         }()
+
+        static let physicallyBasedMaterialBreakProperties = [
+            "anisotropyAngle", "anisotropyLevel", "baseColor", "blending", "clearcoat",
+            "clearcoatRoughness", "emissiveColor", "emissiveIntensity", "faceCulling",
+            "metallic", "readsDepth", "roughness", "secondaryTextureCoordinateTransform",
+            "sheen", "textureCoordinateTransform", "triangleFillMode", "writesDepth",
+        ]
 
         /// The multiply family (`multiply_by_scalar`/`_by_quaternion`/`_by_matrix`), all
         /// of which lower to `Math3D.multiply(a, b)`.

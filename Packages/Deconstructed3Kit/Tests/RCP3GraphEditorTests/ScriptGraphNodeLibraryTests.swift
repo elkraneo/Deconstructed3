@@ -285,6 +285,7 @@ struct ScriptGraphNodeLibraryTests {
                 "tm_is_valid_branch", "tm_on_entity_event", "tm_on_scene_event",
                 "tm_send_entity_event", "tm_send_scene_event", "tm_trigger_event",
                 "tm_get_entity_parameter", "tm_set_entity_parameter",
+                "tm_break_material", "tm_break_physically_based_material_types",
             ])
         #expect(items.count == expectedTypeSet.count)
         #expect(Set(items.map(\.type)) == expectedTypeSet)
@@ -692,7 +693,7 @@ struct ScriptGraphNodeLibraryTests {
         #expect(boolToAny.outputs.map(\.connectorName) == ["result"])
     }
 
-    @Test("Source-harvested dynamic policies stay out of the palette until authorable")
+    @Test("Source-harvested dynamic policies expose only certified authorable defaults")
     func dynamicPinPolicies() throws {
         let clone = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_clone"))
         #expect(clone.minimumInputCount == 1)
@@ -712,10 +713,49 @@ struct ScriptGraphNodeLibraryTests {
             #expect(materialBreak.fixedOutputs.isEmpty)
             #expect(!materialBreak.acceptsMixedInputTypes)
             #expect(!materialBreak.requiresArrayInput)
-            // A concrete Inspectable selection is required before the complete
-            // descriptor-derived interface can be authored.
-            #expect(ScriptGraphNodeLibrary.spec(for: type) == nil)
         }
+
+        let breakMaterialSettings = try #require(
+            ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: "tm_break_material")
+        )
+        #expect(breakMaterialSettings.container == .direct)
+        #expect(breakMaterialSettings.outputs.isEmpty)
+        let materialInput = try #require(breakMaterialSettings.inputs.first)
+        #expect(materialInput.name == "PhysicallyBasedMaterial")
+        #expect(materialInput.displayName == "PhysicallyBasedMaterial")
+        #expect(materialInput.typeHash == 0xdb686b8dd1bb85e3)
+        #expect(materialInput.editHash == 0)
+        #expect(materialInput.order == 1)
+        #expect(materialInput.optionality == 0)
+
+        let breakMaterial = try #require(ScriptGraphNodeLibrary.spec(for: "tm_break_material"))
+        #expect(breakMaterial.inputs.map(\.connectorName) == ["PhysicallyBasedMaterial"])
+        #expect(breakMaterial.outputs.map(\.connectorName) == [
+            "anisotropyAngle", "anisotropyLevel", "baseColor", "blending", "clearcoat",
+            "clearcoatRoughness", "emissiveColor", "emissiveIntensity", "faceCulling",
+            "metallic", "readsDepth", "roughness", "secondaryTextureCoordinateTransform",
+            "sheen", "textureCoordinateTransform", "triangleFillMode", "writesDepth",
+        ])
+
+        let breakPBRSettings = try #require(
+            ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(
+                for: "tm_break_physically_based_material_types"
+            )
+        )
+        #expect(breakPBRSettings.container == .direct)
+        #expect(breakPBRSettings.outputs.isEmpty)
+        let roughnessInput = try #require(breakPBRSettings.inputs.first)
+        #expect(roughnessInput.name == "PhysicallyBasedMaterial.Roughness")
+        #expect(roughnessInput.displayName == "PhysicallyBasedMaterial.Roughness")
+        #expect(roughnessInput.typeHash == 0xf4e7f6355dcbdc76)
+        #expect(roughnessInput.editHash == 0)
+        #expect(roughnessInput.order == 1)
+        #expect(roughnessInput.optionality == 0)
+        let breakPBR = try #require(
+            ScriptGraphNodeLibrary.spec(for: "tm_break_physically_based_material_types")
+        )
+        #expect(breakPBR.inputs.map(\.connectorName) == ["PhysicallyBasedMaterial.Roughness"])
+        #expect(breakPBR.outputs.map(\.connectorName) == ["scale"])
 
         let toString = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_to_string"))
         #expect(toString.minimumInputCount == 1)

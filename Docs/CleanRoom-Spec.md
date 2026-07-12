@@ -871,8 +871,8 @@ This documents the real API directly (no inference needed):
   `makeEditTypeHash`. It must not be synthesized by simply hashing the public
   Swift or JS name.
 - The source exposes shared allowed-type policies and dynamic connector translators;
-  e.g. Max1 is `translateInputs(..., maxInputs: 1)`. Fresh typed-node authoring is
-  gated until the canonical-name/edit-hash registry is extracted. Existing typed
+  e.g. Max1 is `translateInputs(..., maxInputs: 1)`. Fresh typed-node authoring
+  requires an observed canonical-name/type-hash/edit-hash seed. Existing typed
   settings remain fully parsed and identity-preservingly written back.
 - The registry is host-initialized: the C plugin entry `load_nodes_swift` calls
   `registerNodes(getMember:stage:)`, which installs the `RealityKitScripting.RKS`
@@ -885,6 +885,21 @@ This documents the real API directly (no inference needed):
   private TypeManagement editor registry over it. Consequently the public/open
   source schema is sufficient to model values and many node interfaces, but cannot
   alone recover fresh dynamic connector `edit_hash` values.
+
+### Break Material dynamic settings
+
+- `tm_break_material` and `tm_break_physically_based_material_types` use the same
+  direct `tm_graph_node_dynamic_connectors_settings` container as other typed
+  dynamic families. They do not serialize a distinct material-settings payload.
+- Each stores exactly one selected connector in `inputs` and no outputs. RCP derives
+  output pins from the selected RealityKitScripting `Inspectable` descriptor.
+- The authoring seed for Break Material is `PhysicallyBasedMaterial`, type hash
+  `db686b8dd1bb85e3`, edit hash zero, order 1, optionality 0. Its descriptor exposes
+  17 output properties.
+- The PBR nested-type node accepts one of ten nested types, not the whole material.
+  The certified seed is `PhysicallyBasedMaterial.Roughness`, type hash
+  `f4e7f6355dcbdc76`, edit hash zero, order 1, optionality 0; its descriptor output
+  is `scale`.
 
 ### Node-family templates
 

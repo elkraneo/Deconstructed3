@@ -175,6 +175,14 @@ public enum ScriptGraphPinResolver {
         }
         let outputSpecs: [ScriptGraphNodeLibrary.PinSpec]
         switch node.type {
+        case "tm_break_material"
+            where settings.inputs.first?.name == "PhysicallyBasedMaterial":
+            // Break outputs are reconstructed from the selected Inspectable
+            // descriptor; RCP serializes no dynamic output connector records.
+            outputSpecs = ScriptGraphNodeLibrary.defaultDynamicSpec(for: node.type)?.outputs ?? []
+        case "tm_break_physically_based_material_types"
+            where settings.inputs.first?.name == "PhysicallyBasedMaterial.Roughness":
+            outputSpecs = ScriptGraphNodeLibrary.defaultDynamicSpec(for: node.type)?.outputs ?? []
         case "tm_array_set", "tm_array_add", "tm_array_remove", "tm_is_valid_branch":
             // Their connector builders mirror the typed array INPUT connector as
             // output connector 1; it is not duplicated in settings.outputs.
@@ -185,6 +193,7 @@ public enum ScriptGraphPinResolver {
         let category: ScriptGraphNodeLibrary.Category = switch node.type {
         case let type where type.hasPrefix("tm_array_"): .utility
         case "tm_is_valid", "tm_is_valid_branch": .logic
+        case "tm_break_material", "tm_break_physically_based_material_types": .make
         default: .string
         }
         let spec = ScriptGraphNodeLibrary.NodeSpec(

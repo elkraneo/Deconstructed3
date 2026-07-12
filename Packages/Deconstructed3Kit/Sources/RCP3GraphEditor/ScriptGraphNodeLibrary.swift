@@ -185,8 +185,20 @@ public enum ScriptGraphNodeLibrary {
     ) -> RCP3ScriptGraph.Node.DynamicConnectorSettings? {
         let string = TMHash.murmur64a("String")
         let stringArray: UInt64 = 0xa147db4e70aa455c
-        func connector(_ name: String, _ hash: UInt64, _ order: Int) -> RCP3ScriptGraph.Node.DynamicConnector {
-            .init(name: name, displayName: dynamicDisplayName(name), typeHash: hash, order: Double(order))
+        func connector(
+            _ name: String,
+            _ hash: UInt64,
+            _ order: Int,
+            displayName: String? = nil,
+            optionality: UInt32 = 1
+        ) -> RCP3ScriptGraph.Node.DynamicConnector {
+            .init(
+                name: name,
+                displayName: displayName ?? dynamicDisplayName(name),
+                typeHash: hash,
+                order: Double(order),
+                optionality: optionality
+            )
         }
         func direct(
             inputs: [RCP3ScriptGraph.Node.DynamicConnector] = [],
@@ -196,6 +208,26 @@ public enum ScriptGraphNodeLibrary {
         }
 
         switch type {
+        case "tm_break_material":
+            return direct(inputs: [
+                connector(
+                    "PhysicallyBasedMaterial",
+                    0xdb686b8dd1bb85e3,
+                    1,
+                    displayName: "PhysicallyBasedMaterial",
+                    optionality: 0
+                ),
+            ])
+        case "tm_break_physically_based_material_types":
+            return direct(inputs: [
+                connector(
+                    "PhysicallyBasedMaterial.Roughness",
+                    0xf4e7f6355dcbdc76,
+                    1,
+                    displayName: "PhysicallyBasedMaterial.Roughness",
+                    optionality: 0
+                ),
+            ])
         case "tm_to_string":
             return direct(inputs: [connector("value", string, 0)])
         case "tm_string_merge":
@@ -235,7 +267,16 @@ public enum ScriptGraphNodeLibrary {
               let policy = dynamicPinPolicy(for: type)
         else { return nil }
         let inputs = settings.inputs.map { PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name)) }
-        let outputs = settings.outputs.map { PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name)) }
+        let serializedOutputs = settings.outputs.map {
+            PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name))
+        }
+        let outputs: [PinSpec] = switch type {
+        case "tm_break_material": Self.physicallyBasedMaterialOutputNames.map {
+            .data($0, dynamicDisplayName($0))
+        }
+        case "tm_break_physically_based_material_types": [data("scale", "Scale")]
+        default: serializedOutputs
+        }
         let inputSpecs: [PinSpec] = switch type {
         case "tm_array_set": Array(policy.fixedInputs.prefix(2)) + inputs + Array(policy.fixedInputs.dropFirst(2))
         case "tm_array_add", "tm_array_find": Array(policy.fixedInputs.prefix(1)) + inputs + Array(policy.fixedInputs.dropFirst())
@@ -249,10 +290,21 @@ public enum ScriptGraphNodeLibrary {
         let category: Category = switch type {
         case let type where type.hasPrefix("tm_array_"): .utility
         case "tm_is_valid", "tm_is_valid_branch": .logic
+        case "tm_break_material", "tm_break_physically_based_material_types": .make
         default: .string
         }
         return NodeSpec(inputs: inputSpecs, outputs: outputSpecs, category: category)
     }
+
+    /// Ordered `RealityKitScripting.Inspectable` properties emitted by RCP 3 for
+    /// a `PhysicallyBasedMaterial` Break Material node. They are descriptor-derived
+    /// at load time and therefore intentionally absent from serialized settings.
+    private static let physicallyBasedMaterialOutputNames = [
+        "anisotropyAngle", "anisotropyLevel", "baseColor", "blending", "clearcoat",
+        "clearcoatRoughness", "emissiveColor", "emissiveIntensity", "faceCulling",
+        "metallic", "readsDepth", "roughness", "secondaryTextureCoordinateTransform",
+        "sheen", "textureCoordinateTransform", "triangleFillMode", "writesDepth",
+    ]
 
     /// Builds the complete interface of one of RCP's settings-backed material
     /// nodes. The selected RKS `Inspectable` descriptor is serialized on the node;
