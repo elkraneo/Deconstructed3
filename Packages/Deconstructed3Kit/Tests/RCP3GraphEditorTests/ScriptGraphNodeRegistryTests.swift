@@ -36,10 +36,11 @@ import Testing
         #expect(spec.inputs.map(\.connectorName) == ["exec", "source", "arg0", "arg1"])
         #expect(spec.outputs.map(\.connectorName) == ["exec"])
         #expect(registry.nodeLibPaletteItems.first?.displayName == "Spawn Player")
-        #expect(
+        let spawnMatches = Set(
             registry.paletteSections(matching: "spawn").flatMap(\.items).map(\.type)
-                == [identity]
         )
+        #expect(spawnMatches.contains(identity))
+        #expect(spawnMatches.contains("tm_spawn_entity"))
 
         let graph = RCP3ScriptGraph(
             nodes: [.init(id: "custom", type: identity)],

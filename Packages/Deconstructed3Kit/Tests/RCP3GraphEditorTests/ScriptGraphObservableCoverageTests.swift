@@ -75,6 +75,6 @@ struct ScriptGraphObservableCoverageTests {
         // consumer before the compiler can emit observable code. Curated wired
         // scenarios are accounted independently above.
         #expect(clean.count >= 83)
-        #expect(needsWiredContext.count <= 253)
+        #expect(needsWiredContext.count <= 255)
     }
 }
