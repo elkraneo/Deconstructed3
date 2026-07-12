@@ -746,11 +746,11 @@ struct ScriptGraphNodeLibraryTests {
         }
         for type in ["tm_get_entity_parameter", "tm_set_entity_parameter"] {
             #expect(ScriptGraphNodeLibrary.dynamicPinPolicy(for: type) != nil)
-            #expect(ScriptGraphNodeLibrary.spec(for: type) == nil)
+            #expect(ScriptGraphNodeLibrary.spec(for: type) != nil)
         }
 
-        // Generic typed settings are authorable; the distinct entity-parameter
-        // settings container remains deliberately absent.
+        // Generic typed settings and the distinct entity-parameter settings path
+        // are both authorable without conflating their serialized containers.
         let paletteTypes = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
         #expect(paletteTypes.contains("tm_to_string"))
         #expect(paletteTypes.contains("tm_string_merge"))

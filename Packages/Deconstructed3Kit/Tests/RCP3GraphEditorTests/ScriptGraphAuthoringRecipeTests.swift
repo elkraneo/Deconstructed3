@@ -70,9 +70,14 @@ import RCP3Document
         }
     }
 
-    @Test func privateEntityParameterSettingsAreNotMisrepresentedAsGenericDynamicSettings() {
+    @Test func entityParameterUsesItsDedicatedSettingsRatherThanGenericDynamicSettings() throws {
         #expect(ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: "tm_set_entity_parameter") == nil)
-        #expect(ScriptGraphAuthoringRecipes.recipe(for: "tm_set_entity_parameter") == nil)
+        let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+            requestedType: "tm_set_entity_parameter", label: "Set Parameter", graphID: "entity-parameter"
+        ))
+        let node = try #require(graph.nodes.last)
+        #expect(node.dynamicConnectorSettings == nil)
+        #expect(node.entityParameterSettings?.typeHash == 0xaed3caa5c516d191)
     }
 
     @Test func numberVariableIsFullyTypedAndBound() throws {

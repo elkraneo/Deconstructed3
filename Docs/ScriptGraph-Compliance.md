@@ -33,8 +33,9 @@ swift run rcp3-dump audit-compliance \
   two pending public schemas; three feature-flagged diagnostics; three nodes not
   recovered from `libtm`; six unregistered catalogue entries; six validation-test
   nodes; one deprecated validation no-op; one alias; and one proven non-node form.
-- Behavioral corpus: 15 scenarios using 20 unique node types. Of the 316 palette
-  types, 296 do not yet occur in an end-to-end corpus scenario.
+- Behavioral corpus: 15 scenarios using 20 unique node types. Of the 336 palette
+  types, 316 do not yet occur in a curated end-to-end behavioral scenario. A
+  separate deterministic authoring corpus covers all 336 palette types.
 - RCP authoring certification: ten representative built-in mechanisms passed
   RCP open/save/reopen. These certify mechanisms, not every node using them.
 - Runtime certification: zero matrix cases are currently marked `pass`.
