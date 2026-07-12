@@ -1,4 +1,5 @@
 import DeconstructedFeature
+import Foundation
 import RCP3CanonicalRuntime
 import SwiftUI
 
@@ -12,8 +13,15 @@ import SwiftUI
 /// runtime.
 struct ContentView: View {
     var body: some View {
-        AppRootView { playScene in
-            CanonicalPlayView(playScene)
+        if let artifactPath = ProcessInfo.processInfo.environment["D3_CASE11_SCRIPT_PATH"],
+           !artifactPath.isEmpty {
+            Case11SceneRuntimeProbeView(
+                artifactURL: URL(fileURLWithPath: artifactPath)
+            )
+        } else {
+            AppRootView { playScene in
+                CanonicalPlayView(playScene)
+            }
         }
     }
 }
