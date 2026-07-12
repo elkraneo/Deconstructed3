@@ -11,8 +11,12 @@ public struct ScriptGraphNodeRegistry: Sendable {
 
     private let nodeLibSpecs: [String: ScriptGraphNodeLibrary.NodeSpec]
     public let nodeLibPaletteItems: [ScriptGraphNodeLibrary.PaletteItem]
+    public let externalNodes: [String: ScriptGraphExternalAuthoringCatalog.Node]
 
-    public init(nodeLibraries: [NodeLibLibrary] = []) {
+    public init(
+        nodeLibraries: [NodeLibLibrary] = [],
+        externalCatalog: ScriptGraphExternalAuthoringCatalog? = nil
+    ) {
         var specs: [String: ScriptGraphNodeLibrary.NodeSpec] = [:]
         var palette: [ScriptGraphNodeLibrary.PaletteItem] = []
 
@@ -47,8 +51,41 @@ public struct ScriptGraphNodeRegistry: Sendable {
             ))
         }
 
+        let externalNodes = Dictionary(
+            externalCatalog?.nodes.map { ($0.id, $0) } ?? [],
+            uniquingKeysWith: { _, latest in latest }
+        )
+        for node in externalNodes.values {
+            let hasExec = node.execution == .action
+            var inputs = hasExec
+                ? [ScriptGraphNodeLibrary.PinSpec(connectorName: "exec", displayName: "", isExec: true)]
+                : []
+            var outputs = hasExec
+                ? [ScriptGraphNodeLibrary.PinSpec(connectorName: "exec", displayName: "", isExec: true)]
+                : []
+            inputs += node.inputs.map { .data($0.name, $0.displayName) }
+            outputs += node.outputs.map { .data($0.name, $0.displayName) }
+            let category: ScriptGraphNodeLibrary.Category = switch node.category {
+            case .events: .events
+            case .controlFlow: .controlFlow
+            case .logic: .logic
+            case .entity: .entity
+            case .math: .math
+            case .make: .make
+            case .string: .string
+            case .variables: .variables
+            case .components: .components
+            case .utility: .utility
+            }
+            specs[node.id] = .init(inputs: inputs, outputs: outputs, category: category)
+            palette.append(.init(
+                id: node.id, type: node.id, displayName: node.displayName, category: category
+            ))
+        }
+
         nodeLibSpecs = specs
         nodeLibPaletteItems = palette.sorted { $0.displayName < $1.displayName }
+        self.externalNodes = externalNodes
     }
 
     public func spec(for type: String) -> ScriptGraphNodeLibrary.NodeSpec? {

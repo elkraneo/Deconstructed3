@@ -54,4 +54,36 @@ import Testing
         let model = ScriptGraphEditorModel(graph: graph, nodeRegistry: registry)
         #expect(model.nodes.first?.payload.pins.count == 5)
     }
+
+    @Test func externalCatalogRetainsOpaqueTypedAuthoringMetadata() throws {
+        let move = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "private::game::move",
+            operationID: "game.move(instance:distance:)",
+            displayName: "Move",
+            category: .components,
+            execution: .action,
+            isAsync: true,
+            inputs: [
+                .init(name: "source", displayName: "Source", typeToken: "Game.Mover"),
+                .init(
+                    name: "distance", displayName: "Distance", typeToken: "Swift.Double",
+                    isOptional: true, isVariadic: true
+                ),
+            ],
+            outputs: [.init(name: "result", displayName: "Result", typeToken: "Swift.Bool")]
+        )
+        let registry = ScriptGraphNodeRegistry(
+            externalCatalog: .init(nodes: [move])
+        )
+
+        let moveSpec = try #require(registry.spec(for: move.id))
+        #expect(moveSpec.inputs.map(\.connectorName) == ["exec", "source", "distance"])
+        #expect(moveSpec.outputs.map(\.connectorName) == ["exec", "result"])
+        #expect(registry.nodeLibPaletteItems.contains { $0.id == move.id })
+        #expect(registry.externalNodes[move.id]?.operationID == move.operationID)
+        #expect(registry.externalNodes[move.id]?.isAsync == true)
+        #expect(registry.externalNodes[move.id]?.inputs.last?.typeToken == "Swift.Double")
+        #expect(registry.externalNodes[move.id]?.inputs.last?.isOptional == true)
+        #expect(registry.externalNodes[move.id]?.inputs.last?.isVariadic == true)
+    }
 }
