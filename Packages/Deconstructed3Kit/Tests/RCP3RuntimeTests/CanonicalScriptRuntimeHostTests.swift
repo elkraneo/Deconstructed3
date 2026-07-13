@@ -110,6 +110,7 @@ import RCP3Document
 
         host.dispatchGesture("tap")
         #expect(host.state.translation == SIMD3(0.25, 0, 0))
+        #expect(host.state.scale == SIMD3(1, 1, 1))
         #expect(host.lastException == nil)
     }
 
