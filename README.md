@@ -61,7 +61,7 @@ tests. Built from the behavioral spec in [`Docs/CleanRoom-Spec.md`](./Docs/Clean
 | **Scene editing** | Transform edit, entity duplicate / delete, primitive insertion — all with faithful save back to the bundle. |
 | **Script graphs (visual)** | A node editor on a custom SwiftUI `Canvas` with per-pin connection points; pin-literal and variable authoring; round-trip save of entity-attached and asset graphs. |
 | **Script graphs (execution)** | Compile `tm_graph` → JavaScript and run it two ways: a JavaScriptCore host, and Apple's canonical `RealityKitScripting` runtime (macOS 27). Node coverage spans math / Math3D, comparison / logic / string / bitwise, control-flow, entity, and event nodes. |
-| **Examples gallery** | Loadable, playable script-graph examples. |
+| **Demos gallery** | Three composed functional demos plus 15 focused patterns, loadable on the graph canvas and executable in canonical preview or RealityKitScripting Play. |
 | **`rcp3-dump`** | A CLI that opens a bundle and prints its scene tree. |
 
 ### Not yet

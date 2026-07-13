@@ -93,6 +93,20 @@ public struct DocumentView<CanonicalPlay: View>: View {
         store.openScriptGraph ?? store.selectedScriptGraph
     }
 
+    /// Metadata for a curated graph, when the previewed graph came from the gallery
+    /// or from a materialized gallery asset. This lets Run Preview explain the goal
+    /// and interaction instead of presenting an anonymous node count.
+    private var previewableExample: ScriptGraphExample? {
+        if let id = store.loadedExampleID {
+            return ScriptGraphExamples.example(id: id)
+        }
+        guard let id = store.openScriptGraphID,
+              let asset = store.scriptGraphAssets.first(where: { $0.id == id }) else {
+            return nil
+        }
+        return ScriptGraphExamples.all.first { $0.name == asset.name }
+    }
+
     /// Whether the Run/Preview affordances should be ENABLED: whenever a graph is open
     /// in the editor (`store.openScriptGraph`), falling back to the selected entity's
     /// graph (`store.selectedScriptGraph`). Deliberately independent of the center
@@ -158,7 +172,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
             // RUN / PREVIEW: compile + run the shown graph on the RCP3 runtime.
             .sheet(isPresented: $showsPreview) {
                 if let graph = previewableGraph {
-                    ScriptGraphPreviewView(graph: graph)
+                    ScriptGraphPreviewView(graph: graph, example: previewableExample)
                 }
             }
         } detail: {
@@ -497,18 +511,29 @@ public struct DocumentView<CanonicalPlay: View>: View {
     @ViewBuilder
     private var examplesMenu: some View {
         Menu {
-            ForEach(ScriptGraphExamples.all) { example in
-                Button {
-                    loadExample(example)
-                } label: {
-                    Text(example.runsToday ? example.name : "\(example.name) (pending)")
+            Section("Functional Demos") {
+                ForEach(ScriptGraphExamples.functionalDemos) { example in
+                    exampleButton(example)
                 }
-                .help(example.summary)
+            }
+            Section("Patterns") {
+                ForEach(ScriptGraphExamples.patterns) { example in
+                    exampleButton(example)
+                }
             }
         } label: {
-            Label("Examples", systemImage: "sparkles.rectangle.stack")
+            Label("Demos", systemImage: "sparkles.rectangle.stack")
         }
-        .help("Load a curated script-graph example, then press Play")
+        .help("Load a functional demo or focused script-graph pattern")
+    }
+
+    private func exampleButton(_ example: ScriptGraphExample) -> some View {
+        Button {
+            loadExample(example)
+        } label: {
+            Text(example.runsToday ? example.name : "\(example.name) (pending)")
+        }
+        .help(example.summary)
     }
 
     /// Loads an example graph into the editor (open graph) and shows it on the canvas.
@@ -1073,8 +1098,13 @@ private struct ProjectBrowserPanel: View {
                 Menu {
                     Button("Empty Script Graph", systemImage: "doc") { onNewGraph() }
                     Divider()
-                    Section("Samples") {
-                        ForEach(ScriptGraphExamples.all) { example in
+                    Section("Functional Demos") {
+                        ForEach(ScriptGraphExamples.functionalDemos) { example in
+                            Button(example.name) { onNewFromSample(example) }
+                        }
+                    }
+                    Section("Patterns") {
+                        ForEach(ScriptGraphExamples.patterns) { example in
                             Button(example.name) { onNewFromSample(example) }
                         }
                     }

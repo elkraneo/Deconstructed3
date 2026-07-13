@@ -10,10 +10,14 @@ struct ScriptGraphObservableCoverageTests {
     private static let curatedFamilies: [String: Set<String>] = [
         "event roots": ["tm_update", "tm_did_add", "tm_gesture_event_drag", "tm_gesture_event_tap"],
         "component access": ["tm_get_component", "tm_set_component"],
-        "state": ["tm_get_variable_node", "tm_set_variable_node"],
+        "state": [
+            "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node",
+            "tm_variable_add",
+        ],
         "value and math": [
             "tm_make_vector3", "tm_make_rotation", "tm_make_look_at_rotation",
-            "tm_math_add", "tm_math_multiply", "tm_math_sin", "tm_math_cos",
+            "tm_math_add", "tm_math_multiply", "tm_math_mod", "tm_math_greater_equal",
+            "tm_equals", "tm_math_sin", "tm_math_cos",
         ],
         "control flow": ["tm_if", "tm_not", "tm_loop", "tm_delay", "tm_do_once"],
     ]
@@ -22,14 +26,14 @@ struct ScriptGraphObservableCoverageTests {
         javascript.contains("unsupported node:") || javascript.contains("/* unsupported:")
     }
 
-    @Test("All 20 curated types belong to a behavioral family and compile on a wired scenario")
+    @Test("All curated types belong to a behavioral family and compile on a wired scenario")
     func curatedFamilyMatrixIsComplete() {
         let curated = ScriptGraphExamples.coveredNodeTypes
         let classified = Self.curatedFamilies.values.reduce(into: Set<String>()) {
             $0.formUnion($1)
         }
 
-        #expect(curated.count == 20)
+        #expect(curated.count == 25)
         #expect(classified == curated)
         #expect(Self.curatedFamilies.values.allSatisfy { !$0.isEmpty })
 

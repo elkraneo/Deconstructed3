@@ -1,6 +1,6 @@
 # Script Graph corpus certification
 
-The Examples gallery is the behavioral certification corpus for Script Graph
+The Demos gallery is the behavioral certification corpus for Script Graph
 support. A node appearing in the palette or compiler is not by itself evidence of
 RCP3 parity. A scenario is useful evidence only when its complete interaction path
 authors, compiles, serializes, reopens, and executes correctly.
@@ -33,7 +33,8 @@ For each example:
    `ScriptGraphExamples.all` entry using the same asset writer as the app.
 
 3. Alternatively, open the disposable project in Deconstructed3.
-4. In Project Browser, choose **+ → Samples → _Example Name_**.
+4. In Project Browser, choose **+ → Functional Demos → _Demo Name_** (or
+   **Patterns** for a focused recipe).
 5. Save, close, and reopen the project in Deconstructed3. Confirm the graph is
    structurally intact.
 6. Open the same project and graph in Reality Composer Pro 3.
@@ -98,10 +99,14 @@ runtime validation.
 
 ## Current corpus
 
-The corpus has two intentionally separate layers:
+The corpus has two intentionally separate layers, with the curated layer split by
+product intent:
 
-- `ScriptGraphExamples.all` contains a small set of human-designed behavioral
-  scenarios with observable outcomes and manual RCP procedures.
+- `ScriptGraphExamples.functionalDemos` contains composed, product-like programs
+  intended for interactive testing and presentation.
+- `ScriptGraphExamples.patterns` contains focused recipes for learning and reuse.
+  Their union is `ScriptGraphExamples.all`; every entry has an observable outcome
+  and manual RCP procedure.
 - `ScriptGraphGeneratedCorpus.all` deterministically creates one minimal fixture
   for every insertable type with an authoring recipe. It is grouped by palette
   category and topology, so broad interface/serialization coverage does not require

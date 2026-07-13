@@ -3,18 +3,17 @@ import RCP3Runtime
 import SwiftUI
 
 /// RUN / PREVIEW for an open script graph: compile it to JS, run it on our
-/// `RCP3Runtime` host, and let the user drive it with a simulated gesture while
+/// canonical deterministic host, and let the user drive it with a simulated gesture while
 /// watching the entity move. This closes the author → run loop — the same graph the
 /// canvas edits is the graph that executes here.
 ///
 /// ## How it runs the graph
 ///
-/// On appear it does exactly what a test would: `ScriptGraphRunner.run(graph, into:
-/// state)` compiles the graph (`ScriptGraphCompiler`), loads the JS into a fresh
-/// `ScriptJSHost` bound to a `RuntimeEntityState`, and returns the host ready to
-/// receive events. The host and state are `@MainActor`-isolated (a `JSContext` is
-/// not `Sendable`), so they live in `@State` and are only ever touched on the main
-/// actor — which is where SwiftUI body / gesture callbacks run.
+/// On appear it uses the production `CanonicalScriptGraphCompiler`, loads the JS
+/// into `CanonicalScriptRuntimeHost`, activates lifecycle-created subscriptions,
+/// and then dispatches canonical gesture envelopes. The host and state are
+/// `@MainActor`-isolated (a `JSContext` is not `Sendable`), so they live in `@State`
+/// and are only touched on the main actor.
 ///
 /// ## What the user sees and does
 ///
@@ -31,13 +30,14 @@ import SwiftUI
 /// run something.
 public struct ScriptGraphPreviewView: View {
     let graph: RCP3ScriptGraph
+    let example: ScriptGraphExample?
 
     /// The live entity model the running graph mutates. `@MainActor`, held across
     /// body re-evaluations so drags accumulate.
     @State private var state = RuntimeEntityState()
     /// The running host (compiled graph + bound state). `nil` until `start()` runs on
     /// appear.
-    @State private var host: ScriptJSHost?
+    @State private var host: CanonicalScriptRuntimeHost?
     /// A monotonically bumped tick so the readout / dot recompute after each dispatch
     /// (the host mutates `state` in place — a reference type SwiftUI can't observe).
     @State private var tick = 0
@@ -47,14 +47,15 @@ public struct ScriptGraphPreviewView: View {
     /// One drag-step magnitude for the ± buttons.
     private let step = 0.25
 
-    public init(graph: RCP3ScriptGraph) {
+    public init(graph: RCP3ScriptGraph, example: ScriptGraphExample? = nil) {
         self.graph = graph
+        self.example = example
     }
 
     /// The compiled JS for `graph` (also what the host loaded). Computed once per
     /// body; cheap and pure.
     private var compiledJS: String {
-        ScriptGraphCompiler().compile(graph)
+        CanonicalScriptGraphCompiler().compile(graph)
     }
 
     /// Whether the running host registered any handler at all. When false, the graph
@@ -62,7 +63,7 @@ public struct ScriptGraphPreviewView: View {
     /// state.
     private var hasAnyHandler: Bool {
         guard let host else { return false }
-        return host.hasHandler(for: "drag") || host.hasHandler(for: "tap")
+        return host.hasGestureHandler("drag") || host.hasGestureHandler("tap")
     }
 
     public var body: some View {
@@ -92,7 +93,9 @@ public struct ScriptGraphPreviewView: View {
     private func start() {
         guard host == nil else { return }
         let fresh = RuntimeEntityState()
-        let runningHost = ScriptGraphRunner.run(graph, into: fresh)
+        let runningHost = CanonicalScriptRuntimeHost(state: fresh)
+        runningHost.load(graph)
+        runningHost.activate()
         state = fresh
         host = runningHost
         tick += 1
@@ -100,13 +103,18 @@ public struct ScriptGraphPreviewView: View {
 
     /// Dispatches a `"drag"` with the given delta and re-reads the live state.
     private func drag(_ dx: Double, _ dy: Double, _ dz: Double) {
-        host?.dispatch(event: "drag", payload: ["delta": [dx, dy, dz]])
+        host?.dispatchGesture("drag", payload: [
+            "delta": [dx, dy, dz],
+            "translation": [dx, dy, dz],
+            "translationDelta": [dx, dy, dz],
+            "sceneTranslation": [dx, dy, dz],
+        ])
         tick += 1
     }
 
     /// Dispatches a `"tap"` (no payload) and re-reads the live state.
     private func tapDispatch() {
-        host?.dispatch(event: "tap")
+        host?.dispatchGesture("tap")
         tick += 1
     }
 
@@ -114,11 +122,16 @@ public struct ScriptGraphPreviewView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Running this graph")
+            Text(example?.name ?? "Running this graph")
                 .font(.headline)
-            Text("\(graph.nodes.count) node\(graph.nodes.count == 1 ? "" : "s"), compiled to JavaScript and run on the RCP3 runtime. Drag the pad to drive it.")
+            Text(example?.summary ?? "\(graph.nodes.count) node\(graph.nodes.count == 1 ? "" : "s"), compiled to canonical RKS JavaScript and run in the deterministic preview host.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            if let example {
+                LabeledContent("Expected", value: example.certification.expectedOutcome)
+                    .font(.callout)
+                    .padding(.top, 6)
+            }
         }
     }
 
@@ -188,7 +201,7 @@ public struct ScriptGraphPreviewView: View {
                 Button { tapDispatch() } label: {
                     Label("Dispatch tap", systemImage: "hand.tap")
                 }
-                .disabled(host?.hasHandler(for: "tap") != true)
+                .disabled(host?.hasGestureHandler("tap") != true)
                 Button(role: .destructive) { reset() } label: {
                     Label("Reset", systemImage: "arrow.counterclockwise")
                 }
@@ -256,7 +269,7 @@ public struct ScriptGraphPreviewView: View {
                     }
                 }
 
-                if let messages = host?.consoleMessages, !messages.isEmpty {
+                if let messages = host?.scriptHost.consoleMessages, !messages.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Console")
                             .font(.caption.weight(.semibold))

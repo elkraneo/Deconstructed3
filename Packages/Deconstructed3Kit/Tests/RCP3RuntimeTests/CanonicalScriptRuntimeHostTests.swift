@@ -91,4 +91,56 @@ import RCP3Document
         #expect(host.observation.operations.contains(.getMaterialParameter("roughness")))
         #expect(host.observation.operations.contains(.setComponent("ModelComponent")))
     }
+
+    @Test func comboTargetRunsAsAThreeTapStatefulProgram() throws {
+        let host = CanonicalScriptRuntimeHost()
+        host.load(ScriptGraphExamples.comboTarget.graph)
+        host.activate()
+
+        host.dispatchGesture("tap")
+        try #require(host.lastException == nil)
+        #expect(host.state.translation == SIMD3(0.25, 0, 0))
+
+        host.dispatchGesture("tap")
+        #expect(host.state.translation == SIMD3(0.5, 0, 0))
+
+        host.dispatchGesture("tap")
+        #expect(host.state.translation == SIMD3(0, 0.8, 0))
+        #expect(host.state.scale == SIMD3(1.5, 1.5, 1.5))
+
+        host.dispatchGesture("tap")
+        #expect(host.state.translation == SIMD3(0.25, 0, 0))
+        #expect(host.lastException == nil)
+    }
+
+    @Test func floorSelectorCyclesFourComputedStates() throws {
+        let host = CanonicalScriptRuntimeHost()
+        host.load(ScriptGraphExamples.floorSelector.graph)
+        host.activate()
+
+        for expectedY in [0.4, 0.8, 1.2] {
+            host.dispatchGesture("tap")
+            try #require(host.lastException == nil)
+            #expect(abs(host.state.translation.y - expectedY) < 0.000_001)
+            #expect(host.state.scale == SIMD3(1, 1, 1))
+        }
+
+        host.dispatchGesture("tap")
+        #expect(host.state.translation == .zero)
+        #expect(host.state.scale == SIMD3(1.6, 0.8, 1))
+        #expect(host.lastException == nil)
+    }
+
+    @Test func batchBuilderCommitsAfterFiveLoopSteps() throws {
+        let host = CanonicalScriptRuntimeHost()
+        host.load(ScriptGraphExamples.batchBuilder.graph)
+        host.activate()
+        host.dispatchGesture("tap")
+
+        try #require(host.lastException == nil)
+        #expect(abs(host.state.translation.x - 1) < 0.000_001)
+        #expect(abs(host.state.scale.x - 1) < 0.000_001)
+        #expect(abs(host.state.scale.y - 1) < 0.000_001)
+        #expect(abs(host.state.scale.z - 1) < 0.000_001)
+    }
 }

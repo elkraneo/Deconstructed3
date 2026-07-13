@@ -42,6 +42,10 @@ import RCP3Runtime
 
     @Test func galleryHasTheCuratedExamples() {
         let names = ScriptGraphExamples.all.map(\.name)
+        // Product-like functional demos.
+        #expect(names.contains("Combo Target"))
+        #expect(names.contains("Four-floor Elevator"))
+        #expect(names.contains("Five-step Batch Builder"))
         // Literal-driven.
         #expect(names.contains("Drag to Move"))
         #expect(names.contains("Drag with Offset"))
@@ -60,8 +64,12 @@ import RCP3Runtime
         #expect(names.contains("One-shot Tap"))
         #expect(names.contains("Tap Toggle"))
         #expect(names.contains("Grow by Loop"))
-        // Exactly fifteen curated examples, ids unique, lookup works.
-        #expect(ScriptGraphExamples.all.count == 15)
+        // Three functional demos plus fifteen focused patterns; ids are unique.
+        #expect(ScriptGraphExamples.functionalDemos.count == 3)
+        #expect(ScriptGraphExamples.patterns.count == 15)
+        #expect(ScriptGraphExamples.all.count == 18)
+        #expect(ScriptGraphExamples.functionalDemos.allSatisfy { $0.kind == .functionalDemo })
+        #expect(ScriptGraphExamples.patterns.allSatisfy { $0.kind == .pattern })
         let ids = ScriptGraphExamples.all.map(\.id)
         #expect(Set(ids).count == ids.count)
         for example in ScriptGraphExamples.all {
@@ -93,7 +101,7 @@ import RCP3Runtime
     @Test func allCuratedExamplesRunToday() {
         let pending = Set(ScriptGraphExamples.all.filter { !$0.runsToday }.map(\.name))
         #expect(pending.isEmpty)
-        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 15)
+        #expect(ScriptGraphExamples.all.filter(\.runsToday).count == 18)
     }
 
     @Test func everyExampleHasAnActionableCertificationManifest() {

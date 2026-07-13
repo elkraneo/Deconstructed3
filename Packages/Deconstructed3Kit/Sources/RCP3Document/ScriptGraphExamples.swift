@@ -17,6 +17,11 @@ public enum ScriptGraphExampleCertificationStatus: Sendable, Equatable {
     case rcp3Certified(build: String, date: String)
 }
 
+public enum ScriptGraphExampleKind: String, Sendable, CaseIterable {
+    case pattern
+    case functionalDemo
+}
+
 public struct ScriptGraphExampleCertification: Sendable {
     public let provenance: ScriptGraphExampleProvenance
     public let capabilities: [String]
@@ -82,6 +87,8 @@ public struct ScriptGraphExample: Identifiable, Sendable {
     public let id: String
     /// The gallery display name (e.g. `"Drag to Move"`).
     public let name: String
+    /// Whether this is a focused node pattern or a composed, product-like demo.
+    public let kind: ScriptGraphExampleKind
     /// A one-line description, shown as help in the gallery. For a `runsToday == false`
     /// example it explains what the example needs; for the honest-literal cases it
     /// notes the literal caveat.
@@ -103,6 +110,7 @@ public struct ScriptGraphExample: Identifiable, Sendable {
     public init(
         id: String,
         name: String,
+        kind: ScriptGraphExampleKind = .pattern,
         summary: String,
         certification: ScriptGraphExampleCertification,
         graph: RCP3ScriptGraph,
@@ -110,6 +118,7 @@ public struct ScriptGraphExample: Identifiable, Sendable {
     ) {
         self.id = id
         self.name = name
+        self.kind = kind
         self.summary = summary
         self.certification = certification
         let augmentedData = Self.addRequiredComponentTypeLiterals(to: graph)
@@ -188,8 +197,15 @@ public struct ScriptGraphExample: Identifiable, Sendable {
 /// then the local-variable-driven ones), and built once.
 public enum ScriptGraphExamples {
 
-    /// All examples, in gallery order.
-    public static let all: [ScriptGraphExample] = [
+    /// Composed programs intended to be tested and presented as product demos.
+    public static let functionalDemos: [ScriptGraphExample] = [
+        comboTarget,
+        floorSelector,
+        batchBuilder,
+    ]
+
+    /// Small, focused recipes useful while authoring a larger graph.
+    public static let patterns: [ScriptGraphExample] = [
         dragToMove,
         dragWithOffset,
         drift,
@@ -206,6 +222,9 @@ public enum ScriptGraphExamples {
         tapToggle,
         growByLoop,
     ]
+
+    /// All examples, in gallery order.
+    public static let all: [ScriptGraphExample] = functionalDemos + patterns
 
     /// Look up an example by id (the synthetic open-graph key).
     public static func example(id: String) -> ScriptGraphExample? {
@@ -260,6 +279,171 @@ public enum ScriptGraphExamples {
             ]
         )
     }
+
+    // MARK: - FUNCTIONAL DEMOS
+
+    /// A complete three-hit interaction: taps update persistent state, branch on a
+    /// threshold, show progress spatially, celebrate success, then reset the streak.
+    public static let comboTarget = ScriptGraphExample(
+        id: "demo.combo-target",
+        name: "Combo Target",
+        kind: .functionalDemo,
+        summary: "Land three taps: the target advances for hits one and two, then jumps, grows, and resets the streak on hit three.",
+        certification: certification(
+            .unityPattern,
+            capabilities: ["gesture.tap", "state.counter", "math.threshold", "control.branch", "transform.feedback"],
+            expected: "Tap one moves to X = 0.25, tap two to X = 0.5, and tap three moves to Y = 0.8 at 1.5× scale; the next tap starts the streak again.",
+            action: "Enter preview and dispatch four taps, checking the position and scale after every tap."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "increment", type: "tm_variable_add", label: "Hits += 1", x: 280, y: 0, variableName: "hits"),
+                .init(id: "hits", type: "tm_get_variable_node", label: "Get Hits", x: 280, y: 260, variableName: "hits"),
+                .init(id: "won", type: "tm_math_greater_equal", label: "Hits ≥ 3", x: 560, y: 220),
+                .init(id: "branch", type: "tm_if", label: "Combo Complete?", x: 840, y: 0),
+                .init(id: "progressX", type: "tm_math_multiply", label: "Progress × 0.25", x: 840, y: 300),
+                .init(id: "progressPosition", type: "tm_make_vector3", label: "Progress Position", x: 1120, y: 300),
+                .init(id: "showProgress", type: "tm_set_component", label: "Show Progress", x: 1400, y: 220),
+                .init(id: "successPosition", type: "tm_make_vector3", label: "Success Position", x: 1120, y: 520),
+                .init(id: "successScale", type: "tm_make_vector3", label: "Success Scale", x: 1120, y: 700),
+                .init(id: "celebrate", type: "tm_set_component", label: "Celebrate", x: 1400, y: 0),
+                .init(id: "reset", type: "tm_clear_variable_node", label: "Reset Hits", x: 1680, y: 0, variableName: "hits"),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "increment"),
+                exec("e2", from: "increment", to: "branch"),
+                RCP3ScriptGraph.Wire(id: "e3", from: "branch", to: "celebrate", fromPin: pin("true"), toPin: nil),
+                RCP3ScriptGraph.Wire(id: "e4", from: "branch", to: "showProgress", fromPin: pin("false"), toPin: nil),
+                exec("e5", from: "celebrate", to: "reset"),
+                data("d1", from: "hits", "value", to: "won", "a"),
+                data("d2", from: "won", "result", to: "branch", "condition"),
+                data("d3", from: "hits", "value", to: "progressX", "a"),
+                data("d4", from: "progressX", "result", to: "progressPosition", "x"),
+                data("d5", from: "progressPosition", "vec3", to: "showProgress", "translation"),
+                data("d6", from: "successPosition", "vec3", to: "celebrate", "translation"),
+                data("d7", from: "successScale", "vec3", to: "celebrate", "scale"),
+            ],
+            data: [
+                lit("increment.value", node: "increment", pin: "value", 1),
+                lit("won.threshold", node: "won", pin: "b", 3),
+                lit("progress.factor", node: "progressX", pin: "b", 0.25),
+                lit("success.y", node: "successPosition", pin: "y", 0.8),
+                lit("success.sx", node: "successScale", pin: "x", 1.5),
+                lit("success.sy", node: "successScale", pin: "y", 1.5),
+                lit("success.sz", node: "successScale", pin: "z", 1.5),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A compact cyclic state machine: each tap advances a floor, modulo four,
+    /// computes a position, and branches to a distinct arrival treatment at floor 0.
+    public static let floorSelector = ScriptGraphExample(
+        id: "demo.floor-selector",
+        name: "Four-floor Elevator",
+        kind: .functionalDemo,
+        summary: "Each tap advances one floor (0–3), computes its height, and highlights the lobby when the cycle wraps.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["gesture.tap", "state.machine", "math.modulo", "control.branch", "transform.computed"],
+            expected: "Successive taps move to Y = 0.4, 0.8, 1.2, then return to Y = 0 with a wider lobby-arrival scale.",
+            action: "Enter preview, dispatch four taps, and verify the elevator cycles through all four heights."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "increment", type: "tm_variable_add", label: "Floor += 1", x: 280, y: 0, variableName: "floor"),
+                .init(id: "modulo", type: "tm_math_mod", label: "Modulo 4", x: 560, y: 240),
+                .init(id: "setFloor", type: "tm_set_variable_node", label: "Set Floor", x: 840, y: 0, variableName: "floor"),
+                .init(id: "floor", type: "tm_get_variable_node", label: "Get Floor", x: 840, y: 300, variableName: "floor"),
+                .init(id: "height", type: "tm_math_multiply", label: "Floor × 0.4", x: 1120, y: 300),
+                .init(id: "position", type: "tm_make_vector3", label: "Floor Position", x: 1400, y: 300),
+                .init(id: "isLobby", type: "tm_equals", label: "Floor = 0", x: 1120, y: 500),
+                .init(id: "branch", type: "tm_if", label: "Lobby?", x: 1120, y: 0),
+                .init(id: "normalScale", type: "tm_make_vector3", label: "Normal Scale", x: 1400, y: 520),
+                .init(id: "lobbyScale", type: "tm_make_vector3", label: "Lobby Scale", x: 1400, y: 700),
+                .init(id: "normal", type: "tm_set_component", label: "Move Elevator", x: 1680, y: 220),
+                .init(id: "lobby", type: "tm_set_component", label: "Lobby Arrival", x: 1680, y: 0),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "increment"),
+                exec("e2", from: "increment", to: "setFloor"),
+                exec("e3", from: "setFloor", to: "branch"),
+                RCP3ScriptGraph.Wire(id: "e4", from: "branch", to: "lobby", fromPin: pin("true"), toPin: nil),
+                RCP3ScriptGraph.Wire(id: "e5", from: "branch", to: "normal", fromPin: pin("false"), toPin: nil),
+                data("d1", from: "increment", "result", to: "modulo", "a"),
+                data("d2", from: "modulo", "result", to: "setFloor", "value"),
+                data("d3", from: "floor", "value", to: "height", "a"),
+                data("d4", from: "height", "result", to: "position", "y"),
+                data("d5", from: "floor", "value", to: "isLobby", "a"),
+                data("d6", from: "isLobby", "result", to: "branch", "condition"),
+                data("d7", from: "position", "vec3", to: "normal", "translation"),
+                data("d8", from: "position", "vec3", to: "lobby", "translation"),
+                data("d9", from: "normalScale", "vec3", to: "normal", "scale"),
+                data("d10", from: "lobbyScale", "vec3", to: "lobby", "scale"),
+            ],
+            data: [
+                lit("increment.value", node: "increment", pin: "value", 1),
+                lit("modulo.count", node: "modulo", pin: "b", 4),
+                lit("height.factor", node: "height", pin: "b", 0.4),
+                lit("lobby.zero", node: "isLobby", pin: "b", 0),
+                lit("normal.sx", node: "normalScale", pin: "x", 1),
+                lit("normal.sy", node: "normalScale", pin: "y", 1),
+                lit("normal.sz", node: "normalScale", pin: "z", 1),
+                lit("lobby.sx", node: "lobbyScale", pin: "x", 1.6),
+                lit("lobby.sy", node: "lobbyScale", pin: "y", 0.8),
+                lit("lobby.sz", node: "lobbyScale", pin: "z", 1),
+            ]
+        ),
+        runsToday: true
+    )
+
+    /// A batch-workflow graph: clear state, execute five loop steps, accumulate the
+    /// result, and use the loop's End scope to commit one final transform.
+    public static let batchBuilder = ScriptGraphExample(
+        id: "demo.batch-builder",
+        name: "Five-step Batch Builder",
+        kind: .functionalDemo,
+        summary: "One tap runs a five-step batch, accumulates progress, then commits the finished scale and position only when the loop ends.",
+        certification: certification(
+            .unrealPattern,
+            capabilities: ["gesture.tap", "state.reset", "control.loop", "state.accumulator", "control.loop-end"],
+            expected: "Every tap performs five 0.2 accumulation steps and finishes at scale 1 with X = 1, demonstrating Step versus End flow.",
+            action: "Enter preview, tap once, and verify the final transform is committed after the bounded loop."
+        ),
+        graph: RCP3ScriptGraph(
+            nodes: [
+                .init(id: "tap", type: "tm_gesture_event_tap", x: 0, y: 0),
+                .init(id: "clear", type: "tm_clear_variable_node", label: "Clear Progress", x: 280, y: 0, variableName: "progress"),
+                .init(id: "loop", type: "tm_loop", label: "Five Steps", x: 560, y: 0),
+                .init(id: "accumulate", type: "tm_variable_add", label: "Progress += 0.2", x: 840, y: 220, variableName: "progress"),
+                .init(id: "progress", type: "tm_get_variable_node", label: "Get Progress", x: 840, y: 460, variableName: "progress"),
+                .init(id: "position", type: "tm_make_vector3", label: "Result Position", x: 1120, y: 420),
+                .init(id: "scale", type: "tm_make_vector3", label: "Result Scale", x: 1120, y: 620),
+                .init(id: "commit", type: "tm_set_component", label: "Commit Batch", x: 1400, y: 0),
+            ],
+            wires: [
+                exec("e1", from: "tap", to: "clear"),
+                exec("e2", from: "clear", to: "loop"),
+                RCP3ScriptGraph.Wire(id: "e3", from: "loop", to: "accumulate", fromPin: pin("step"), toPin: nil),
+                RCP3ScriptGraph.Wire(id: "e4", from: "loop", to: "commit", fromPin: pin("end"), toPin: nil),
+                data("d1", from: "progress", "value", to: "position", "x"),
+                data("d2", from: "progress", "value", to: "scale", "x"),
+                data("d3", from: "progress", "value", to: "scale", "y"),
+                data("d4", from: "progress", "value", to: "scale", "z"),
+                data("d5", from: "position", "vec3", to: "commit", "translation"),
+                data("d6", from: "scale", "vec3", to: "commit", "scale"),
+            ],
+            data: [
+                lit("loop.begin", node: "loop", pin: "begin", 0),
+                lit("loop.end", node: "loop", pin: "end", 5),
+                lit("loop.step", node: "loop", pin: "step", 1),
+                lit("accumulate.value", node: "accumulate", pin: "value", 0.2),
+            ]
+        ),
+        runsToday: true
+    )
 
     // MARK: - RUNS TODAY
 

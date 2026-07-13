@@ -72,8 +72,17 @@ public final class ScriptJSHost {
         lastException = nil
         guard let handlers = handlers[event], !handlers.isEmpty else { return }
         let jsPayload = JSValue(object: payload, in: context)
+        dispatch(event: event, payloadValue: jsPayload)
+    }
+
+    /// Invokes handlers with an already-constructed JavaScript payload. Canonical
+    /// previews use this to include live bridged objects (such as `entity`) that
+    /// cannot be represented by a Foundation dictionary.
+    public func dispatch(event: String, payloadValue: JSValue?) {
+        lastException = nil
+        guard let handlers = handlers[event], !handlers.isEmpty else { return }
         for handler in handlers {
-            handler.call(withArguments: jsPayload.map { [$0] } ?? [])
+            handler.call(withArguments: payloadValue.map { [$0] } ?? [])
         }
     }
 

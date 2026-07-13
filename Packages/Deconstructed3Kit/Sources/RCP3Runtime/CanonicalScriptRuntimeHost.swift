@@ -73,6 +73,31 @@ public final class CanonicalScriptRuntimeHost {
         scriptHost.load("if (typeof this[\(callbackJSON)] === 'function') this[\(callbackJSON)](\(payloadJSON));")
     }
 
+    /// Installs lifecycle-created subscriptions, matching the real runtime's first
+    /// activation before the user can interact with the entity.
+    public func activate() {
+        dispatch("didAdd")
+    }
+
+    /// Dispatches a canonical gesture subscription. The compiler's handler unwraps
+    /// `e.event`, so the adapter supplies that envelope plus the live mock entity.
+    public func dispatchGesture(_ name: String, payload: [String: Any] = [:]) {
+        let payloadJSON = Self.json(payload) ?? "{}"
+        let expression = """
+        ({ event: Object.assign({
+            entity: entity,
+            phase: { equals: function(other) { return false; } }
+        }, \(payloadJSON)) })
+        """
+        let value = context.evaluateScript(expression)
+        observation.operations.append(.event(name))
+        scriptHost.dispatch(event: name, payloadValue: value)
+    }
+
+    public func hasGestureHandler(_ name: String) -> Bool {
+        scriptHost.hasHandler(for: name)
+    }
+
     private func installCanonicalBridge() {
         let global = context.objectForKeyedSubscript("globalThis")
         let record: @convention(block) (String, JSValue) -> Void = { [weak observation] name, value in
@@ -188,7 +213,9 @@ public final class CanonicalScriptRuntimeHost {
         }
         const RealityKit = {
             ModelComponent: componentType("ModelComponent"),
-            InputTargetComponent: componentType("InputTargetComponent")
+            InputTargetComponent: componentType("InputTargetComponent"),
+            DragGestureEvent: { name: "drag", Phase: { ended: "ended" } },
+            TapGestureEvent: { name: "tap" }
         };
         const moduleProxy = new Proxy(RealityKit, {
             get: function(target, name) {
@@ -196,9 +223,28 @@ public final class CanonicalScriptRuntimeHost {
                 return target[name];
             }
         });
+        const Math3D = {
+            Vector2: function(x, y) { return [x, y]; },
+            Vector3: function(x, y, z) { return [x, y, z]; },
+            Vector4: function(x, y, z, w) { return [x, y, z, w]; },
+            add: function(a, b) { return a.map(function(v, i) { return v + b[i]; }); },
+            subtract: function(a, b) { return a.map(function(v, i) { return v - b[i]; }); },
+            multiply: function(a, b) {
+                if (Array.isArray(a) && typeof b === "number") return a.map(function(v) { return v * b; });
+                if (Array.isArray(b) && typeof a === "number") return b.map(function(v) { return a * v; });
+                if (Array.isArray(a) && Array.isArray(b)) return a.map(function(v, i) { return v * b[i]; });
+                return a * b;
+            },
+            length: function(a) { return Math.sqrt(a.reduce(function(sum, v) { return sum + v * v; }, 0)); },
+            normal: function(a) {
+                const length = Math3D.length(a);
+                return length === 0 ? a.slice() : a.map(function(v) { return v / length; });
+            }
+        };
+        entity.generateCollisionShapes = function() {};
         global.require = function(name) {
             if (name === "RealityKit") return moduleProxy;
-            if (name === "Math3D") return {};
+            if (name === "Math3D") return Math3D;
             return {};
         };
         global.entity = entity;
