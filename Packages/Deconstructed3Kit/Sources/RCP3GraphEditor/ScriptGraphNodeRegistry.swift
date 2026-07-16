@@ -29,13 +29,29 @@ public struct ScriptGraphNodeRegistry: Sendable {
                 outputs.append(.init(connectorName: "exec", displayName: "", isExec: true))
             }
             if node.method?.type == "instance", node.object != nil {
-                inputs.append(.data("source", "Source"))
+                inputs.append(.data(
+                    "source", "Source",
+                    type: Self.declaredType(node.object ?? "Any", module: node.module),
+                    presence: .unknown,
+                    evidence: .nodeLibrary
+                ))
             }
             inputs += declaration.inputs.map {
-                .data($0.name, Self.displayName(for: $0))
+                .data(
+                    $0.name,
+                    Self.displayName(for: $0),
+                    type: Self.declaredType($0.type, module: $0.module, isArray: $0.isArray == true),
+                    presence: $0.isOptional == true ? .optional : .unknown,
+                    evidence: .nodeLibrary
+                )
             }
             outputs += declaration.outputs.map {
-                .data($0.name, Self.displayName(for: $0))
+                .data(
+                    $0.name,
+                    Self.displayName(for: $0),
+                    type: Self.declaredType($0.type, module: $0.module, isArray: $0.isArray == true),
+                    evidence: .nodeLibrary
+                )
             }
             let category = Self.category(for: node.category)
             specs[declaration.identity] = .init(
@@ -63,8 +79,23 @@ public struct ScriptGraphNodeRegistry: Sendable {
             var outputs = hasExec
                 ? [ScriptGraphNodeLibrary.PinSpec(connectorName: "exec", displayName: "", isExec: true)]
                 : []
-            inputs += node.inputs.map { .data($0.name, $0.displayName) }
-            outputs += node.outputs.map { .data($0.name, $0.displayName) }
+            inputs += node.inputs.map {
+                .data(
+                    $0.name,
+                    $0.displayName,
+                    type: Self.declaredType($0.typeToken),
+                    presence: $0.isOptional ? .optional : .unknown,
+                    evidence: .externalCatalog
+                )
+            }
+            outputs += node.outputs.map {
+                .data(
+                    $0.name,
+                    $0.displayName,
+                    type: Self.declaredType($0.typeToken),
+                    evidence: .externalCatalog
+                )
+            }
             let category: ScriptGraphNodeLibrary.Category = switch node.category {
             case .events: .events
             case .controlFlow: .controlFlow
@@ -118,6 +149,16 @@ public struct ScriptGraphNodeRegistry: Sendable {
             .split(separator: "_")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
+    }
+
+    private static func declaredType(
+        _ type: String,
+        module: String? = nil,
+        isArray: Bool = false
+    ) -> ScriptGraphNodeLibrary.PinTypeConstraint {
+        let qualified = module.map { type.contains(".") ? type : "\($0).\(type)" } ?? type
+        let token = isArray ? "Array<\(qualified)>" : qualified
+        return ScriptGraphNodeLibrary.schemaType(token)
     }
 
     private static func category(for value: String?) -> ScriptGraphNodeLibrary.Category {

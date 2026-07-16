@@ -50,6 +50,13 @@ public enum ScriptGraphValidator {
             }
         }
 
+        validateEndpointsAndContracts(
+            in: graph,
+            registry: registry,
+            issues: &issues,
+            coverage: &coverage
+        )
+
         for literal in graph.data where !nodeIDs.contains(literal.toNode) {
             issues.append(.error(
                 .missingLiteralTarget, subject: literal.id,
@@ -64,7 +71,7 @@ public enum ScriptGraphValidator {
             let status: ScriptGraphValidationCoverage.Status
             if !settingsAreValid {
                 status = .unknown(reason: "The node settings are invalid or incomplete.")
-            } else if exactSpec(for: node, registry: registry) != nil {
+            } else if exactSpec(for: node, in: graph, registry: registry) != nil {
                 status = .exact
             } else {
                 let reason = "No declared interface is available for node type \(node.type)."
@@ -84,6 +91,201 @@ public enum ScriptGraphValidator {
             issues: issues.sorted(by: issueOrder),
             coverage: coverage.sorted(by: coverageOrder)
         )
+    }
+
+    // MARK: - Endpoints and pin contracts
+
+    private enum WireValueKind { case exec, data }
+
+    private static func validateEndpointsAndContracts(
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry,
+        issues: inout [ScriptGraphValidationIssue],
+        coverage: inout [ScriptGraphValidationCoverage]
+    ) {
+        let nodes = graph.nodes.reduce(into: [String: RCP3ScriptGraph.Node]()) {
+            if $0[$1.id] == nil { $0[$1.id] = $1 }
+        }
+        let specs = graph.nodes.reduce(
+            into: [String: ScriptGraphNodeLibrary.NodeSpec]()
+        ) { result, node in
+            if result[node.id] == nil {
+                result[node.id] = exactSpec(for: node, in: graph, registry: registry)
+            }
+        }
+
+        for node in graph.nodes {
+            guard let spec = specs[node.id] else { continue }
+            for (direction, pins) in [("input", spec.inputs), ("output", spec.outputs)] {
+                for pin in pins {
+                    let status: ScriptGraphValidationCoverage.Status
+                    if pin.isExec {
+                        status = .exact
+                    } else {
+                        let typeKnown: Bool = switch pin.typeConstraint {
+                        case .unknown, .sameAs, .arrayElement, .array: false
+                        case .any, .concrete: true
+                        }
+                        let presenceKnown = direction == "output" || pin.presence != .unknown
+                        if typeKnown && presenceKnown {
+                            status = .exact
+                        } else {
+                            let missing = [
+                                typeKnown ? nil : "type",
+                                presenceKnown ? nil : "presence",
+                            ].compactMap { $0 }.joined(separator: " and ")
+                            status = .unknown(reason: "No source-backed \(missing) contract.")
+                        }
+                    }
+                    coverage.append(.init(
+                        subject: .pin(
+                            nodeID: node.id,
+                            nodeType: node.type,
+                            direction: direction,
+                            connectorName: pin.connectorName
+                        ),
+                        status: status
+                    ))
+                }
+            }
+        }
+
+        for wire in graph.wires {
+            guard let source = nodes[wire.from], let target = nodes[wire.to],
+                  let sourceSpec = specs[source.id], let targetSpec = specs[target.id]
+            else { continue }
+
+            let sourcePin = endpointPin(hash: wire.fromPin, among: sourceSpec.outputs)
+            let targetPin = endpointPin(hash: wire.toPin, among: targetSpec.inputs)
+            if sourcePin == nil {
+                let reversed = endpointPin(hash: wire.fromPin, among: sourceSpec.inputs) != nil
+                issues.append(.error(
+                    reversed ? .reversedWireEndpoint : .unknownWireSourcePin,
+                    subject: wire.id,
+                    "Wire \(wire.id) source connector is not a declared output of \(source.id)."
+                ))
+            }
+            if targetPin == nil {
+                let reversed = endpointPin(hash: wire.toPin, among: targetSpec.outputs) != nil
+                issues.append(.error(
+                    reversed ? .reversedWireEndpoint : .unknownWireTargetPin,
+                    subject: wire.id,
+                    "Wire \(wire.id) target connector is not a declared input of \(target.id)."
+                ))
+            }
+            guard let sourcePin, let targetPin else { continue }
+            let sourceKind: WireValueKind = sourcePin.isExec ? .exec : .data
+            let targetKind: WireValueKind = targetPin.isExec ? .exec : .data
+            guard sourceKind == targetKind else {
+                issues.append(.error(
+                    .mixedWireKinds, subject: wire.id,
+                    "Wire \(wire.id) connects an execution pin to a data pin."
+                ))
+                continue
+            }
+            if sourceKind == .data,
+               constraintsConflict(sourcePin.typeConstraint, targetPin.typeConstraint) {
+                issues.append(.error(
+                    .incompatibleWireTypes, subject: wire.id,
+                    "Wire \(wire.id) connects incompatible data-pin types."
+                ))
+            }
+        }
+
+        for literal in graph.data {
+            guard let node = nodes[literal.toNode], let spec = specs[node.id] else { continue }
+            guard let pin = spec.inputs.first(where: {
+                !$0.isExec && $0.connectorHash == literal.toPin
+            }) else {
+                let reversed = spec.outputs.contains {
+                    !$0.isExec && $0.connectorHash == literal.toPin
+                }
+                issues.append(.error(
+                    reversed ? .reversedLiteralEndpoint : .unknownLiteralTargetPin,
+                    subject: literal.id,
+                    "Literal \(literal.id) does not target a declared data input of \(node.id)."
+                ))
+                continue
+            }
+            if let literalType = literalTypeConstraint(literal),
+               constraintsConflict(literalType, pin.typeConstraint) {
+                issues.append(.error(
+                    .incompatibleLiteralType, subject: literal.id,
+                    "Literal \(literal.id) is incompatible with its target pin type."
+                ))
+            }
+        }
+
+        for node in graph.nodes {
+            guard let spec = specs[node.id] else { continue }
+            for pin in spec.inputs where !pin.isExec && pin.presence == .required {
+                let satisfiedByWire = graph.wires.contains {
+                    $0.to == node.id && $0.toPin == pin.connectorHash
+                }
+                let satisfiedByLiteral = graph.data.contains {
+                    $0.toNode == node.id && $0.toPin == pin.connectorHash
+                }
+                guard !satisfiedByWire && !satisfiedByLiteral else { continue }
+                issues.append(.warning(
+                    .missingRequiredInput,
+                    subject: node.id,
+                    "Node \(node.id) has no value for required input \(pin.displayName)."
+                ))
+            }
+        }
+    }
+
+    private static func endpointPin(
+        hash: UInt64?,
+        among pins: [ScriptGraphNodeLibrary.PinSpec]
+    ) -> ScriptGraphNodeLibrary.PinSpec? {
+        if let hash {
+            return pins.first { $0.connectorHash == hash }
+        }
+        let execPins = pins.filter(\.isExec)
+        return execPins.first(where: { $0.connectorName.isEmpty })
+            ?? (execPins.count == 1 ? execPins.first : nil)
+    }
+
+    private static func constraintsConflict(
+        _ lhs: ScriptGraphNodeLibrary.PinTypeConstraint,
+        _ rhs: ScriptGraphNodeLibrary.PinTypeConstraint
+    ) -> Bool {
+        switch (lhs, rhs) {
+        case (.unknown, _), (_, .unknown), (.any, _), (_, .any):
+            return false
+        case let (.concrete(leftToken, leftHash), .concrete(rightToken, rightHash)):
+            if let leftHash, let rightHash { return leftHash != rightHash }
+            return leftToken != rightToken
+        default:
+            // Relational constraints are checked once both sides resolve to a
+            // concrete instance type; an unresolved relation remains coverage,
+            // never a guessed incompatibility.
+            return false
+        }
+    }
+
+    private static func literalTypeConstraint(
+        _ literal: RCP3ScriptGraph.DataLiteral
+    ) -> ScriptGraphNodeLibrary.PinTypeConstraint? {
+        if let value = literal.value {
+            switch value {
+            case .number:
+                return .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash)
+            case .bool:
+                return .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash)
+            case .string:
+                return .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash)
+            case .variableRef:
+                break
+            }
+        }
+        return switch literal.valueType {
+        case "tm_double", "tm_float": .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash)
+        case "tm_bool": .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash)
+        case "tm_string": .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash)
+        default: nil
+        }
     }
 
     // MARK: - Structure and variables
@@ -115,8 +317,8 @@ public enum ScriptGraphValidator {
         guard
             let source = graph.nodes.first(where: { $0.id == wire.from }),
             let target = graph.nodes.first(where: { $0.id == wire.to }),
-            let sourceSpec = exactSpec(for: source, registry: registry),
-            let targetSpec = exactSpec(for: target, registry: registry)
+            let sourceSpec = exactSpec(for: source, in: graph, registry: registry),
+            let targetSpec = exactSpec(for: target, in: graph, registry: registry)
         else { return false }
 
         let sourceIsExec = if let hash = wire.fromPin {
@@ -492,33 +694,10 @@ public enum ScriptGraphValidator {
 
     private static func exactSpec(
         for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph,
         registry: ScriptGraphNodeRegistry
     ) -> ScriptGraphNodeLibrary.NodeSpec? {
-        if let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.type),
-           let selection = node.enumSelection,
-           let selected = policy.schema.cases.first(where: { $0.name == selection.caseName }) {
-            let associated = selected.associatedValues.map {
-                ScriptGraphNodeLibrary.PinSpec.data($0.name, $0.name)
-            }
-            return switch policy.direction {
-            case .make: .init(inputs: associated, outputs: policy.fixedPins, category: .make)
-            case .break: .init(inputs: policy.fixedPins, outputs: associated, category: .make)
-            }
-        }
-        if let settings = node.materialSettings {
-            return ScriptGraphNodeLibrary.materialSpec(for: node.type, settings: settings)
-        }
-        if let settings = node.entityParameterSettings {
-            return ScriptGraphNodeLibrary.entityParameterSpec(for: node.type, settings: settings)
-        }
-        if node.dynamicConnectorSettings != nil,
-           ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type) != nil {
-            // The policy plus validated connector settings completely describes the
-            // serialized interface, even though no static NodeSpec can represent all
-            // possible connector selections.
-            return registry.spec(for: node.type)
-        }
-        return registry.spec(for: node.type)
+        ScriptGraphPinResolver.resolvedContract(for: node, in: graph, registry: registry)
     }
 
     private static func issueOrder(
@@ -550,9 +729,17 @@ public struct ScriptGraphValidationReport: Codable, Sendable, Equatable {
 
     public var errors: [ScriptGraphValidationIssue] { issues.filter { $0.severity == .error } }
     public var warnings: [ScriptGraphValidationIssue] { issues.filter { $0.severity == .warning } }
+    public var staticReadinessIssues: [ScriptGraphValidationIssue] {
+        issues.filter { $0.code == .missingRequiredInput }
+    }
     public var isStructurallyValid: Bool { errors.isEmpty }
     public var hasCompleteCoverage: Bool { coverage.allSatisfy { $0.status == .exact } }
     public var isFullyValidated: Bool { isStructurallyValid && hasCompleteCoverage }
+    /// Static authoring readiness only. External execution in RCP3 is a separate
+    /// certification tier and is never implied by this value.
+    public var isStaticallyReady: Bool {
+        isFullyValidated && staticReadinessIssues.isEmpty
+    }
 }
 
 public struct ScriptGraphValidationIssue: Codable, Sendable, Equatable, Identifiable {
@@ -566,7 +753,16 @@ public struct ScriptGraphValidationIssue: Codable, Sendable, Equatable, Identifi
         case missingWireSource
         case missingWireTarget
         case incompleteWirePins
+        case unknownWireSourcePin
+        case unknownWireTargetPin
+        case reversedWireEndpoint
+        case mixedWireKinds
+        case incompatibleWireTypes
         case missingLiteralTarget
+        case unknownLiteralTargetPin
+        case reversedLiteralEndpoint
+        case incompatibleLiteralType
+        case missingRequiredInput
         case danglingVariableReference
         case incompleteVariableReference
         case mismatchedVariableReference
@@ -614,11 +810,19 @@ public struct ScriptGraphValidationCoverage: Codable, Sendable, Equatable {
     public enum Subject: Codable, Sendable, Equatable {
         case node(id: String, type: String)
         case variable(id: String, name: String)
+        case pin(
+            nodeID: String,
+            nodeType: String,
+            direction: String,
+            connectorName: String
+        )
 
         fileprivate var sortKey: String {
             switch self {
             case let .node(id, type): "node:\(id):\(type)"
             case let .variable(id, name): "variable:\(id):\(name)"
+            case let .pin(nodeID, nodeType, direction, connectorName):
+                "pin:\(nodeID):\(nodeType):\(direction):\(connectorName)"
             }
         }
     }

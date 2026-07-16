@@ -1,5 +1,8 @@
 # Reality Composer Pro 3 — Clean-Room Behavioral Spec
 
+See also [RCP3 Script Graph Certification](./RCP3-ScriptGraph-Certification.md)
+for the repeatable external parity runner.
+
 The **only** sanctioned input for implementing Deconstructed 3. Records *observed*
 behavior and on-disk format facts — black-box findings from inspecting real RCP 3
 projects and the running app. No decompilation; no reference to internal research
@@ -1037,6 +1040,72 @@ cycles across the authoring mechanisms, while the JavaScriptCore seam locks an e
 compiler golden and compares observable behavior against fresh emission. These tests
 prove shared machinery; an actual RCP open/save and canonical RKS execution remains
 the external certification boundary and is never conflated with headless parity.
+
+### RCP3 parity and connector-contract certification
+
+The parity target is Reality Composer Pro 3 itself. Earlier Reality Composer Pro
+releases are not a compatibility oracle for Script Graph because they do not expose
+this authoring surface.
+
+RCP3 distinguishes a node's display label from its connector contract. A connector
+has a direction (input or output), a flow kind (event or data), and, for data, a
+value type. RCP3 also distinguishes inputs that must receive a value from inputs
+that have a registration default, are optional, or resolve to an implicit entity.
+The editor displays required unresolved inputs with a red asterisk. A graph can
+therefore contain a recognized node and round-trip successfully while still being
+unready to execute because an endpoint is reversed, a connector hash is not part of
+the selected node interface, data types conflict, or a required input is unresolved.
+
+Parity evidence is consequently tracked in separate layers:
+
+1. **Catalogue coverage:** every RCP3 creator-visible node can be selected and
+   materialized with its observed settings family.
+2. **Structural round trip:** the graph survives two parse/write cycles without
+   losing node, connector, setting, or value identity.
+3. **Connector-contract coverage:** every endpoint has an observed direction and
+   flow kind; data pins additionally retain the strongest known type and input
+   presence contract. Unknown type or presence metadata is reported as an explicit
+   coverage gap rather than guessed.
+4. **Local execution:** the emitted program compiles and produces the expected
+   observable result in the local runtime seam.
+5. **RCP3 certification:** the same fixture is validated and executed by RCP3.
+
+Only the fifth layer is external RCP3 runtime evidence. Passing the first four must
+never be reported as full RCP3 parity.
+
+RCP3 3.0 exposes a command-line test mode in its application executable. The
+observed Script Graph integration entry point is named `script-graph-graph-tests`;
+it reads its asset root from `TM_SCRIPT_TEST_ASSETS_DIR` and emits a
+`test_report.json`. The runner accepts deterministic refresh-rate and seed-state
+arguments. This is the repeatable external certification boundary; direct UI-open
+screenshots remain useful diagnostics but are not the parity ledger.
+
+The integration root's observed `test.json` shape is:
+
+```json
+{
+  "script-graph-tests": {
+    "excluded": [],
+    "report_file": "%TM_SCRIPT_TEST_ASSETS_DIR%/test_report.json",
+    "projects_dir": "%TM_SCRIPT_TEST_ASSETS_DIR%"
+  }
+}
+```
+
+With that object present, RCP3 scans `.realitycomposerpro` directories beneath
+`projects_dir`. The emitted report has a top-level `projects` array; each entry has
+`project` and `tests`, and each test records `test`, `result`, `start-time`, and
+`end-time`. Observed result vocabulary includes `skipped`, `not_executed`,
+`syntax_error`, `success`, `failure`, and `unrelated_failure`; validation failures
+may additionally carry `validation-errors`.
+
+The outer headless application can report unrelated host/UI errors after the Script
+Graph integration runner has emitted its fresh report. Certification therefore
+records the process exit, but judges Script Graph cases from the fresh report's
+terminal results and the observed `Script Graph integration tests ended successfully`
+completion line. A stale report, a missing report, an unknown result, no successful
+tests, a missing successful completion, or any non-success terminal result can never
+pass.
 
 - **Fixed action:** `exec, receiver, arguments… → exec`; a shared connector test
   verifies the receiver type plus ordered arguments, and the emitter invokes one

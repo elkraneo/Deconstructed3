@@ -104,8 +104,18 @@ struct ScriptGraphValidatorTests {
 
         let report = ScriptGraphValidator.validate(graph)
         #expect(report.errors.isEmpty)
-        #expect(report.coverage.allSatisfy { $0.status == .exact })
-        #expect(report.isFullyValidated)
+        #expect(report.coverage.filter {
+            if case .node = $0.subject { return true }
+            return false
+        }.allSatisfy { $0.status == .exact })
+        #expect(report.coverage.contains {
+            guard case let .pin(_, _, _, connectorName) = $0.subject,
+                  connectorName == "roughness"
+            else { return false }
+            if case .unknown = $0.status { return true }
+            return false
+        })
+        #expect(!report.isFullyValidated)
     }
 
     @Test("Enum settings must exactly match the selected public schema case")
@@ -227,5 +237,196 @@ struct ScriptGraphValidatorTests {
 
         let report = ScriptGraphValidator.validate(graph)
         #expect(!report.errors.contains { $0.code == .incompleteWirePins })
+    }
+
+    @Test("Endpoint direction, kind, and concrete value types are validated")
+    func endpointAndTypeContracts() {
+        let registry = contractRegistry()
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "number", type: "test.number"),
+                .init(id: "bool", type: "test.bool"),
+                .init(id: "sink", type: "test.sink"),
+            ],
+            wires: [
+                .init(
+                    id: "valid",
+                    from: "number", to: "sink",
+                    fromPin: TMHash.murmur64a("value"),
+                    toPin: TMHash.murmur64a("value")
+                ),
+                .init(
+                    id: "wrong-type",
+                    from: "bool", to: "sink",
+                    fromPin: TMHash.murmur64a("value"),
+                    toPin: TMHash.murmur64a("value")
+                ),
+                .init(
+                    id: "reversed",
+                    from: "sink", to: "sink",
+                    fromPin: TMHash.murmur64a("value"),
+                    toPin: TMHash.murmur64a("value")
+                ),
+                .init(
+                    id: "unknown",
+                    from: "number", to: "sink",
+                    fromPin: 0xdeadbeef,
+                    toPin: TMHash.murmur64a("value")
+                ),
+            ],
+            data: []
+        )
+
+        let report = ScriptGraphValidator.validate(graph, registry: registry)
+        #expect(!report.errors.contains { $0.subject == "valid" })
+        #expect(report.errors.contains {
+            $0.code == .incompatibleWireTypes && $0.subject == "wrong-type"
+        })
+        #expect(report.errors.contains {
+            $0.code == .reversedWireEndpoint && $0.subject == "reversed"
+        })
+        #expect(report.errors.contains {
+            $0.code == .unknownWireSourcePin && $0.subject == "unknown"
+        })
+    }
+
+    @Test("Literal types and required-input static readiness are distinct from authoring validity")
+    func literalsAndReadiness() {
+        let registry = contractRegistry()
+        let settings = RCP3ScriptGraph.Node.EntityParameterSettings(
+            typeHash: ScriptGraphTypeRegistry.number.typeHash
+        )
+        let missing = RCP3ScriptGraph(
+            nodes: [.init(
+                id: "parameter", type: "tm_set_entity_parameter",
+                entityParameterSettings: settings
+            )],
+            wires: [], data: []
+        )
+        let missingReport = ScriptGraphValidator.validate(missing)
+        #expect(missingReport.isStructurallyValid)
+        #expect(missingReport.isFullyValidated)
+        #expect(!missingReport.isStaticallyReady)
+        #expect(missingReport.staticReadinessIssues.contains {
+            $0.code == .missingRequiredInput
+        })
+
+        let wrongLiteral = RCP3ScriptGraph(
+            nodes: [.init(id: "sink", type: "test.sink")],
+            wires: [],
+            data: [.init(
+                id: "literal",
+                toNode: "sink",
+                toPin: TMHash.murmur64a("value"),
+                value: .string("not a number")
+            )]
+        )
+        let wrongReport = ScriptGraphValidator.validate(wrongLiteral, registry: registry)
+        #expect(wrongReport.errors.contains {
+            $0.code == .incompatibleLiteralType && $0.subject == "literal"
+        })
+
+        let ready = RCP3ScriptGraph(
+            nodes: [.init(
+                id: "parameter", type: "tm_set_entity_parameter",
+                entityParameterSettings: settings
+            )],
+            wires: [],
+            data: [
+                .init(
+                    id: "name", toNode: "parameter", toPin: TMHash.murmur64a("name"),
+                    value: .string("score")
+                ),
+                .init(
+                    id: "value", toNode: "parameter", toPin: TMHash.murmur64a("value"),
+                    value: .number(1)
+                ),
+            ]
+        )
+        #expect(ScriptGraphValidator.validate(ready).isStaticallyReady)
+    }
+
+    @Test("Component and variable contracts resolve from graph-owned selectors")
+    func graphAwareContracts() {
+        let component = RCP3ScriptGraph(
+            nodes: [.init(id: "set", type: "tm_set_component")],
+            wires: [],
+            data: [
+                .init(
+                    id: "component-type", toNode: "set",
+                    toPin: TMHash.murmur64a("component_type"),
+                    valueType: "re_scripting_graph_component_type",
+                    valueHash: TMHash.murmur64a("Transform")
+                ),
+                .init(
+                    id: "translation", toNode: "set",
+                    toPin: TMHash.murmur64a("translation"),
+                    valueType: "tm_vec3f"
+                ),
+            ]
+        )
+        let componentReport = ScriptGraphValidator.validate(component)
+        #expect(!componentReport.errors.contains {
+            $0.code == .unknownLiteralTargetPin && $0.subject == "translation"
+        })
+
+        let registry = contractRegistry()
+        func variableGraph(typeHash: UInt64) -> RCP3ScriptGraph {
+            RCP3ScriptGraph(
+                nodes: [
+                    .init(
+                        id: "get", type: "tm_get_variable_node",
+                        variableName: "Value", variableRefUUID: "variable"
+                    ),
+                    .init(id: "sink", type: "test.sink"),
+                ],
+                wires: [.init(
+                    id: "wire", from: "get", to: "sink",
+                    fromPin: TMHash.murmur64a("value"),
+                    toPin: TMHash.murmur64a("value")
+                )],
+                data: [],
+                variables: [.init(
+                    uuid: "variable", name: "Value", typeHash: typeHash,
+                    editHash: 1, dataType: "typed"
+                )]
+            )
+        }
+        #expect(!ScriptGraphValidator.validate(
+            variableGraph(typeHash: ScriptGraphTypeRegistry.number.typeHash), registry: registry
+        ).errors.contains { $0.code == .incompatibleWireTypes })
+        #expect(ScriptGraphValidator.validate(
+            variableGraph(typeHash: ScriptGraphTypeRegistry.bool.typeHash), registry: registry
+        ).errors.contains { $0.code == .incompatibleWireTypes })
+    }
+
+    private func contractRegistry() -> ScriptGraphNodeRegistry {
+        let number = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.number",
+            operationID: "number",
+            displayName: "Number",
+            category: .math,
+            execution: .pure,
+            outputs: [.init(name: "value", displayName: "Value", typeToken: "Number")]
+        )
+        let bool = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.bool",
+            operationID: "bool",
+            displayName: "Bool",
+            category: .logic,
+            execution: .pure,
+            outputs: [.init(name: "value", displayName: "Value", typeToken: "Bool")]
+        )
+        let sink = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.sink",
+            operationID: "sink",
+            displayName: "Sink",
+            category: .utility,
+            execution: .action,
+            inputs: [.init(name: "value", displayName: "Value", typeToken: "Number")]
+        )
+        return ScriptGraphNodeRegistry(
+            externalCatalog: .init(nodes: [number, bool, sink])
+        )
     }
 }

@@ -106,53 +106,127 @@ public enum ScriptGraphPinResolver {
             )
             return libraryPins(for: node, spec: spec, in: graph)
         }
-        if let settings = node.materialSettings,
-           let spec = ScriptGraphNodeLibrary.materialSpec(for: node.type, settings: settings) {
-            return libraryPins(for: node, spec: spec, in: graph)
-        }
-        if let settings = node.entityParameterSettings,
-           let spec = ScriptGraphNodeLibrary.entityParameterSpec(for: node.type, settings: settings) {
-            return libraryPins(for: node, spec: spec, in: graph)
-        }
-        if let settings = node.dynamicConnectorSettings,
-           let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type) {
-            return dynamicPins(for: node, settings: settings, policy: policy, in: graph)
-        }
-        if let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.type),
-           let selectedCase = policy.selectedCase(named: node.enumSelection?.caseName) {
-            let associated = selectedCase.associatedValues.map {
-                ScriptGraphNodeLibrary.PinSpec.data($0.name, enumAssociatedValueDisplayName($0.name))
-            }
-            let spec: ScriptGraphNodeLibrary.NodeSpec
-            switch policy.direction {
-            case .make:
-                spec = .init(inputs: associated, outputs: policy.fixedPins, category: .make)
-            case .break:
-                spec = .init(inputs: policy.fixedPins, outputs: associated, category: .make)
-            }
-            return libraryPins(for: node, spec: spec, in: graph)
-        }
-        if let spec = registry.spec(for: node.type) {
+        if let spec = resolvedContract(for: node, in: graph, registry: registry) {
             return libraryPins(for: node, spec: spec, in: graph)
         }
         return wireDerivedPins(for: node, in: graph)
     }
 
-    private static func dynamicPins(
+    /// The instance-specific interface used by rendering and semantic validation.
+    /// Settings-backed nodes must resolve here so their serialized type identities
+    /// are not discarded by a static palette declaration.
+    static func resolvedSpec(
+        for node: RCP3ScriptGraph.Node,
+        registry: ScriptGraphNodeRegistry = .builtins
+    ) -> ScriptGraphNodeLibrary.NodeSpec? {
+        if let settings = node.materialSettings,
+           let spec = ScriptGraphNodeLibrary.materialSpec(for: node.type, settings: settings) {
+            return spec
+        }
+        if let settings = node.entityParameterSettings,
+           let spec = ScriptGraphNodeLibrary.entityParameterSpec(for: node.type, settings: settings) {
+            return spec
+        }
+        if let settings = node.dynamicConnectorSettings,
+           let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: node.type) {
+            return dynamicSpec(for: node, settings: settings, policy: policy)
+        }
+        if let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.type),
+           let selectedCase = policy.selectedCase(named: node.enumSelection?.caseName) {
+            let associated = selectedCase.associatedValues.map {
+                ScriptGraphNodeLibrary.PinSpec.data(
+                    $0.name,
+                    enumAssociatedValueDisplayName($0.name),
+                    type: ScriptGraphNodeLibrary.schemaType($0.swiftType),
+                    presence: policy.direction == .make ? .unknown : .optional,
+                    evidence: .publicSchema
+                )
+            }
+            return switch policy.direction {
+            case .make: .init(inputs: associated, outputs: policy.fixedPins, category: .make)
+            case .break: .init(inputs: policy.fixedPins, outputs: associated, category: .make)
+            }
+        }
+        return registry.spec(for: node.type)
+    }
+
+    /// The authoritative instance contract. Unlike the static registry view, this
+    /// resolves selectors stored elsewhere in the graph, including a component
+    /// type literal and the graph variable referenced by a local variable node.
+    static func resolvedContract(
+        for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry = .builtins
+    ) -> ScriptGraphNodeLibrary.NodeSpec? {
+        guard let base = resolvedSpec(for: node, registry: registry) else { return nil }
+        var inputs = base.inputs
+        var outputs = base.outputs
+
+        if let componentTypeHash = resolvedComponentTypeHash(forNode: node, in: graph),
+           let properties = ScriptGraphNodeLibrary.componentProperties(
+               forComponentTypeHash: componentTypeHash
+           ) {
+            switch node.type {
+            case "tm_set_component": inputs.append(contentsOf: properties)
+            case "tm_get_component": outputs.append(contentsOf: properties)
+            default: break
+            }
+        }
+
+        if let variableType = localVariableType(for: node, in: graph) {
+            func specialize(_ pin: ScriptGraphNodeLibrary.PinSpec) -> ScriptGraphNodeLibrary.PinSpec {
+                guard !pin.isExec, pin.connectorName == "value" || pin.connectorName == "result" else {
+                    return pin
+                }
+                return .init(
+                    connectorName: pin.connectorName,
+                    displayName: pin.displayName,
+                    isExec: false,
+                    typeConstraint: variableType,
+                    presence: pin.presence,
+                    contractEvidence: .graphSettings
+                )
+            }
+            inputs = inputs.map(specialize)
+            outputs = outputs.map(specialize)
+        }
+        return .init(inputs: inputs, outputs: outputs, category: base.category)
+    }
+
+    private static func localVariableType(
+        for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph
+    ) -> ScriptGraphNodeLibrary.PinTypeConstraint? {
+        let localVariableTypes: Set<String> = [
+            "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node",
+            "tm_variable_add", "tm_variable_subtract", "tm_variable_multiply",
+            "tm_variable_divide", "tm_variable_multiply_by_scalar",
+            "tm_variable_multiply_by_quaternion", "tm_variable_multiply_by_matrix",
+        ]
+        guard localVariableTypes.contains(node.type) else { return nil }
+        let variable = node.variableRefUUID.flatMap { reference in
+            graph.variables.first { $0.uuid == reference }
+        } ?? node.variableName.flatMap { name in
+            graph.variables.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        }
+        guard let typeHash = variable?.typeHash else { return nil }
+        return .concrete(
+            token: ScriptGraphTypeRegistry.identity(typeHash: typeHash)?.id
+                ?? "type:\(TMHash.hex(typeHash))",
+            typeHash: typeHash
+        )
+    }
+
+    private static func dynamicSpec(
         for node: RCP3ScriptGraph.Node,
         settings: RCP3ScriptGraph.Node.DynamicConnectorSettings,
-        policy: ScriptGraphNodeLibrary.DynamicPinPolicy,
-        in graph: RCP3ScriptGraph
-    ) -> [ScriptGraphNodePayload.Pin] {
+        policy: ScriptGraphNodeLibrary.DynamicPinPolicy
+    ) -> ScriptGraphNodeLibrary.NodeSpec {
         let dynamicInputs = settings.inputs.map {
-            ScriptGraphNodeLibrary.PinSpec.data(
-                $0.name, $0.displayName ?? dynamicConnectorDisplayName($0.name)
-            )
+            ScriptGraphNodeLibrary.dynamicPinSpec($0, isInput: true)
         }
         let dynamicOutputs = settings.outputs.map {
-            ScriptGraphNodeLibrary.PinSpec.data(
-                $0.name, $0.displayName ?? dynamicConnectorDisplayName($0.name)
-            )
+            ScriptGraphNodeLibrary.dynamicPinSpec($0, isInput: false)
         }
         let inputSpecs: [ScriptGraphNodeLibrary.PinSpec]
         switch node.type {
@@ -187,6 +261,8 @@ public enum ScriptGraphPinResolver {
             // Their connector builders mirror the typed array INPUT connector as
             // output connector 1; it is not duplicated in settings.outputs.
             outputSpecs = policy.fixedOutputs + dynamicInputs
+        case "tm_array_create":
+            outputSpecs = dynamicOutputs
         default:
             outputSpecs = dynamicOutputs + policy.fixedOutputs
         }
@@ -196,12 +272,80 @@ public enum ScriptGraphPinResolver {
         case "tm_break_material", "tm_break_physically_based_material_types": .make
         default: .string
         }
-        let spec = ScriptGraphNodeLibrary.NodeSpec(
-            inputs: inputSpecs,
-            outputs: outputSpecs,
+        return ScriptGraphNodeLibrary.NodeSpec(
+            inputs: inputSpecs.map {
+                dynamicFixedContract(for: $0, nodeType: node.type, isInput: true)
+            },
+            outputs: outputSpecs.map {
+                dynamicFixedContract(for: $0, nodeType: node.type, isInput: false)
+            },
             category: category
         )
-        return libraryPins(for: node, spec: spec, in: graph)
+    }
+
+    private static func dynamicFixedContract(
+        for pin: ScriptGraphNodeLibrary.PinSpec,
+        nodeType: String,
+        isInput: Bool
+    ) -> ScriptGraphNodeLibrary.PinSpec {
+        guard !pin.isExec, pin.contractEvidence == .unknown else { return pin }
+        let contract: (
+            ScriptGraphNodeLibrary.PinTypeConstraint,
+            ScriptGraphNodeLibrary.PinPresence
+        )?
+        switch (nodeType, pin.connectorName) {
+        case ("tm_string_merge", "separator"):
+            contract = (
+                .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash),
+                .registrationDefault
+            )
+        case ("tm_string_merge", "result"):
+            contract = (
+                .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash),
+                .optional
+            )
+        case ("tm_array_count", "count"),
+             ("tm_array_get", "index"),
+             ("tm_array_set", "index"),
+             ("tm_array_remove", "index"),
+             ("tm_array_for_each", "index"),
+             ("tm_array_find", "index"):
+            contract = (
+                .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash),
+                isInput ? .registrationDefault : .optional
+            )
+        case ("tm_array_get", "element"),
+             ("tm_array_set", "element"),
+             ("tm_array_add", "element"),
+             ("tm_array_find", "element"),
+             ("tm_array_find", "searchValue"):
+            contract = (.arrayElement(ofConnectorName: "array"), isInput ? .required : .optional)
+        case ("tm_is_valid", "result"):
+            contract = (
+                .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash),
+                .optional
+            )
+        case (_, "eventName"):
+            contract = (
+                .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash),
+                .required
+            )
+        case ("tm_send_entity_event", "receiver"):
+            contract = (
+                .concrete(token: "Entity", typeHash: ScriptGraphTypeRegistry.entity.typeHash),
+                .required
+            )
+        default:
+            contract = nil
+        }
+        guard let contract else { return pin }
+        return .data(
+            pin.connectorName,
+            pin.displayName,
+            type: contract.0,
+            presence: contract.1,
+            evidence: .observedInterface
+        )
     }
 
     private static func dynamicConnectorDisplayName(_ name: String) -> String {
@@ -237,23 +381,9 @@ public enum ScriptGraphPinResolver {
         // the component's property pins and to expose the `component_type` value label.
         let componentTypeHash = resolvedComponentTypeHash(forNode: node, in: graph)
         let resolvedComponentName = componentTypeHash.flatMap(ScriptGraphNodeLibrary.componentTypeName(forHash:))
-        let componentProperties = componentTypeHash
-            .flatMap(ScriptGraphNodeLibrary.componentProperties(forComponentTypeHash:)) ?? []
-
-        // Set Component writes the component's properties (INPUTS); Get Component reads
-        // them (OUTPUTS). A node that is neither — or that has no resolved component —
-        // gets no extra property pins.
-        var inputSpecs = spec.inputs
-        var outputSpecs = spec.outputs
-        switch node.type {
-        case "tm_set_component": inputSpecs.append(contentsOf: componentProperties)
-        case "tm_get_component": outputSpecs.append(contentsOf: componentProperties)
-        default: break
-        }
-
         var pins: [ScriptGraphNodePayload.Pin] = []
-        pins.append(contentsOf: outputSpecs.map { pin(from: $0, isInput: false, componentTypeName: resolvedComponentName) })
-        pins.append(contentsOf: inputSpecs.map { pin(from: $0, isInput: true, componentTypeName: resolvedComponentName) })
+        pins.append(contentsOf: spec.outputs.map { pin(from: $0, isInput: false, componentTypeName: resolvedComponentName) })
+        pins.append(contentsOf: spec.inputs.map { pin(from: $0, isInput: true, componentTypeName: resolvedComponentName) })
 
         // Safety net: include any wired/literal pin the declared interface omits, so
         // an edge never references a handle that does not exist.

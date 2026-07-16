@@ -27,9 +27,11 @@ let package = Package(
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
         .library(name: "RCP3GraphEditor", targets: ["RCP3GraphEditor"]),
         .library(name: "RCP3Agent", targets: ["RCP3Agent"]),
+        .library(name: "RCP3Certification", targets: ["RCP3Certification"]),
         .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
         .library(name: "RCP3CanonicalRuntime", targets: ["RCP3CanonicalRuntime"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
+        .executable(name: "rcp3-certify", targets: ["RCP3Certify"]),
     ],
     dependencies: [
         // StageView — the proven RealityKit viewport. Pinned to the published git
@@ -108,9 +110,16 @@ let package = Package(
                 "TMFormat",
             ]
         ),
+        // Fail-closed external evidence boundary. This invokes an installed RCP3
+        // test host without linking private frameworks into the application.
+        .target(name: "RCP3Certification"),
         .executableTarget(
             name: "RCP3Dump",
             dependencies: ["RCP3Document", "RCP3GraphEditor", "TMFormat"]
+        ),
+        .executableTarget(
+            name: "RCP3Certify",
+            dependencies: ["RCP3Certification"]
         ),
         .testTarget(name: "TMFormatTests", dependencies: ["TMFormat"]),
         .testTarget(name: "RCP3NodeLibTests", dependencies: ["RCP3NodeLib"]),
@@ -127,6 +136,10 @@ let package = Package(
         .testTarget(
             name: "RCP3AgentTests",
             dependencies: ["RCP3Agent", "RCP3Document", "RCP3GraphEditor", "TMFormat"]
+        ),
+        .testTarget(
+            name: "RCP3CertificationTests",
+            dependencies: ["RCP3Certification"]
         ),
         .testTarget(
             name: "DeconstructedFeatureTests",

@@ -22,6 +22,36 @@ import TMFormat
 /// fall back to its wire-derived pins (unknown node types still render).
 public enum ScriptGraphNodeLibrary {
 
+    /// A data pin's value constraint. Relational cases preserve polymorphism instead
+    /// of pretending that generic math/collection pins have one concrete type.
+    public enum PinTypeConstraint: Sendable, Hashable {
+        case unknown
+        case any
+        case concrete(token: String, typeHash: UInt64?)
+        case sameAs(connectorName: String)
+        case arrayElement(ofConnectorName: String)
+        case array(ofElementConnectorName: String)
+    }
+
+    /// How an input receives a value when it has no incoming wire.
+    public enum PinPresence: Sendable, Hashable {
+        case unknown
+        case required
+        case optional
+        case registrationDefault
+        case implicitSelf
+    }
+
+    /// The public/observed source supporting a pin contract.
+    public enum PinContractEvidence: String, Sendable, Hashable {
+        case unknown
+        case observedInterface
+        case publicSchema
+        case graphSettings
+        case nodeLibrary
+        case externalCatalog
+    }
+
     /// One named pin in a node's declared interface.
     public struct PinSpec: Sendable, Hashable {
         /// The camelCase connector name whose `murmur64a` hash is the on-disk
@@ -34,10 +64,26 @@ public enum ScriptGraphNodeLibrary {
         /// `true` for a control-flow (exec) pin, `false` for a data pin.
         public let isExec: Bool
 
-        public init(connectorName: String, displayName: String, isExec: Bool) {
+        /// Value and presence semantics. Unknown fields are coverage gaps rather
+        /// than inferred defaults.
+        public let typeConstraint: PinTypeConstraint
+        public let presence: PinPresence
+        public let contractEvidence: PinContractEvidence
+
+        public init(
+            connectorName: String,
+            displayName: String,
+            isExec: Bool,
+            typeConstraint: PinTypeConstraint = .unknown,
+            presence: PinPresence = .unknown,
+            contractEvidence: PinContractEvidence = .unknown
+        ) {
             self.connectorName = connectorName
             self.displayName = displayName
             self.isExec = isExec
+            self.typeConstraint = isExec ? .any : typeConstraint
+            self.presence = isExec ? .optional : presence
+            self.contractEvidence = contractEvidence
         }
 
         /// The `murmur64a` hash of `connectorName` — the data pin's `connector_hash`.
@@ -46,8 +92,21 @@ public enum ScriptGraphNodeLibrary {
 
         /// Convenience for a data pin (`isExec: false`). Used by the per-category
         /// component definitions in `ScriptGraphComponentLibrary+*.swift`.
-        public static func data(_ connectorName: String, _ displayName: String) -> PinSpec {
-            PinSpec(connectorName: connectorName, displayName: displayName, isExec: false)
+        public static func data(
+            _ connectorName: String,
+            _ displayName: String,
+            type: PinTypeConstraint = .unknown,
+            presence: PinPresence = .unknown,
+            evidence: PinContractEvidence = .unknown
+        ) -> PinSpec {
+            PinSpec(
+                connectorName: connectorName,
+                displayName: displayName,
+                isExec: false,
+                typeConstraint: type,
+                presence: presence,
+                contractEvidence: evidence
+            )
         }
     }
 
@@ -272,9 +331,9 @@ public enum ScriptGraphNodeLibrary {
         guard let settings = defaultDynamicConnectorSettings(for: type),
               let policy = dynamicPinPolicy(for: type)
         else { return nil }
-        let inputs = settings.inputs.map { PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name)) }
+        let inputs = settings.inputs.map { dynamicPinSpec($0, isInput: true) }
         let serializedOutputs = settings.outputs.map {
-            PinSpec.data($0.name, $0.displayName ?? dynamicDisplayName($0.name))
+            dynamicPinSpec($0, isInput: false)
         }
         let outputs: [PinSpec] = switch type {
         case "tm_break_material": Self.physicallyBasedMaterialOutputNames.map {
@@ -291,6 +350,8 @@ public enum ScriptGraphNodeLibrary {
         let outputSpecs: [PinSpec] = switch type {
         case "tm_array_set", "tm_array_add", "tm_array_remove", "tm_is_valid_branch":
             policy.fixedOutputs + inputs
+        case "tm_array_create":
+            outputs
         default: outputs + policy.fixedOutputs
         }
         let category: Category = switch type {
@@ -301,6 +362,25 @@ public enum ScriptGraphNodeLibrary {
         default: .string
         }
         return NodeSpec(inputs: inputSpecs, outputs: outputSpecs, category: category)
+    }
+
+    public static func dynamicPinSpec(
+        _ connector: RCP3ScriptGraph.Node.DynamicConnector,
+        isInput: Bool
+    ) -> PinSpec {
+        let identity = ScriptGraphTypeRegistry.identity(typeHash: connector.typeHash)
+        return .data(
+            connector.name,
+            connector.displayName ?? dynamicDisplayName(connector.name),
+            type: .concrete(
+                token: identity?.id ?? "type:\(TMHash.hex(connector.typeHash))",
+                typeHash: connector.typeHash
+            ),
+            presence: isInput
+                ? (connector.optionality == 0 ? .required : .optional)
+                : .optional,
+            evidence: .graphSettings
+        )
     }
 
     /// Ordered `RealityKitScripting.Inspectable` properties emitted by RCP 3 for
@@ -324,20 +404,42 @@ public enum ScriptGraphNodeLibrary {
     ) -> NodeSpec? {
         func pins(_ properties: [RCP3ScriptGraph.Node.MaterialSettings.Property]) -> [PinSpec] {
             properties.map { property in
-                .data(property.name, dynamicDisplayName(property.name))
+                .data(
+                    property.name,
+                    dynamicDisplayName(property.name),
+                    type: .concrete(
+                        token: ScriptGraphTypeRegistry.identity(typeHash: property.typeHash)?.id
+                            ?? "type:\(TMHash.hex(property.typeHash))",
+                        typeHash: property.typeHash
+                    ),
+                    // Descriptor optionality is a value-type fact. Only an
+                    // observed registration/default can establish binding
+                    // requiredness for a graph input.
+                    presence: property.isOptional ? .optional : .unknown,
+                    evidence: .graphSettings
+                )
             }
         }
 
         switch type {
         case "tm_get_material_parameter":
             return NodeSpec(
-                inputs: [data("entity", "Entity"), data("slot", "Slot"), data("parameter", "Parameter")],
+                inputs: [
+                    data("entity", "Entity", type: .concrete(token: "Entity", typeHash: ScriptGraphTypeRegistry.entity.typeHash), presence: .implicitSelf, evidence: .observedInterface),
+                    data("slot", "Slot", type: .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash), presence: .registrationDefault, evidence: .observedInterface),
+                    data("parameter", "Parameter", type: .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash), presence: .required, evidence: .observedInterface),
+                ],
                 outputs: pins(settings.outputs),
                 category: .components
             )
         case "tm_set_material_parameter_v2":
             return NodeSpec(
-                inputs: [exec, data("entity", "Entity"), data("slot", "Slot"), data("parameter", "Parameter")]
+                inputs: [
+                    exec,
+                    data("entity", "Entity", type: .concrete(token: "Entity", typeHash: ScriptGraphTypeRegistry.entity.typeHash), presence: .implicitSelf, evidence: .observedInterface),
+                    data("slot", "Slot", type: .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash), presence: .registrationDefault, evidence: .observedInterface),
+                    data("parameter", "Parameter", type: .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash), presence: .required, evidence: .observedInterface),
+                ]
                     + pins(settings.inputs),
                 outputs: [exec],
                 category: .components
@@ -347,7 +449,11 @@ public enum ScriptGraphNodeLibrary {
                 // Emitter connector indices 0...2 are the action connector,
                 // source entity, and material slot. `writeMaterialProperties`
                 // appends only the selected Inspectable descriptor properties.
-                inputs: [exec, data("entity", "Entity"), data("slot", "Slot")]
+                inputs: [
+                    exec,
+                    data("entity", "Entity", type: .concrete(token: "Entity", typeHash: ScriptGraphTypeRegistry.entity.typeHash), presence: .implicitSelf, evidence: .observedInterface),
+                    data("slot", "Slot", type: .concrete(token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash), presence: .registrationDefault, evidence: .observedInterface),
+                ]
                     + pins(settings.inputs),
                 outputs: [exec] + pins(settings.outputs),
                 category: .components
@@ -364,17 +470,23 @@ public enum ScriptGraphNodeLibrary {
         for type: String,
         settings: RCP3ScriptGraph.Node.EntityParameterSettings
     ) -> NodeSpec? {
-        _ = settings.typeHash // Retained on the model for type checking/serialization.
+        let selectedType: PinTypeConstraint = .concrete(
+            token: ScriptGraphTypeRegistry.identity(typeHash: settings.typeHash)?.id
+                ?? "type:\(TMHash.hex(settings.typeHash))",
+            typeHash: settings.typeHash
+        )
+        let entity = data("entity", "Entity", type: .concrete(token: "Entity", typeHash: ScriptGraphTypeRegistry.entity.typeHash), presence: .implicitSelf, evidence: .observedInterface)
+        let name = data("name", "Name", type: .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash), presence: .required, evidence: .observedInterface)
         switch type {
         case "tm_get_entity_parameter":
             return NodeSpec(
-                inputs: [data("entity", "Entity"), data("name", "Name")],
-                outputs: [data("result", "Result")],
+                inputs: [entity, name],
+                outputs: [data("result", "Result", type: selectedType, evidence: .graphSettings)],
                 category: .components
             )
         case "tm_set_entity_parameter":
             return NodeSpec(
-                inputs: [exec, data("entity", "Entity"), data("name", "Name"), data("value", "Value")],
+                inputs: [exec, entity, name, data("value", "Value", type: selectedType, presence: .required, evidence: .graphSettings)],
                 outputs: [exec],
                 category: .components
             )
@@ -771,8 +883,20 @@ public enum ScriptGraphNodeLibrary {
     private static let exec = PinSpec(connectorName: "", displayName: "exec", isExec: true)
 
     /// A data pin, named by its camelCase connector and Title Case display name.
-    private static func data(_ connector: String, _ display: String) -> PinSpec {
-        PinSpec(connectorName: connector, displayName: display, isExec: false)
+    private static func data(
+        _ connector: String,
+        _ display: String,
+        type: PinTypeConstraint = .unknown,
+        presence: PinPresence = .unknown,
+        evidence: PinContractEvidence = .unknown
+    ) -> PinSpec {
+        .data(
+            connector,
+            display,
+            type: type,
+            presence: presence,
+            evidence: evidence
+        )
     }
 
     private static func dynamicDisplayName(_ name: String) -> String {

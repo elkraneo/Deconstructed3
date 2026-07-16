@@ -15,9 +15,27 @@ extension ScriptGraphNodeLibrary {
         /// selected case's associated values, using their public descriptor labels.
         public var fixedPins: [PinSpec] {
             switch direction {
-            case .make: return [.data("value", "Value")]
-            case .break: return [.data("source", "Source")]
+            case .make:
+                return [.data(
+                    "value", "Value",
+                    type: Self.schemaType(schema.typeName),
+                    evidence: .publicSchema
+                )]
+            case .break:
+                return [.data(
+                    "source", "Source",
+                    type: Self.schemaType(schema.typeName),
+                    presence: .required,
+                    evidence: .publicSchema
+                )]
             }
+        }
+
+        private static func schemaType(_ name: String) -> PinTypeConstraint {
+            if let identity = ScriptGraphTypeRegistry.identity(named: name) {
+                return .concrete(token: identity.id, typeHash: identity.typeHash)
+            }
+            return .concrete(token: name, typeHash: nil)
         }
 
         public func selectedCase(named name: String?) -> ScriptGraphValueSchema.EnumCase? {
@@ -81,19 +99,47 @@ extension ScriptGraphNodeLibrary {
         var result: [String: NodeSpec] = [:]
         for (type, schema) in ScriptGraphValueSchema.breakNodes {
             result[type] = NodeSpec(
-                inputs: [.data("source", "Source")],
+                inputs: [.data(
+                    "source", "Source",
+                    type: schemaType(schema.typeName),
+                    presence: .required,
+                    evidence: .publicSchema
+                )],
                 outputs: schema.properties.map {
-                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                    .data(
+                        $0.name,
+                        displayName(forSchemaProperty: $0.name),
+                        type: schemaType($0.swiftType),
+                        evidence: .publicSchema
+                    )
                 },
                 category: .make
             )
         }
         for (type, schema) in ScriptGraphValueSchema.writeNodes {
             result[type] = NodeSpec(
-                inputs: [.data("source", "Source")] + schema.properties.map {
-                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                inputs: [.data(
+                    "source", "Source",
+                    type: schemaType(schema.typeName),
+                    presence: .required,
+                    evidence: .publicSchema
+                )] + schema.properties.map {
+                    .data(
+                        $0.name,
+                        displayName(forSchemaProperty: $0.name),
+                        type: schemaType($0.swiftType),
+                        // Inspectable optionality describes the Swift value, not
+                        // whether RCP3 requires a graph binding. A non-optional
+                        // property may still have a registration default.
+                        presence: $0.isOptional ? .optional : .unknown,
+                        evidence: .publicSchema
+                    )
                 },
-                outputs: [.data("source", "Source")],
+                outputs: [.data(
+                    "source", "Source",
+                    type: schemaType(schema.typeName),
+                    evidence: .publicSchema
+                )],
                 category: .make
             )
         }
@@ -104,24 +150,68 @@ extension ScriptGraphNodeLibrary {
             guard let selected = schema.cases.first else { continue }
             result[type] = NodeSpec(
                 inputs: selected.associatedValues.map {
-                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                    .data(
+                        $0.name,
+                        displayName(forSchemaProperty: $0.name),
+                        type: schemaType($0.swiftType),
+                        presence: .unknown,
+                        evidence: .publicSchema
+                    )
                 },
-                outputs: [.data("value", "Value")],
+                outputs: [.data(
+                    "value", "Value",
+                    type: schemaType(schema.typeName),
+                    evidence: .publicSchema
+                )],
                 category: .make
             )
         }
         for (type, schema) in ScriptGraphValueSchema.enumBreakNodes {
             guard let selected = schema.cases.first else { continue }
             result[type] = NodeSpec(
-                inputs: [.data("source", "Source")],
+                inputs: [.data(
+                    "source", "Source",
+                    type: schemaType(schema.typeName),
+                    presence: .required,
+                    evidence: .publicSchema
+                )],
                 outputs: selected.associatedValues.map {
-                    .data($0.name, displayName(forSchemaProperty: $0.name))
+                    .data(
+                        $0.name,
+                        displayName(forSchemaProperty: $0.name),
+                        type: schemaType($0.swiftType),
+                        evidence: .publicSchema
+                    )
                 },
                 category: .make
             )
         }
         return result
     }()
+
+    static func schemaType(_ swiftType: String) -> PinTypeConstraint {
+        let normalized: String
+        switch swiftType {
+        case "Swift.Bool": normalized = "Bool"
+        case "Swift.String": normalized = "String"
+        case "Swift.Float", "Swift.Double", "Swift.Int", "Swift.UInt", "Swift.UInt64",
+             "CoreGraphics.CGFloat": normalized = "Number"
+        case "Swift.SIMD2<Swift.Float>": normalized = "Vector2"
+        case "Swift.SIMD3<Swift.Float>": normalized = "Vector3"
+        case "Swift.SIMD4<Swift.Float>": normalized = "Vector4"
+        case "__C.simd_quatf": normalized = "Quaternion"
+        case "__C.simd_float2x2": normalized = "Matrix2x2"
+        case "__C.simd_float3x3": normalized = "Matrix3x3"
+        case "__C.simd_float4x4": normalized = "Matrix4x4"
+        case "RealityKit.Entity": normalized = "Entity"
+        case "Swift.Array<Swift.String>": normalized = "Array<String>"
+        default: normalized = swiftType
+        }
+        if let identity = ScriptGraphTypeRegistry.identity(named: normalized) {
+            return .concrete(token: identity.id, typeHash: identity.typeHash)
+        }
+        return .concrete(token: normalized, typeHash: nil)
+    }
 
     private static func displayName(forSchemaProperty name: String) -> String {
         let separated = name.reduce(into: "") { result, character in
