@@ -58,17 +58,28 @@ public struct ScriptGraphNodePayload: Sendable, Hashable, Identifiable {
         public let isInput: Bool
         /// `true` for a control-flow (exec) pin, `false` for a data pin.
         public let isExec: Bool
+        /// Resolved value contract used by canvas and agent connection gating.
+        /// Wire-derived fallback pins remain `.unknown` and stay lossless.
+        public let typeConstraint: ScriptGraphNodeLibrary.PinTypeConstraint
         /// The exposed literal value bound to this pin, when one is set — e.g.
         /// `"(Self)"` for a `source` pin, `"Transform"` for a `component_type` pin.
         /// `nil` when the pin carries no constant value (it is wired, or empty).
         public let valueLabel: String?
 
-        public init(id: String, label: String, isInput: Bool, isExec: Bool, valueLabel: String? = nil) {
+        public init(
+            id: String,
+            label: String,
+            isInput: Bool,
+            isExec: Bool,
+            valueLabel: String? = nil,
+            typeConstraint: ScriptGraphNodeLibrary.PinTypeConstraint = .unknown
+        ) {
             self.id = id
             self.label = label
             self.isInput = isInput
             self.isExec = isExec
             self.valueLabel = valueLabel
+            self.typeConstraint = isExec ? .any : typeConstraint
         }
     }
 

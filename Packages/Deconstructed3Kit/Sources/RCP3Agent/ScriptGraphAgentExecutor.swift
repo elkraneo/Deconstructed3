@@ -223,7 +223,7 @@ public final class ScriptGraphAgentExecutor: Sendable {
             let source = try port(nodeID: fromNode, nameOrID: fromPin, expectsInput: false)
             let target = try port(nodeID: toNode, nameOrID: toPin, expectsInput: true)
             guard let id = model.connect(source, target) else {
-                throw ScriptGraphAgentError.invalidArguments("The requested pins are not a valid output-to-input connection of the same kind.")
+                throw ScriptGraphAgentError.invalidArguments("The requested pins are not a valid output-to-input connection with compatible value types.")
             }
             return .init(summary: "Connected nodes.", detail: "connection_id=\(id)", mutated: true)
 

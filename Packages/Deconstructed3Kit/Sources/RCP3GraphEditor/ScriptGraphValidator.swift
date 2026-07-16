@@ -184,7 +184,7 @@ public enum ScriptGraphValidator {
                 continue
             }
             if sourceKind == .data,
-               constraintsConflict(sourcePin.typeConstraint, targetPin.typeConstraint) {
+               sourcePin.typeConstraint.isKnownIncompatible(with: targetPin.typeConstraint) {
                 issues.append(.error(
                     .incompatibleWireTypes, subject: wire.id,
                     "Wire \(wire.id) connects incompatible data-pin types."
@@ -208,7 +208,7 @@ public enum ScriptGraphValidator {
                 continue
             }
             if let literalType = literalTypeConstraint(literal),
-               constraintsConflict(literalType, pin.typeConstraint) {
+               literalType.isKnownIncompatible(with: pin.typeConstraint) {
                 issues.append(.error(
                     .incompatibleLiteralType, subject: literal.id,
                     "Literal \(literal.id) is incompatible with its target pin type."
@@ -245,24 +245,6 @@ public enum ScriptGraphValidator {
         let execPins = pins.filter(\.isExec)
         return execPins.first(where: { $0.connectorName.isEmpty })
             ?? (execPins.count == 1 ? execPins.first : nil)
-    }
-
-    private static func constraintsConflict(
-        _ lhs: ScriptGraphNodeLibrary.PinTypeConstraint,
-        _ rhs: ScriptGraphNodeLibrary.PinTypeConstraint
-    ) -> Bool {
-        switch (lhs, rhs) {
-        case (.unknown, _), (_, .unknown), (.any, _), (_, .any):
-            return false
-        case let (.concrete(leftToken, leftHash), .concrete(rightToken, rightHash)):
-            if let leftHash, let rightHash { return leftHash != rightHash }
-            return leftToken != rightToken
-        default:
-            // Relational constraints are checked once both sides resolve to a
-            // concrete instance type; an unresolved relation remains coverage,
-            // never a guessed incompatibility.
-            return false
-        }
     }
 
     private static func literalTypeConstraint(

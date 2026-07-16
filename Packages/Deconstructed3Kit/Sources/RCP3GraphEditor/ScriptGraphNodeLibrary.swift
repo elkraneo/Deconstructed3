@@ -31,6 +31,19 @@ public enum ScriptGraphNodeLibrary {
         case sameAs(connectorName: String)
         case arrayElement(ofConnectorName: String)
         case array(ofElementConnectorName: String)
+
+        /// Conservative authoring gate shared by the editor and validator. Only
+        /// two conflicting concrete identities are rejected; polymorphic and
+        /// unknown constraints remain authorable until instance resolution.
+        public func isKnownIncompatible(with other: Self) -> Bool {
+            switch (self, other) {
+            case let (.concrete(leftToken, leftHash), .concrete(rightToken, rightHash)):
+                if let leftHash, let rightHash { return leftHash != rightHash }
+                return leftToken != rightToken
+            default:
+                return false
+            }
+        }
     }
 
     /// How an input receives a value when it has no incoming wire.

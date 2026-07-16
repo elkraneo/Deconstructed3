@@ -417,7 +417,8 @@ public enum ScriptGraphPinResolver {
             label: spec.displayName,
             isInput: isInput,
             isExec: spec.isExec,
-            valueLabel: exposedValue(for: spec, componentTypeName: componentTypeName)
+            valueLabel: exposedValue(for: spec, componentTypeName: componentTypeName),
+            typeConstraint: spec.typeConstraint
         )
     }
 

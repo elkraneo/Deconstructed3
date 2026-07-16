@@ -1190,6 +1190,9 @@ public final class ScriptGraphEditorModel {
             return nil // both inputs or both outputs
         }
         guard outputPin.isExec == inputPin.isExec else { return nil } // exec↔exec / data↔data
+        guard outputPin.isExec
+            || !outputPin.typeConstraint.isKnownIncompatible(with: inputPin.typeConstraint)
+        else { return nil }
         return (output, input, outputPin.isExec)
     }
 }

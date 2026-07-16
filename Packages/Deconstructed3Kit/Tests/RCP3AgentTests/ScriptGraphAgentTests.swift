@@ -99,6 +99,43 @@ import Testing
         #expect(model.node(id)?.dynamicConnectorSettings?.inputs.map(\.name) == ["value0", "value1"])
     }
 
+    @Test func agentRejectsKnownIncompatibleValueTypesWithoutMutatingGraph() throws {
+        let source = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.number", operationID: "number", displayName: "Number",
+            category: .math, execution: .pure,
+            outputs: [.init(name: "value", displayName: "Value", typeToken: "Number")]
+        )
+        let sink = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.bool-sink", operationID: "bool-sink", displayName: "Bool Sink",
+            category: .utility, execution: .pure,
+            inputs: [.init(name: "value", displayName: "Value", typeToken: "Bool")]
+        )
+        let registry = ScriptGraphNodeRegistry(
+            externalCatalog: .init(nodes: [source, sink])
+        )
+        let model = ScriptGraphEditorModel(
+            graph: .init(
+                nodes: [
+                    .init(id: "source", type: source.id),
+                    .init(id: "sink", type: sink.id),
+                ],
+                wires: [],
+                data: []
+            ),
+            nodeRegistry: registry
+        )
+        let executor = ScriptGraphAgentExecutor(model: model)
+
+        #expect(throws: ScriptGraphAgentError.self) {
+            try executor.execute(
+                .connect(fromNode: "source", fromPin: "value", toNode: "sink", toPin: "value"),
+                permitsMutation: true
+            )
+        }
+        #expect(model.connections.isEmpty)
+        #expect(model.graphSnapshot().wires.isEmpty)
+    }
+
     @Test func validationReadsUnsavedCanvasState() throws {
         let graph = RCP3ScriptGraph(
             nodes: [.init(id: "update", type: "tm_update")],

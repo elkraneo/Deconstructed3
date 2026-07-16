@@ -69,6 +69,53 @@ import RCP3Document
         #expect(!model.canConnect(dragExecOut, dragSceneTranslation))
     }
 
+    @Test func connectionRulesRejectKnownTypeMismatchButPreserveUnknowns() {
+        let source = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.number", operationID: "number", displayName: "Number",
+            category: .math, execution: .pure,
+            outputs: [.init(name: "value", displayName: "Value", typeToken: "Number")]
+        )
+        let numberSink = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.number-sink", operationID: "number-sink", displayName: "Number Sink",
+            category: .utility, execution: .pure,
+            inputs: [.init(name: "value", displayName: "Value", typeToken: "Number")]
+        )
+        let boolSink = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.bool-sink", operationID: "bool-sink", displayName: "Bool Sink",
+            category: .utility, execution: .pure,
+            inputs: [.init(name: "value", displayName: "Value", typeToken: "Bool")]
+        )
+        let registry = ScriptGraphNodeRegistry(
+            externalCatalog: .init(nodes: [source, numberSink, boolSink])
+        )
+        let graph = RCP3ScriptGraph(nodes: [
+            .init(id: "source", type: source.id),
+            .init(id: "number", type: numberSink.id),
+            .init(id: "bool", type: boolSink.id),
+            .init(id: "unknown", type: "tm_get_variable_node"),
+        ], wires: [], data: [])
+        let model = ScriptGraphEditorModel(graph: graph, nodeRegistry: registry)
+        let output = GraphPortRef(
+            nodeID: "source", pinID: "out." + TMHash.hex(TMHash.murmur64a("value"))
+        )
+        let numberInput = GraphPortRef(
+            nodeID: "number", pinID: "in." + TMHash.hex(TMHash.murmur64a("value"))
+        )
+        let boolInput = GraphPortRef(
+            nodeID: "bool", pinID: "in." + TMHash.hex(TMHash.murmur64a("value"))
+        )
+        let unknownOutput = GraphPortRef(
+            nodeID: "unknown", pinID: "out." + TMHash.hex(TMHash.murmur64a("value"))
+        )
+
+        #expect(model.canConnect(output, numberInput))
+        #expect(!model.canConnect(output, boolInput))
+        #expect(model.canConnect(unknownOutput, boolInput))
+        #expect(model.node("source")?.payload.outputPins.first?.typeConstraint == .concrete(
+            token: "Number", typeHash: ScriptGraphTypeRegistry.number.typeHash
+        ))
+    }
+
     @Test func beginAndCompleteConnectionReplacesInput() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let before = model.connections.count
