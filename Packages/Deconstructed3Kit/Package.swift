@@ -26,6 +26,7 @@ let package = Package(
         .library(name: "RCP3Runtime", targets: ["RCP3Runtime"]),
         .library(name: "RCP3Viewport", targets: ["RCP3Viewport"]),
         .library(name: "RCP3GraphEditor", targets: ["RCP3GraphEditor"]),
+        .library(name: "RCP3Agent", targets: ["RCP3Agent"]),
         .library(name: "DeconstructedFeature", targets: ["DeconstructedFeature"]),
         .library(name: "RCP3CanonicalRuntime", targets: ["RCP3CanonicalRuntime"]),
         .executable(name: "rcp3-dump", targets: ["RCP3Dump"]),
@@ -76,6 +77,7 @@ let package = Package(
         .target(
             name: "DeconstructedFeature",
             dependencies: [
+                "RCP3Agent",
                 "RCP3Document",
                 "RCP3Runtime",
                 "RCP3Viewport",
@@ -91,6 +93,18 @@ let package = Package(
             dependencies: [
                 "RCP3Document",
                 "RCP3NodeLib",
+                "TMFormat",
+            ]
+        ),
+        // Agentic Script Graph authoring for macOS 27. The target owns the
+        // Foundation Models Dynamic Profiles and their permissioned tools; every
+        // mutation routes through the same RCP3GraphEditor model as the canvas.
+        .target(
+            name: "RCP3Agent",
+            dependencies: [
+                "RCP3Document",
+                "RCP3GraphEditor",
+                "RCP3Runtime",
                 "TMFormat",
             ]
         ),
@@ -111,9 +125,14 @@ let package = Package(
             dependencies: ["RCP3GraphEditor", "RCP3Document", "RCP3Runtime", "TMFormat"]
         ),
         .testTarget(
+            name: "RCP3AgentTests",
+            dependencies: ["RCP3Agent", "RCP3Document", "RCP3GraphEditor", "TMFormat"]
+        ),
+        .testTarget(
             name: "DeconstructedFeatureTests",
             dependencies: [
                 "DeconstructedFeature",
+                "RCP3Agent",
                 "RCP3Runtime",
                 "RCP3Document",
                 "TMFormat",

@@ -158,6 +158,9 @@ public struct EditableLiteral: Identifiable, Hashable, Sendable {
 public final class ScriptGraphEditorModel {
     /// Built-in plus document-provided NodeLib authoring metadata.
     @ObservationIgnored public let nodeRegistry: ScriptGraphNodeRegistry
+    /// Stable identity of the source graph, retained for live snapshots compiled or
+    /// inspected before the graph is saved back to disk.
+    public let sourceGraphID: String?
     public private(set) var nodes: [GraphNodeBox]
     public private(set) var connections: [GraphConnection]
 
@@ -226,6 +229,7 @@ public final class ScriptGraphEditorModel {
         nodeRegistry: ScriptGraphNodeRegistry = .builtins
     ) {
         self.nodeRegistry = nodeRegistry
+        self.sourceGraphID = graph.id
         var boxes: [GraphNodeBox] = []
         for (index, node) in graph.nodes.enumerated() {
             let payload = ScriptGraphPinResolver.payload(
@@ -654,6 +658,20 @@ public final class ScriptGraphEditorModel {
         if connections.count != before { markDirty() }
     }
 
+    /// Removes one node by identity, including its connections, literals, and
+    /// variable reference. This is the programmatic counterpart to selecting a node
+    /// and invoking ``deleteSelection()``; agent and import workflows should not need
+    /// to perturb UI selection in order to perform the same edit.
+    public func removeNode(_ id: String) {
+        guard nodes.contains(where: { $0.id == id }) else { return }
+        connections.removeAll { $0.from.nodeID == id || $0.to.nodeID == id }
+        nodes.removeAll { $0.id == id }
+        literals = literals.filter { $0.key.nodeID != id }
+        variableNames.removeValue(forKey: id)
+        if selectedNodeID == id { selectedNodeID = nil }
+        markDirty()
+    }
+
     /// Inserts a fully-formed connection directly, bypassing the port-pairing rules
     /// that `connect(_:_:)`/`completeConnection(to:)` enforce on interactive drags.
     ///
@@ -686,17 +704,78 @@ public final class ScriptGraphEditorModel {
         if let id = selectedConnectionID {
             removeConnection(id) // marks dirty when a wire is actually removed
         } else if let id = selectedNodeID {
-            connections.removeAll { $0.from.nodeID == id || $0.to.nodeID == id }
-            nodes.removeAll { $0.id == id }
-            // Drop any authored literals bound to the deleted node (they can no longer
-            // apply, mirroring write-back's pruning of `data[]` for deleted nodes).
-            literals = literals.filter { $0.key.nodeID != id }
-            // Drop the deleted node's variable reference too (the table entry stays —
-            // a declared variable can outlive its nodes).
-            variableNames.removeValue(forKey: id)
-            selectedNodeID = nil
-            markDirty()
+            removeNode(id)
         }
+    }
+
+    // MARK: Live graph snapshot
+
+    /// Reconstructs the exact currently edited graph as a public
+    /// ``RCP3ScriptGraph`` value without touching disk.
+    ///
+    /// This is the shared boundary for preview compilation, validation, agents, and
+    /// future web bridges. It includes unsaved node positions, settings, connections,
+    /// literals, variables, and instance provenance; unmodeled typed literals are
+    /// retained verbatim so a snapshot never narrows the graph to only scalar values.
+    public func graphSnapshot() -> RCP3ScriptGraph {
+        let variableByName = Dictionary(
+            variables.map { ($0.name.lowercased(), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let snapshotNodes = nodes.map { box in
+            let variableName = variableNames[box.id]
+            return RCP3ScriptGraph.Node(
+                id: box.id,
+                type: box.payload.type,
+                label: box.payload.label,
+                x: Double(box.position.x),
+                y: Double(box.position.y),
+                variableName: variableName,
+                variableRefUUID: variableName.flatMap {
+                    variableByName[$0.lowercased()]?.uuid
+                },
+                instanceOf: box.instanceOf,
+                enumSelection: box.enumSelection,
+                dynamicConnectorSettings: box.dynamicConnectorSettings,
+                materialSettings: box.materialSettings,
+                entityParameterSettings: box.entityParameterSettings
+            )
+        }
+        let snapshotWires = connections.map { connection in
+            RCP3ScriptGraph.Wire(
+                id: connection.id,
+                from: connection.from.nodeID,
+                to: connection.to.nodeID,
+                fromPin: Self.connectorHash(from: connection.from.pinID),
+                toPin: Self.connectorHash(from: connection.to.pinID)
+            )
+        }
+        let modeledData = literals.map { key, value in
+            RCP3ScriptGraph.DataLiteral(
+                id: "snapshot.\(key.nodeID).\(TMHash.hex(key.pinConnectorHash))",
+                toNode: key.nodeID,
+                toPin: key.pinConnectorHash,
+                value: value
+            )
+        }
+        let modeledKeys = Set(literals.keys)
+        let preservedData = unmodeledLiterals.filter {
+            !modeledKeys.contains(LiteralKey(nodeID: $0.toNode, pinConnectorHash: $0.toPin))
+        }
+        return RCP3ScriptGraph(
+            id: sourceGraphID,
+            nodes: snapshotNodes,
+            wires: snapshotWires,
+            data: preservedData + modeledData,
+            variables: variables
+        )
+    }
+
+    private static func connectorHash(from pinID: String) -> UInt64? {
+        for prefix in ["in.", "out.", "exec.in.", "exec.out."] where pinID.hasPrefix(prefix) {
+            return UInt64(pinID.dropFirst(prefix.count), radix: 16)
+        }
+        return nil
     }
 
     // MARK: Rules

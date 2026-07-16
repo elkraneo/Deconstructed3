@@ -1,5 +1,6 @@
 import AppKit
 import ComposableArchitecture
+import RCP3Agent
 import RCP3Document
 import RCP3GraphEditor
 import RCP3Viewport
@@ -44,8 +45,16 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// when the shown graph actually changes (not on every body re-evaluation).
     @State private var graphModelKey: String?
 
+    /// Shows the agent workspace in the inspector column. The workspace receives the
+    /// exact `graphModel` rendered by the canvas, so model tool calls are immediately
+    /// visible and participate in the normal Save path.
+    @State private var showsAgentWorkspace = false
+
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
+    /// A live canvas snapshot captured when Preview starts. This prevents unsaved
+    /// canvas or agent edits from being replaced by the last store/disk snapshot.
+    @State private var previewGraphOverride: RCP3ScriptGraph?
     /// The product-facing functional demo browser. Focused patterns stay available
     /// directly in the toolbar menu; this sheet gives composed demos enough room to
     /// explain their behavior before loading or materializing one.
@@ -69,6 +78,8 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// re-`id`'d on its signature, so adding/assigning a graph during Play rebuilds and
     /// runs it.
     @State private var isPlaying = false
+    /// The scene captured from the live canvas when Play starts.
+    @State private var playSceneOverride: CanonicalPlayScene?
 
     /// Builds the canonical Play view from the live `CanonicalPlayScene`: the **app**
     /// injects its concrete `CanonicalPlayView` here (it owns the presentation + links
@@ -94,7 +105,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// brief's `store.openScriptGraph`), falling back to the selected entity's graph
     /// so the Play button is useful in either path. `nil` when there's nothing to run.
     private var previewableGraph: RCP3ScriptGraph? {
-        store.openScriptGraph ?? store.selectedScriptGraph
+        previewGraphOverride ?? store.openScriptGraph ?? store.selectedScriptGraph
     }
 
     /// Metadata for a curated graph, when the previewed graph came from the gallery
@@ -126,7 +137,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// independent of which entity is selected or the center mode — same availability
     /// as Run Preview.
     private var canPlay: Bool {
-        store.canonicalPlayScene.hasRunnable
+        livePlayScene().hasRunnable
     }
 
     public var body: some View {
@@ -174,7 +185,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 if id != nil { centerMode = .graph }
             }
             // RUN / PREVIEW: compile + run the shown graph on the RCP3 runtime.
-            .sheet(isPresented: $showsPreview) {
+            .sheet(isPresented: $showsPreview, onDismiss: { previewGraphOverride = nil }) {
                 if let graph = previewableGraph {
                     ScriptGraphPreviewView(graph: graph, example: previewableExample)
                 }
@@ -214,7 +225,13 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// host-owned `graphModel`; otherwise it falls back to the entity inspector.
     @ViewBuilder
     private var detailColumn: some View {
-        if centerMode == .graph,
+        if showsAgentWorkspace,
+           centerMode == .graph,
+           let model = graphModel,
+           let key = graphModelKey {
+            ScriptGraphAgentWorkspaceHost(model: model, hostActions: agentHostActions)
+                .id(key)
+        } else if centerMode == .graph,
            let model = graphModel,
            let nodeID = model.selectedNodeID,
            model.node(nodeID) != nil {
@@ -356,7 +373,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
             // reconstructing the LIVE scene and attaching every scripted entity's graph.
             // `.id(signature)` rebuilds the run when the set of scripts changes (a graph
             // added/assigned during Play), so the preview reflects it.
-            let playScene = store.canonicalPlayScene
+            let playScene = playSceneOverride ?? store.canonicalPlayScene
             canonicalPlay(playScene)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .id(playScene.signature)
@@ -501,13 +518,23 @@ public struct DocumentView<CanonicalPlay: View>: View {
                 ? "Stop the running graph and return to the viewport"
                 : "Run this script graph on Apple's RealityKitScripting runtime")
         }
+        ToolbarItem {
+            Button(
+                showsAgentWorkspace ? "Hide Agent" : "Agent",
+                systemImage: showsAgentWorkspace ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack"
+            ) {
+                showsAgentWorkspace.toggle()
+            }
+            .disabled(centerMode != .graph || graphModel == nil)
+            .help("Inspect and author the live Script Graph with permissioned model tools")
+        }
         // RUN / PREVIEW affordance: ENABLED whenever a graph is open in the editor
         // (or the selected entity has one) — see `canRunPreview`. Opens
         // `ScriptGraphPreviewView` in a sheet, which compiles + runs the graph on the
         // RCP3 runtime, so it works from the Graph view too.
         ToolbarItem {
             Button("Run Preview", systemImage: "rectangle.on.rectangle") {
-                showsPreview = true
+                runPreview()
             }
             .disabled(!canRunPreview)
             .help("Compile and run this script graph with a 2D drag simulator")
@@ -587,6 +614,72 @@ public struct DocumentView<CanonicalPlay: View>: View {
         }
     }
 
+    // MARK: Live graph actions
+
+    /// Opens Preview with a point-in-time snapshot of the visible canvas. A graph may
+    /// be dirty without the TCA document state knowing about it, so reading only the
+    /// store here would silently run an older graph.
+    private func runPreview() {
+        previewGraphOverride = isGraphShown ? graphModel?.graphSnapshot() : nil
+        showsPreview = previewableGraph != nil
+    }
+
+    /// Replaces the currently edited graph in the canonical Play input with the live
+    /// canvas snapshot. Standalone/open graphs use the preview slot; entity-attached
+    /// graphs replace that entity's script while preserving every other running script.
+    private func livePlayScene() -> CanonicalPlayScene {
+        let base = store.canonicalPlayScene
+        guard isGraphShown, let graph = graphModel?.graphSnapshot() else { return base }
+
+        if store.openScriptGraph != nil {
+            return CanonicalPlayScene(
+                scene: base.scene,
+                scripts: base.scripts,
+                previewGraph: graph,
+                previewEntityID: base.previewEntityID
+            )
+        }
+
+        guard store.selectedScriptGraph != nil, let entityID = store.selection else { return base }
+        var scripts = base.scripts
+        if let index = scripts.firstIndex(where: { $0.entityID == entityID }) {
+            scripts[index] = EntityScriptBinding(entityID: entityID, graph: graph)
+        } else {
+            scripts.append(EntityScriptBinding(entityID: entityID, graph: graph))
+        }
+        return CanonicalPlayScene(
+            scene: base.scene,
+            scripts: scripts,
+            previewGraph: base.previewGraph,
+            previewEntityID: base.previewEntityID
+        )
+    }
+
+    /// Capabilities exposed to the model are the same concrete actions as the
+    /// toolbar. They remain MainActor-isolated and operate on this document window.
+    private var agentHostActions: ScriptGraphAgentHostActions {
+        ScriptGraphAgentHostActions(
+            save: {
+                try saveFromAgent()
+            },
+            runPreview: {
+                runPreview()
+                return "Opened Run Preview from the live graph snapshot."
+            },
+            play: {
+                startPlaying()
+                guard isPlaying else {
+                    throw ScriptGraphAgentError.invalidArguments("There is no runnable graph to play.")
+                }
+                return "Started canonical Play from the live graph snapshot."
+            },
+            stop: {
+                stopPlaying()
+                return "Stopped canonical Play."
+            }
+        )
+    }
+
     // MARK: Play lifecycle (canonical, inline)
 
     /// Starts the inline canonical Play, swapping the center column to the app-injected
@@ -594,7 +687,9 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// needed — edits during Play re-key the view and rebuild. No-op if already playing
     /// or nothing is runnable.
     private func startPlaying() {
-        guard !isPlaying, store.canonicalPlayScene.hasRunnable else { return }
+        let scene = livePlayScene()
+        guard !isPlaying, scene.hasRunnable else { return }
+        playSceneOverride = scene
         isPlaying = true
     }
 
@@ -602,6 +697,7 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// its `RealityView`/runtime) and returns the center column to the viewport.
     private func stopPlaying() {
         isPlaying = false
+        playSceneOverride = nil
     }
 
     @ToolbarContentBuilder
@@ -649,42 +745,53 @@ public struct DocumentView<CanonicalPlay: View>: View {
     /// dirty the entity editor, so it is persisted here. The entity save (rename, …)
     /// still goes through `.saveTapped` and is untouched.
     private func save() {
-        // Persist the live graph edits, choosing the write target by how the graph was
-        // opened:
-        //  - a sidebar-opened STANDALONE asset (`openAssetGraphID`) → its `.tm_script_graph`;
-        //  - otherwise the graph belongs to the SELECTED ENTITY (an instance-override graph
-        //    embedded in `world.tm_entity`'s `re_scripting_component.source.graph`) → write
-        //    back into the root entity file.
-        // A loaded Examples-gallery graph has no on-disk backing, so it matches neither and
-        // is skipped (the entity save below still runs).
-        if isGraphShown, let model = graphModel, let editor = store.editor {
-            do {
-                if let rootUUID = store.openAssetGraphID {
-                    try ScriptGraphWriteBack.write(
-                        model: model,
-                        toAssetWithRootUUID: rootUUID,
-                        in: editor.bundle.url
-                    )
-                    model.markSaved()
-                } else if store.openScriptGraph == nil,
-                          store.selectedScriptGraph != nil,
-                          let entityID = store.selection {
-                    // Entity-attached (instance-override) graph: write into world.tm_entity.
-                    try ScriptGraphWriteBack.write(
-                        model: model,
-                        toEntityWithID: entityID,
-                        rootFileURL: editor.bundle.rootURL
-                    )
-                    model.markSaved()
-                }
-            } catch {
-                // Surface nothing fancy yet; a graph write failure shouldn't block
-                // the entity save below. (Error reporting can be lifted into the
-                // reducer in a later pass.)
-                assertionFailure("script-graph write-back failed: \(error)")
-            }
+        do {
+            _ = try persistLiveGraphIfNeeded()
+        } catch {
+            // Preserve the existing toolbar behavior: graph failure is diagnosed but
+            // does not block the entity document save below.
+            assertionFailure("script-graph write-back failed: \(error)")
         }
         store.send(.saveTapped)
+    }
+
+    /// The agent-facing Save reports whether the live graph reached disk and throws
+    /// graph write errors instead of converting them into an optimistic tool result.
+    private func saveFromAgent() throws -> String {
+        let wroteGraph = try persistLiveGraphIfNeeded()
+        store.send(.saveTapped)
+        return wroteGraph
+            ? "Saved the live Script Graph and requested the document save."
+            : "Requested the document save. This graph has no on-disk backing yet."
+    }
+
+    /// Persists the visible graph to the correct RCP3 backing location.
+    @discardableResult
+    private func persistLiveGraphIfNeeded() throws -> Bool {
+        // A loaded Examples-gallery graph has no on-disk backing, so it matches neither
+        // path and must be materialized before it can be saved.
+        guard isGraphShown, let model = graphModel, let editor = store.editor else { return false }
+        if let rootUUID = store.openAssetGraphID {
+            try ScriptGraphWriteBack.write(
+                model: model,
+                toAssetWithRootUUID: rootUUID,
+                in: editor.bundle.url
+            )
+            model.markSaved()
+            return true
+        }
+        if store.openScriptGraph == nil,
+           store.selectedScriptGraph != nil,
+           let entityID = store.selection {
+            try ScriptGraphWriteBack.write(
+                model: model,
+                toEntityWithID: entityID,
+                rootFileURL: editor.bundle.rootURL
+            )
+            model.markSaved()
+            return true
+        }
+        return false
     }
 
     /// Presents the file picker (AppKit) and feeds the chosen URL to the store.

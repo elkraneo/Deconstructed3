@@ -338,6 +338,58 @@ import RCP3Document
         #expect(!model.isDirty)
     }
 
+    @Test func graphSnapshotIncludesUnsavedAuthoringState() throws {
+        let graph = RCP3ScriptGraph(
+            id: "graph-id",
+            nodes: [
+                .init(id: "update", type: "tm_update"),
+                .init(id: "variable", type: "tm_get_variable_node"),
+            ],
+            wires: [],
+            data: []
+        )
+        let model = ScriptGraphEditorModel(graph: graph)
+        let value = model.addNode(type: "tm_make_vector3", label: "Vector", at: CGPoint(x: 80, y: 120))
+        model.setLiteral(nodeID: value, pinConnectorHash: TMHash.murmur64a("x"), value: 3.5)
+        model.setVariableName(nodeID: "variable", name: "Counter")
+
+        let snapshot = model.graphSnapshot()
+        #expect(snapshot.id == "graph-id")
+        #expect(snapshot.nodes.count == 3)
+        #expect(snapshot.nodes.first(where: { $0.id == value })?.x == 80)
+        #expect(snapshot.literal(node: value, pin: TMHash.murmur64a("x")) == .number(3.5))
+        #expect(snapshot.variables.map(\.name) == ["Counter"])
+        #expect(snapshot.nodes.first(where: { $0.id == "variable" })?.variableName == "Counter")
+    }
+
+    @Test func graphSnapshotPreservesNamedExecutionConnectorHashes() throws {
+        let delay = RCP3ScriptGraph.Node(id: "delay", type: "tm_delay")
+        let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_component")
+        let onceHash = TMHash.murmur64a("once")
+        let graph = RCP3ScriptGraph(
+            nodes: [delay, set],
+            wires: [.init(id: "wire", from: "delay", to: "set", fromPin: onceHash)],
+            data: []
+        )
+
+        let snapshot = ScriptGraphEditorModel(graph: graph).graphSnapshot()
+        let wire = try #require(snapshot.wires.first)
+        #expect(wire.fromPin == onceHash)
+        #expect(wire.toPin == nil)
+    }
+
+    @Test func removeNodeDoesNotRequireChangingSelection() {
+        let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
+        model.selectNode("n1")
+
+        model.removeNode("n2")
+
+        #expect(model.nodes.map(\.id) == ["n1"])
+        #expect(model.connections.isEmpty)
+        #expect(model.selectedNodeID == "n1")
+        #expect(model.isDirty)
+    }
+
     @Test func canvasGeometryResolvesPorts() {
         let model = ScriptGraphEditorModel(graph: Self.dragToSetGraph())
         let setTranslation = GraphPortRef(nodeID: "n2", pinID: "in." + TMHash.hex(TMHash.murmur64a("translation")))
