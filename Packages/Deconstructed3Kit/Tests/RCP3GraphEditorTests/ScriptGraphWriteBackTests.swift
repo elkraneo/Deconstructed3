@@ -507,9 +507,15 @@ import RCP3Document
         let connections = (graph["connections"]?.arrayValue ?? []).compactMap(\.objectValue)
         #expect(!connections.contains { $0["from_node"]?.stringValue == "n1" || $0["to_node"]?.stringValue == "n1" })
 
-        // The data literal still targets n2 (a live node), so it is kept.
+        // The original data literal still targets n2, and the inserted Get
+        // Component carries its required concrete Transform selector.
         let data = try #require(graph["data"]?.arrayValue)
-        #expect(data.count == 1)
+        #expect(data.count == 2)
+        #expect(data.compactMap(\.objectValue).contains {
+            $0["to_node"]?.stringValue == newID
+                && $0["to_connector_hash"]?.stringValue
+                    == TMHash.hex(TMHash.murmur64a("component_type"))
+        })
     }
 
     @Test func insertedEnumNodeSettingsRoundTripAndDrivePins() throws {

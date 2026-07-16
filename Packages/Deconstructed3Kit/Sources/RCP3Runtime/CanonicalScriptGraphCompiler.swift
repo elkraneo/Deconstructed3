@@ -371,6 +371,8 @@ public struct CanonicalScriptGraphCompiler {
                 return emitRemoveFromParent(node, context: context)
             case "tm_spawn_entity":
                 return emitSpawnEntity(node, context: context)
+            case "tm_clone":
+                return emitClone(node, context: context)
             case "tm_remove_component":
                 return emitRemoveComponent(node, context: context)
             case "tm_array_set":
@@ -771,6 +773,26 @@ public struct CanonicalScriptGraphCompiler {
                 statements.append("if (\(parent) !== undefined) \(parent).addChild(\(spawned), false);")
             }
             return statements
+        }
+
+        /// Clone is an action node with a data result. Materialize the result once so
+        /// downstream data wires observe the same entity created by the exec step.
+        mutating func emitClone(_ node: RCP3ScriptGraph.Node, context: ExprContext) -> [String] {
+            var seen: Set<String> = []
+            let source = inputExpression(
+                into: node, pinName: "source", context: context, seen: &seen,
+                defaultValue: Expr("this.entity")
+            ).code
+            let invocation: String
+            if hasDataInput(into: node, pinName: "recursive") {
+                let recursive = inputExpression(
+                    into: node, pinName: "recursive", context: context, seen: &seen
+                ).code
+                invocation = "\(source).clone(\(recursive))"
+            } else {
+                invocation = "\(source).clone()"
+            }
+            return ["let \(Self.clonedEntityName(for: node)) = \(invocation);"]
         }
 
         mutating func emitEntityBooleanMethod(
@@ -2059,8 +2081,12 @@ public struct CanonicalScriptGraphCompiler {
             }
 
             if node.type == "tm_clone" {
+                if graph.wires.contains(where: { $0.to == node.id && $0.isExec }) {
+                    return Expr(Self.clonedEntityName(for: node))
+                }
                 let source = inputExpression(
-                    into: node, pinName: "source", context: context, seen: &seen
+                    into: node, pinName: "source", context: context, seen: &seen,
+                    defaultValue: Expr("this.entity")
                 )
                 if hasDataInput(into: node, pinName: "recursive") {
                     let recursive = inputExpression(
@@ -3166,6 +3192,10 @@ public struct CanonicalScriptGraphCompiler {
 
         static func spawnedEntityName(for node: RCP3ScriptGraph.Node) -> String {
             "__d3_spawned_entity_\(sanitize(node.id))"
+        }
+
+        static func clonedEntityName(for node: RCP3ScriptGraph.Node) -> String {
+            "__d3_cloned_entity_\(sanitize(node.id))"
         }
 
         static let moveCharacterOutputPins = [

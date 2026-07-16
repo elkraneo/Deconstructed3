@@ -175,6 +175,139 @@ import RCP3Document
         #expect(pins.contains { $0.id == componentTypeID && $0.isInput && !$0.isExec })
     }
 
+    @Test func addNodeAppliesTheSharedComponentRecipe() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let id = model.addNode(type: "tm_set_component", at: .zero)
+        let graph = model.graphSnapshot()
+        let component = try #require(graph.data.first {
+            $0.toNode == id && $0.toPin == TMHash.murmur64a("component_type")
+        })
+
+        #expect(component.valueType == "re_scripting_graph_component_type")
+        #expect(component.valueHash == TMHash.murmur64a("Transform"))
+        #expect(model.node(id)?.payload.inputPins.contains { $0.valueLabel == "Transform" } == true)
+    }
+
+    @Test func addNodeAppliesTypedVariableRecipe() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let id = model.addNode(type: "tm_variable_add", at: .zero)
+        let variable = try #require(model.graphSnapshot().variables.first)
+
+        #expect(model.variableName(nodeID: id) == "Certification Value")
+        #expect(variable.typeHash == 0x3c2f3d0fe92dd9a0)
+        #expect(variable.editHash == 0x0ef2dd9a55accbe4)
+        #expect(variable.dataType == "tm_double")
+    }
+
+    @Test func typedRecipeVariablesDoNotCollideAcrossConcreteTypes() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let numberID = model.addNode(type: "tm_variable_add", at: .zero)
+        let quaternionID = model.addNode(type: "tm_variable_multiply_by_quaternion", at: .zero)
+        let matrixID = model.addNode(type: "tm_variable_multiply_by_matrix", at: .zero)
+        let graph = model.graphSnapshot()
+
+        #expect(graph.variables.map(\.name) == [
+            "Certification Value", "Certification Value 2", "Certification Value 3",
+        ])
+        #expect(Set(graph.variables.compactMap(\.dataType)) == ["tm_double", "tm_rotation", "tm_mat44_t"])
+        #expect(graph.nodes.first(where: { $0.id == numberID })?.variableName == "Certification Value")
+        #expect(graph.nodes.first(where: { $0.id == quaternionID })?.variableName == "Certification Value 2")
+        #expect(graph.nodes.first(where: { $0.id == matrixID })?.variableName == "Certification Value 3")
+        #expect(model.isVariableNode(quaternionID))
+        #expect(model.isVariableNode(matrixID))
+    }
+
+    @Test func typedRecipeUpgradesAnUntypedVariableInPlace() throws {
+        let variable = RCP3ScriptGraph.Variable(uuid: "existing", name: "Certification Value")
+        let model = ScriptGraphEditorModel(graph: .init(
+            nodes: [], wires: [], data: [], variables: [variable]
+        ))
+        let id = model.addNode(type: "tm_variable_add", at: .zero)
+        let graph = model.graphSnapshot()
+
+        #expect(graph.variables.count == 1)
+        #expect(graph.variables.first?.uuid == "existing")
+        #expect(graph.variables.first?.dataType == "tm_double")
+        #expect(graph.nodes.first(where: { $0.id == id })?.variableRefUUID == "existing")
+    }
+
+    @Test func addNodeAppliesMaterialAndDynamicSettingsRecipes() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let materialID = model.addNode(type: "tm_get_material_parameter", at: .zero)
+        let arrayID = model.addNode(type: "tm_array_for_each", at: .zero)
+
+        let material = try #require(model.node(materialID)?.materialSettings)
+        #expect(material.objectIdentifier == "RealityKit.PhysicallyBasedMaterial")
+        #expect(material.outputs.contains { $0.name == "roughness" })
+
+        let array = try #require(model.node(arrayID)?.dynamicConnectorSettings)
+        #expect(array.inputs.map(\.name) == ["array"])
+        #expect(array.outputs.map(\.name) == ["element"])
+    }
+
+    @Test func schemaSettingsCanBeReconfiguredAfterInsertion() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let componentID = model.addNode(type: "tm_get_component", at: .zero)
+        let dynamicID = model.addNode(type: "tm_to_string", at: .zero)
+        let parameterID = model.addNode(type: "tm_get_entity_parameter", at: .zero)
+
+        #expect(model.setComponentType(nodeID: componentID, componentName: "ModelComponent"))
+        #expect(model.node(componentID)?.payload.inputPins.contains {
+            $0.valueLabel == "ModelComponent"
+        } == true)
+        #expect(model.graphSnapshot().data.contains {
+            $0.toNode == componentID && $0.valueHash == TMHash.murmur64a("ModelComponent")
+        })
+
+        #expect(model.setDynamicConnectorType(
+            nodeID: dynamicID,
+            connectorName: "value",
+            isInput: true,
+            typeName: "Number"
+        ))
+        #expect(model.node(dynamicID)?.dynamicConnectorSettings?.inputs.first?.typeHash
+            == ScriptGraphTypeRegistry.number.typeHash)
+        #expect(model.node(dynamicID)?.dynamicConnectorSettings?.inputs.first?.editHash
+            == ScriptGraphTypeRegistry.number.editHash)
+
+        #expect(model.setEntityParameterType(nodeID: parameterID, typeName: "Vector3"))
+        #expect(model.node(parameterID)?.entityParameterSettings?.typeHash
+            == ScriptGraphTypeRegistry.vector3.editHash)
+    }
+
+    @Test func variadicDynamicConnectorsCanBeAddedRenamedAndRemoved() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let id = model.addNode(type: "tm_string_merge", at: .zero)
+
+        #expect(model.addDynamicConnector(
+            nodeID: id, name: "value2", isInput: true, typeName: "String"
+        ))
+        #expect(model.renameDynamicConnector(
+            nodeID: id, name: "value2", isInput: true, newName: "suffix"
+        ))
+        #expect(model.node(id)?.dynamicConnectorSettings?.inputs.map(\.name)
+            == ["value0", "value1", "suffix"])
+        #expect(model.node(id)?.payload.inputPins.contains { $0.label == "suffix" || $0.label == "Suffix" } == true)
+
+        #expect(model.removeDynamicConnector(nodeID: id, name: "suffix", isInput: true))
+        #expect(model.node(id)?.dynamicConnectorSettings?.inputs.map(\.name) == ["value0", "value1"])
+        #expect(!model.removeDynamicConnector(nodeID: id, name: "value1", isInput: true))
+    }
+
+    @Test func deprecatedGenericConstantUsesTypedReplacementRecipe() throws {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let id = model.addNode(type: "tm_constant", at: .zero)
+        let node = try #require(model.graphSnapshot().nodes.first)
+
+        #expect(node.id == id)
+        #expect(node.type == "tm_make_bool")
+        #expect(model.graphSnapshot().data.contains {
+            $0.toNode == id
+                && $0.toPin == TMHash.murmur64a("initial_value")
+                && $0.value == .bool(true)
+        })
+    }
+
     /// An inserted node participates in the connection rules with an existing node:
     /// its exec output can wire into an existing node's exec input.
     @Test func addedNodeParticipatesInCanConnect() {
@@ -259,6 +392,15 @@ import RCP3Document
         model.selectNode("v")
         model.deleteSelection()
         #expect(model.scalarLiterals.isEmpty)
+    }
+
+    @Test func deletingNodeDropsUnmodeledRecipeLiterals() {
+        let model = ScriptGraphEditorModel(graph: .init(nodes: [], wires: [], data: []))
+        let id = model.addNode(type: "tm_get_component", at: .zero)
+        #expect(model.graphSnapshot().data.contains { $0.toNode == id })
+
+        model.removeNode(id)
+        #expect(!model.graphSnapshot().data.contains { $0.toNode == id })
     }
 
     // MARK: - Dirty tracking (guards against discarding live edits on a re-key)

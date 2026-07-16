@@ -146,6 +146,7 @@ struct ScriptGraphNodeLibraryTests {
         #expect(byType["tm_constant"] == "Constant")
         #expect(byType["tm_get_variable_node"] == "Get Variable")
         #expect(byType["tm_set_remote_variable_node"] == "Set Remote Variable")
+        #expect(byType["tm_clone"] == "Clone")
 
         // Data-driven: one palette item per type that has a spec.
         let expectedTypes = [
@@ -192,7 +193,8 @@ struct ScriptGraphNodeLibraryTests {
             "tm_find_entity", "tm_find_parent_entity", "tm_find_scene_entity",
             "tm_find_entity_with_component",
             "tm_has_component", "tm_get_parent", "tm_get_children", "tm_set_parent", "tm_add_child",
-            "tm_remove_child", "tm_remove_from_parent", "tm_spawn_entity", "tm_self", "tm_scene",
+            "tm_remove_child", "tm_remove_from_parent", "tm_spawn_entity", "tm_clone",
+            "tm_self", "tm_scene",
             // Logic
             "tm_and", "tm_or", "tm_equals", "tm_not_equals", "tm_not",
             // Math — Arithmetic & trig
@@ -702,6 +704,20 @@ struct ScriptGraphNodeLibraryTests {
         #expect(clone.fixedOutputs.map(\.connectorName) == [""])
         #expect(!clone.acceptsMixedInputTypes)
         #expect(!clone.requiresArrayInput)
+
+        let cloneSettings = try #require(
+            ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: "tm_clone")
+        )
+        #expect(cloneSettings.container == .direct)
+        #expect(cloneSettings.inputs.map(\.name) == ["source"])
+        #expect(cloneSettings.outputs.map(\.name) == ["source"])
+        #expect(cloneSettings.inputs.map(\.typeHash) == [ScriptGraphTypeRegistry.entity.typeHash])
+        #expect(cloneSettings.outputs.map(\.typeHash) == [ScriptGraphTypeRegistry.entity.typeHash])
+
+        let cloneSpec = try #require(ScriptGraphNodeLibrary.spec(for: "tm_clone"))
+        #expect(cloneSpec.category == .entity)
+        #expect(cloneSpec.inputs.map(\.connectorName) == ["", "source"])
+        #expect(cloneSpec.outputs.map(\.connectorName) == ["source", ""])
 
         for type in ["tm_break_material", "tm_break_physically_based_material_types"] {
             let materialBreak = try #require(

@@ -11,10 +11,13 @@ import TMFormat
 //   swift run rcp3-dump export-certification <project> <matrix.json>
 // Reconcile live authoring/corpus coverage with the harvested parity ledger:
 //   swift run rcp3-dump audit-compliance <ledger.json> <matrix.json>
+// Validate every Script Graph asset in a project with explicit coverage reporting:
+//   swift run rcp3-dump validate <path/to/Name.realitycomposerpro>
 
 let arguments = CommandLine.arguments
 guard arguments.count == 2
     || (arguments.count == 3 && arguments[1] == "export-corpus")
+    || (arguments.count == 3 && arguments[1] == "validate")
     || (arguments.count == 4 && arguments[1] == "export-certification")
     || (arguments.count == 4 && arguments[1] == "audit-compliance")
 else {
@@ -22,6 +25,7 @@ else {
     usage:
       rcp3-dump <path/to/Name.realitycomposerpro>
       rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
+      rcp3-dump validate <path/to/Name.realitycomposerpro>
       rcp3-dump export-certification <path/to/Name.realitycomposerpro> <path/to/matrix.json>
       rcp3-dump audit-compliance <path/to/parity-ledger.json> <path/to/matrix.json>
     """.utf8))
@@ -52,9 +56,19 @@ private struct ParityLedger: Decodable {
         struct Parity: Decodable { let authoringImplemented: Bool }
         let id: String
         let isPublicPaletteCandidate: Bool
+        let isCreatorVisibleCandidate: Bool?
         let parity: Parity
     }
     let entries: [Entry]
+}
+
+private struct ProjectValidation: Encodable {
+    struct Asset: Encodable {
+        let id: String
+        let name: String
+        let report: ScriptGraphValidationReport
+    }
+    let assets: [Asset]
 }
 
 if arguments.count == 4, arguments[1] == "audit-compliance" {
@@ -68,7 +82,19 @@ if arguments.count == 4, arguments[1] == "audit-compliance" {
             CertificationMatrix.self,
             from: Data(contentsOf: URL(filePath: arguments[3]))
         )
-        let publicTypes = Set(ledger.entries.filter(\.isPublicPaletteCandidate).map(\.id))
+        let publicTypes = Set(ledger.entries.filter {
+            $0.isCreatorVisibleCandidate ?? $0.isPublicPaletteCandidate
+        }.map(\.id))
+        let nonCreatorTypes = Set(ledger.entries.filter {
+            $0.isPublicPaletteCandidate && !($0.isCreatorVisibleCandidate ?? true)
+        }.map(\.id))
+        guard nonCreatorTypes == ScriptGraphComplianceAudit.rcp3CataloguedNonCreatorTypes else {
+            throw NSError(
+                domain: "RCP3Dump.ComplianceAudit",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "ledger non-creator classification disagrees with the versioned RCP3 source inventory"]
+            )
+        }
         let additionalAuthorable = Set(ledger.entries.filter {
             $0.parity.authoringImplemented && [
                 "tm_get_material_parameter", "tm_set_material_parameter_v2", "tm_modify_any_material",
@@ -83,6 +109,7 @@ if arguments.count == 4, arguments[1] == "audit-compliance" {
         })
         let report = ScriptGraphComplianceAudit.makeReport(
             cataloguedPublicTypes: publicTypes,
+            cataloguedNonCreatorTypes: nonCreatorTypes,
             additionallyAuthorableTypes: additionalAuthorable,
             rcpRoundTripCertifiedTypes: rcpCertified,
             runtimeVerifiedTypes: runtimeVerified
@@ -147,6 +174,22 @@ func dump(_ entity: RCP3Entity, depth: Int) {
 
 do {
     let bundle = try RCP3Bundle.open(url)
+    if command == "validate" {
+        let assets = bundle.scriptGraphAssets().map { asset in
+            let graph = bundle.scriptGraph(assetID: asset.id)
+                ?? RCP3ScriptGraph(nodes: [], wires: [], data: [])
+            return ProjectValidation.Asset(
+                id: asset.id,
+                name: asset.name,
+                report: ScriptGraphValidator.validate(graph, registry: .builtins)
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        FileHandle.standardOutput.write(try encoder.encode(ProjectValidation(assets: assets)))
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        exit(assets.contains(where: { !$0.report.isStructurallyValid }) ? 1 : 0)
+    }
     if command == "export-corpus" {
         for example in ScriptGraphExamples.all {
             let asset = try bundle.createScriptGraphAsset(named: example.name)

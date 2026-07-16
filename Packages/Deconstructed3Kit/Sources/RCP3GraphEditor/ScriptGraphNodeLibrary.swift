@@ -208,6 +208,12 @@ public enum ScriptGraphNodeLibrary {
         }
 
         switch type {
+        case "tm_clone":
+            let entity = ScriptGraphTypeRegistry.entity.typeHash
+            return direct(
+                inputs: [connector("source", entity, 0)],
+                outputs: [connector("source", entity, 0)]
+            )
         case "tm_break_material":
             return direct(inputs: [
                 connector(
@@ -290,6 +296,7 @@ public enum ScriptGraphNodeLibrary {
         let category: Category = switch type {
         case let type where type.hasPrefix("tm_array_"): .utility
         case "tm_is_valid", "tm_is_valid_branch": .logic
+        case "tm_clone": .entity
         case "tm_break_material", "tm_break_physically_based_material_types": .make
         default: .string
         }
@@ -544,6 +551,7 @@ public enum ScriptGraphNodeLibrary {
         "tm_remove_child": "Remove Child",
         "tm_remove_from_parent": "Remove From Parent",
         "tm_spawn_entity": "Spawn Entity",
+        "tm_clone": "Clone",
         "tm_self": "Self",
         "tm_scene": "Scene",
         // Components

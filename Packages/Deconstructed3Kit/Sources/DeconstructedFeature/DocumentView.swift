@@ -1566,6 +1566,32 @@ struct NodeInspectorView: View {
                 }
             }
 
+            if model.supportsComponentType(nodeID: nodeID) {
+                Section("Component") {
+                    ComponentTypeRow(model: model, nodeID: nodeID)
+                }
+            }
+
+            if model.node(nodeID)?.dynamicConnectorSettings != nil {
+                Section("Typed Connectors") {
+                    DynamicConnectorRows(model: model, nodeID: nodeID)
+                }
+            }
+
+            if model.node(nodeID)?.entityParameterSettings != nil {
+                Section("Parameter Type") {
+                    EntityParameterTypeRow(model: model, nodeID: nodeID)
+                }
+            }
+
+            if let material = model.node(nodeID)?.materialSettings {
+                Section("Material Schema") {
+                    LabeledContent("Type", value: material.objectIdentifier)
+                    LabeledContent("Inputs", value: String(material.inputs.count))
+                    LabeledContent("Outputs", value: String(material.outputs.count))
+                }
+            }
+
             let literals = model.editableLiterals(forNode: nodeID)
             if literals.isEmpty {
                 Section("Inputs") {
@@ -1606,6 +1632,100 @@ private struct EnumCaseRow: View {
                 ForEach(policy.schema.cases, id: \.name) { item in
                     Text(item.name).tag(item.name)
                 }
+            }
+        }
+    }
+}
+
+private struct ComponentTypeRow: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    private var selection: Binding<String> {
+        Binding(
+            get: { model.componentTypeName(nodeID: nodeID) ?? "" },
+            set: { if !$0.isEmpty { model.setComponentType(nodeID: nodeID, componentName: $0) } }
+        )
+    }
+
+    var body: some View {
+        Picker("Type", selection: selection) {
+            Text("Select…").tag("")
+            ForEach(ScriptGraphAuthoringChoices.componentTypeNames, id: \.self) { name in
+                Text(name).tag(name)
+            }
+        }
+    }
+}
+
+private struct DynamicConnectorRows: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    var body: some View {
+        if let settings = model.node(nodeID)?.dynamicConnectorSettings {
+            ForEach(settings.inputs, id: \.name) { connector in
+                connectorPicker(connector, isInput: true)
+            }
+            ForEach(settings.outputs, id: \.name) { connector in
+                connectorPicker(connector, isInput: false)
+            }
+        }
+    }
+
+    private func connectorPicker(
+        _ connector: RCP3ScriptGraph.Node.DynamicConnector,
+        isInput: Bool
+    ) -> some View {
+        let direction = isInput ? "Input" : "Output"
+        let selection = Binding(
+            get: {
+                ScriptGraphAuthoringChoices.valueTypeName(
+                    typeHash: connector.typeHash,
+                    editHash: connector.editHash
+                ) ?? ""
+            },
+            set: {
+                if !$0.isEmpty {
+                    model.setDynamicConnectorType(
+                        nodeID: nodeID,
+                        connectorName: connector.name,
+                        isInput: isInput,
+                        typeName: $0
+                    )
+                }
+            }
+        )
+        return Picker("\(direction): \(connector.displayName ?? connector.name)", selection: selection) {
+            Text("Unknown").tag("")
+            ForEach(ScriptGraphAuthoringChoices.valueTypeNames, id: \.self) { name in
+                Text(name).tag(name)
+            }
+        }
+    }
+}
+
+private struct EntityParameterTypeRow: View {
+    @Bindable var model: ScriptGraphEditorModel
+    let nodeID: String
+
+    private var selection: Binding<String> {
+        Binding(
+            get: {
+                guard let hash = model.node(nodeID)?.entityParameterSettings?.typeHash else {
+                    return ""
+                }
+                return ScriptGraphAuthoringChoices.valueTypeName(editHash: hash) ?? ""
+            },
+            set: { if !$0.isEmpty { model.setEntityParameterType(nodeID: nodeID, typeName: $0) } }
+        )
+    }
+
+    var body: some View {
+        Picker("Type", selection: selection) {
+            Text("Select…").tag("")
+            ForEach(ScriptGraphAuthoringChoices.entityParameterTypeNames, id: \.self) { name in
+                Text(name).tag(name)
             }
         }
     }

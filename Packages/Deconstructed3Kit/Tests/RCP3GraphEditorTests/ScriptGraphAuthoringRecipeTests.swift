@@ -69,7 +69,7 @@ import TMFormat
 
     @Test func sourceBackedDynamicFamiliesHaveOneUniformAuthoringPath() throws {
         let authorable = [
-            "tm_to_string", "tm_string_merge",
+            "tm_clone", "tm_to_string", "tm_string_merge",
             "tm_array_add", "tm_array_count", "tm_array_create", "tm_array_find",
             "tm_array_for_each", "tm_array_get", "tm_array_remove", "tm_array_set",
             "tm_custom_event", "tm_is_valid", "tm_is_valid_branch",
@@ -87,6 +87,23 @@ import TMFormat
             #expect(graph.nodes.last?.dynamicConnectorSettings != nil)
             #expect(ScriptGraphNodeLibrary.spec(for: type) != nil)
         }
+    }
+
+    @Test func cloneRecipeAuthorsTheRecoveredEntityDynamicContract() throws {
+        let recipe = try #require(ScriptGraphAuthoringRecipes.recipe(for: "tm_clone"))
+        #expect(recipe.topology == .action)
+
+        let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+            requestedType: "tm_clone", label: "Clone", graphID: "clone"
+        ))
+        let clone = try #require(graph.nodes.first { $0.type == "tm_clone" })
+        let settings = try #require(clone.dynamicConnectorSettings)
+        #expect(settings.container == .direct)
+        #expect(settings.inputs.map(\.name) == ["source"])
+        #expect(settings.outputs.map(\.name) == ["source"])
+        #expect(settings.inputs.map(\.typeHash) == [ScriptGraphTypeRegistry.entity.typeHash])
+        #expect(settings.outputs.map(\.typeHash) == [ScriptGraphTypeRegistry.entity.typeHash])
+        #expect(graph.wires.count == 1)
     }
 
     @Test func entityParameterUsesItsDedicatedSettingsRatherThanGenericDynamicSettings() throws {
@@ -156,5 +173,48 @@ import TMFormat
         let pure = try #require(ScriptGraphAuthoringRecipes.recipe(for: "tm_self"))
         #expect(pure.topology == .pure)
         #expect(ScriptGraphAuthoringRecipes.recipe(for: "not_a_real_node") == nil)
+    }
+
+    @Test func everyAuthorablePaletteTypeUsesTheSameFragmentAsFullGraphGeneration() throws {
+        func generator() -> () -> String {
+            var index = 0
+            return {
+                defer { index += 1 }
+                return "id-\(index)"
+            }
+        }
+
+        for item in ScriptGraphNodeLibrary.paletteItems where
+            ScriptGraphAuthoringRecipes.recipe(for: item.type) != nil {
+            let fragment = try #require(ScriptGraphAuthoringRecipes.makeFragment(
+                requestedType: item.type,
+                label: item.displayName,
+                makeUUID: generator()
+            ))
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: item.type,
+                label: item.displayName,
+                graphID: item.type,
+                makeUUID: generator()
+            ))
+
+            #expect(graph.nodes.contains(fragment.node), "Node fragment drifted for \(item.type)")
+            #expect(graph.data == fragment.data, "Literal fragment drifted for \(item.type)")
+            #expect(graph.variables == fragment.variables, "Variable fragment drifted for \(item.type)")
+        }
+    }
+
+    @Test func everySchemaEnumFragmentStartsWithAValidCase() throws {
+        for item in ScriptGraphNodeLibrary.paletteItems where
+            ScriptGraphNodeLibrary.enumPinPolicy(for: item.type) != nil {
+            let fragment = try #require(ScriptGraphAuthoringRecipes.makeFragment(
+                requestedType: item.type,
+                label: item.displayName
+            ))
+            let selection = try #require(fragment.node.enumSelection, "Missing enum selection for \(item.type)")
+            #expect(ScriptGraphNodeLibrary.enumPinPolicy(for: item.type)?.schema.cases.contains {
+                $0.name == selection.caseName
+            } == true)
+        }
     }
 }

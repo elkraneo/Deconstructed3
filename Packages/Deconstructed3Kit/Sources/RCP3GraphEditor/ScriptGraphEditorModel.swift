@@ -366,27 +366,131 @@ public final class ScriptGraphEditorModel {
     @discardableResult
     public func addNode(type: String, label: String? = nil, at position: CGPoint) -> String {
         let newID = UUID().uuidString
-        let enumSelection = ScriptGraphNodeLibrary.defaultEnumSelection(for: type)
-        let dynamicConnectorSettings = ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: type)
-        let entityParameterSettings = ScriptGraphNodeLibrary.defaultEntityParameterSettings(for: type)
+        var firstUUID = true
+        let makeUUID = {
+            if firstUUID {
+                firstUUID = false
+                return newID
+            }
+            return UUID().uuidString
+        }
+
+        // Use the same recipe interpreter as the complete generated corpus. This is
+        // the single insertion contract for canvas, agent, and generated fixtures:
+        // component selectors, typed variables, material/dynamic/entity settings,
+        // replacement nodes, and required literals cannot drift by authoring surface.
+        let authored = ScriptGraphAuthoringRecipes.makeFragment(
+            requestedType: type,
+            label: label ?? type,
+            makeUUID: makeUUID
+        )
+        var seed = authored?.node
+        let mergedVariables = mergeAuthoredVariables(authored?.variables ?? [])
+        if authored?.variables.first != nil, let resolved = mergedVariables.first {
+            seed?.variableName = resolved.name
+            seed?.variableRefUUID = resolved.uuid
+        }
+        let authoredType = seed?.type ?? type
+        let enumSelection = seed?.enumSelection
+            ?? ScriptGraphNodeLibrary.defaultEnumSelection(for: authoredType)
+        let dynamicConnectorSettings = seed?.dynamicConnectorSettings
+            ?? ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(for: authoredType)
+        let materialSettings = seed?.materialSettings
+        let entityParameterSettings = seed?.entityParameterSettings
+            ?? ScriptGraphNodeLibrary.defaultEntityParameterSettings(for: authoredType)
         let node = RCP3ScriptGraph.Node(
-            id: newID, type: type, label: label, enumSelection: enumSelection,
+            id: newID,
+            type: authoredType,
+            label: label,
+            x: Double(position.x),
+            y: Double(position.y),
+            variableName: seed?.variableName,
+            variableRefUUID: seed?.variableRefUUID,
+            enumSelection: enumSelection,
             dynamicConnectorSettings: dynamicConnectorSettings,
+            materialSettings: materialSettings,
             entityParameterSettings: entityParameterSettings
         )
+        let nodeData = authored?.data.filter { $0.toNode == newID } ?? []
+        for literal in nodeData {
+            if let value = literal.value {
+                literals[LiteralKey(nodeID: newID, pinConnectorHash: literal.toPin)] = value
+            } else {
+                unmodeledLiterals.append(literal)
+            }
+        }
+        if let variableName = node.variableName {
+            variableNames[newID] = variableName
+        }
         let payload = ScriptGraphPinResolver.payload(
             for: node,
-            in: RCP3ScriptGraph(nodes: [node], wires: [], data: []),
+            in: RCP3ScriptGraph(
+                nodes: [node],
+                wires: [],
+                data: nodeData,
+                variables: variables
+            ),
             registry: nodeRegistry
         )
         nodes.append(GraphNodeBox(
             id: newID, position: position, payload: payload, enumSelection: enumSelection,
             dynamicConnectorSettings: dynamicConnectorSettings,
+            materialSettings: materialSettings,
             entityParameterSettings: entityParameterSettings
         ))
         selectNode(newID)
         markDirty()
         return newID
+    }
+
+    /// Merges recipe-created variables without binding a typed node to an existing
+    /// declaration of an incompatible concrete type.
+    private func mergeAuthoredVariables(
+        _ authoredVariables: [RCP3ScriptGraph.Variable]
+    ) -> [RCP3ScriptGraph.Variable] {
+        authoredVariables.map { authored in
+            if let index = variables.firstIndex(where: {
+                $0.name.caseInsensitiveCompare(authored.name) == .orderedSame
+            }) {
+                let existing = variables[index]
+                if existing.typeHash == authored.typeHash,
+                   existing.editHash == authored.editHash,
+                   existing.dataType == authored.dataType {
+                    return existing
+                }
+                if existing.typeHash == nil, existing.editHash == nil, existing.dataType == nil {
+                    let upgraded = RCP3ScriptGraph.Variable(
+                        uuid: existing.uuid,
+                        name: existing.name,
+                        typeHash: authored.typeHash,
+                        editHash: authored.editHash,
+                        dataType: authored.dataType
+                    )
+                    variables[index] = upgraded
+                    return upgraded
+                }
+
+                var suffix = 2
+                var uniqueName = "\(authored.name) \(suffix)"
+                while variables.contains(where: {
+                    $0.name.caseInsensitiveCompare(uniqueName) == .orderedSame
+                }) {
+                    suffix += 1
+                    uniqueName = "\(authored.name) \(suffix)"
+                }
+                let renamed = RCP3ScriptGraph.Variable(
+                    uuid: authored.uuid,
+                    name: uniqueName,
+                    typeHash: authored.typeHash,
+                    editHash: authored.editHash,
+                    dataType: authored.dataType
+                )
+                variables.append(renamed)
+                return renamed
+            }
+            variables.append(authored)
+            return authored
+        }
     }
 
     // MARK: Node label (rename)
@@ -440,6 +544,289 @@ public final class ScriptGraphEditorModel {
                 || ($0.to.nodeID == nodeID && !validPins.contains($0.to.pinID))
         }
         markDirty()
+    }
+
+    /// Selects the RealityKit component schema used by a component-family node.
+    /// The selection is the same typed `component_type` literal RCP3 authors and
+    /// immediately rebuilds the node's schema-derived property pins.
+    @discardableResult
+    public func setComponentType(nodeID: String, componentName: String) -> Bool {
+        guard
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            nodes[index].payload.inputPins.contains(where: {
+                $0.id == "in." + TMHash.hex(TMHash.murmur64a("component_type"))
+            }),
+            let component = ScriptGraphNodeLibrary.registeredComponents.first(where: {
+                $0.name.caseInsensitiveCompare(componentName) == .orderedSame
+            })
+        else { return false }
+
+        let pin = TMHash.murmur64a("component_type")
+        unmodeledLiterals.removeAll { $0.toNode == nodeID && $0.toPin == pin }
+        unmodeledLiterals.append(.init(
+            id: UUID().uuidString,
+            toNode: nodeID,
+            toPin: pin,
+            valueType: "re_scripting_graph_component_type",
+            valueHash: component.typeHash
+        ))
+        literals.removeValue(forKey: .init(nodeID: nodeID, pinConnectorHash: pin))
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    public func supportsComponentType(nodeID: String) -> Bool {
+        node(nodeID)?.payload.inputPins.contains {
+            $0.id == "in." + TMHash.hex(TMHash.murmur64a("component_type"))
+        } == true
+    }
+
+    public func componentTypeName(nodeID: String) -> String? {
+        let pin = TMHash.murmur64a("component_type")
+        return unmodeledLiterals.first {
+            $0.toNode == nodeID && $0.toPin == pin
+        }?.valueHash.flatMap(ScriptGraphNodeLibrary.componentTypeName(forHash:))
+    }
+
+    /// Changes one graph-authored dynamic connector's runtime/editor type pair.
+    /// Connector identity, order, display name, optionality, and container shape are
+    /// preserved; only the selected type changes.
+    @discardableResult
+    public func setDynamicConnectorType(
+        nodeID: String,
+        connectorName: String,
+        isInput: Bool,
+        typeName: String
+    ) -> Bool {
+        guard
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            let settings = nodes[index].dynamicConnectorSettings,
+            let identity = ScriptGraphTypeRegistry.identity(named: typeName)
+        else { return false }
+
+        var changed = false
+        func replacing(
+            _ connectors: [RCP3ScriptGraph.Node.DynamicConnector]
+        ) -> [RCP3ScriptGraph.Node.DynamicConnector] {
+            connectors.map { connector in
+                guard connector.name.caseInsensitiveCompare(connectorName) == .orderedSame else {
+                    return connector
+                }
+                changed = true
+                return identity.connector(
+                    name: connector.name,
+                    displayName: connector.displayName,
+                    order: connector.order,
+                    optionality: connector.optionality
+                )
+            }
+        }
+        let inputs = isInput ? replacing(settings.inputs) : settings.inputs
+        let outputs = isInput ? settings.outputs : replacing(settings.outputs)
+        guard changed else { return false }
+        nodes[index].dynamicConnectorSettings = .init(
+            container: settings.container,
+            inputs: inputs,
+            outputs: outputs
+        )
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    @discardableResult
+    public func addDynamicConnector(
+        nodeID: String,
+        name: String,
+        isInput: Bool,
+        typeName: String
+    ) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            let settings = nodes[index].dynamicConnectorSettings,
+            let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: nodes[index].payload.type),
+            let identity = ScriptGraphTypeRegistry.identity(named: typeName)
+        else { return false }
+        let side = isInput ? settings.inputs : settings.outputs
+        guard !side.contains(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) else { return false }
+        if isInput {
+            let fixed = policy.fixedInputs.filter { !$0.isExec }.count
+            guard policy.maximumInputCount.map({ fixed + side.count + 1 <= $0 }) ?? true else {
+                return false
+            }
+        }
+        let order = (side.map(\.order).max() ?? -1) + 1
+        let connector = identity.connector(name: trimmed, order: order)
+        nodes[index].dynamicConnectorSettings = .init(
+            container: settings.container,
+            inputs: isInput ? settings.inputs + [connector] : settings.inputs,
+            outputs: isInput ? settings.outputs : settings.outputs + [connector]
+        )
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    @discardableResult
+    public func removeDynamicConnector(
+        nodeID: String,
+        name: String,
+        isInput: Bool
+    ) -> Bool {
+        guard
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            let settings = nodes[index].dynamicConnectorSettings,
+            let policy = ScriptGraphNodeLibrary.dynamicPinPolicy(for: nodes[index].payload.type)
+        else { return false }
+        let side = isInput ? settings.inputs : settings.outputs
+        guard side.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            return false
+        }
+        let remaining = side.filter { $0.name.caseInsensitiveCompare(name) != .orderedSame }
+        if isInput {
+            let fixed = policy.fixedInputs.filter { !$0.isExec }.count
+            guard fixed + remaining.count >= policy.minimumInputCount else { return false }
+        }
+        nodes[index].dynamicConnectorSettings = .init(
+            container: settings.container,
+            inputs: isInput ? remaining : settings.inputs,
+            outputs: isInput ? settings.outputs : remaining
+        )
+        if isInput {
+            let hash = TMHash.murmur64a(name)
+            literals.removeValue(forKey: .init(nodeID: nodeID, pinConnectorHash: hash))
+            unmodeledLiterals.removeAll { $0.toNode == nodeID && $0.toPin == hash }
+        }
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    @discardableResult
+    public func renameDynamicConnector(
+        nodeID: String,
+        name: String,
+        isInput: Bool,
+        newName: String
+    ) -> Bool {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !trimmed.isEmpty,
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            let settings = nodes[index].dynamicConnectorSettings
+        else { return false }
+        let side = isInput ? settings.inputs : settings.outputs
+        guard !side.contains(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+                && $0.name.caseInsensitiveCompare(name) != .orderedSame
+        }) else { return false }
+        var changed = false
+        let renamed = side.map { connector in
+            guard connector.name.caseInsensitiveCompare(name) == .orderedSame else { return connector }
+            changed = true
+            return RCP3ScriptGraph.Node.DynamicConnector(
+                name: trimmed,
+                displayName: trimmed,
+                typeHash: connector.typeHash,
+                editHash: connector.editHash,
+                order: connector.order,
+                optionality: connector.optionality
+            )
+        }
+        guard changed else { return false }
+        nodes[index].dynamicConnectorSettings = .init(
+            container: settings.container,
+            inputs: isInput ? renamed : settings.inputs,
+            outputs: isInput ? settings.outputs : renamed
+        )
+        if isInput {
+            let oldHash = TMHash.murmur64a(name)
+            let newHash = TMHash.murmur64a(trimmed)
+            let oldKey = LiteralKey(nodeID: nodeID, pinConnectorHash: oldHash)
+            if let value = literals.removeValue(forKey: oldKey) {
+                literals[.init(nodeID: nodeID, pinConnectorHash: newHash)] = value
+            }
+            unmodeledLiterals = unmodeledLiterals.map { literal in
+                guard literal.toNode == nodeID && literal.toPin == oldHash else { return literal }
+                return RCP3ScriptGraph.DataLiteral(
+                    id: literal.id,
+                    toNode: literal.toNode,
+                    toPin: newHash,
+                    valueType: literal.valueType,
+                    valueHash: literal.valueHash,
+                    value: literal.value
+                )
+            }
+        }
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    /// Selects the value type for Get/Set Entity Parameter. RCP3 persists the
+    /// editor identity for this dedicated settings record.
+    @discardableResult
+    public func setEntityParameterType(nodeID: String, typeName: String) -> Bool {
+        guard
+            let index = nodes.firstIndex(where: { $0.id == nodeID }),
+            ["tm_get_entity_parameter", "tm_set_entity_parameter"].contains(nodes[index].payload.type),
+            let identity = ScriptGraphTypeRegistry.identity(named: typeName),
+            identity.editHash != 0
+        else { return false }
+        let settings = RCP3ScriptGraph.Node.EntityParameterSettings(typeHash: identity.editHash)
+        guard nodes[index].entityParameterSettings != settings else { return true }
+        nodes[index].entityParameterSettings = settings
+        rebuildPayload(at: index)
+        markDirty()
+        return true
+    }
+
+    /// Re-resolves one live node after a schema-setting mutation and removes wires
+    /// whose endpoints no longer exist in the selected schema.
+    private func rebuildPayload(at index: Int) {
+        let box = nodes[index]
+        let variableName = variableNames[box.id]
+        let variable = variableName.flatMap { name in
+            variables.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        }
+        let node = RCP3ScriptGraph.Node(
+            id: box.id,
+            type: box.payload.type,
+            label: box.payload.label,
+            x: Double(box.position.x),
+            y: Double(box.position.y),
+            variableName: variableName,
+            variableRefUUID: variable?.uuid,
+            instanceOf: box.instanceOf,
+            enumSelection: box.enumSelection,
+            dynamicConnectorSettings: box.dynamicConnectorSettings,
+            materialSettings: box.materialSettings,
+            entityParameterSettings: box.entityParameterSettings
+        )
+        let nodeData = unmodeledLiterals.filter { $0.toNode == box.id } + literals.compactMap { key, value in
+            guard key.nodeID == box.id else { return nil }
+            return RCP3ScriptGraph.DataLiteral(
+                id: "live.\(box.id).\(TMHash.hex(key.pinConnectorHash))",
+                toNode: box.id,
+                toPin: key.pinConnectorHash,
+                value: value
+            )
+        }
+        nodes[index].payload = ScriptGraphPinResolver.payload(
+            for: node,
+            in: RCP3ScriptGraph(nodes: [node], wires: [], data: nodeData, variables: variables),
+            registry: nodeRegistry
+        )
+        let validPins = Set(nodes[index].payload.pins.map(\.id))
+        connections.removeAll {
+            ($0.from.nodeID == box.id && !validPins.contains($0.from.pinID))
+                || ($0.to.nodeID == box.id && !validPins.contains($0.to.pinID))
+        }
     }
 
     // MARK: Scalar pin literals (author an unwired numeric input)
@@ -559,6 +946,9 @@ public final class ScriptGraphEditorModel {
     public static let variableNodeTypes: Set<String> = [
         "tm_get_variable_node", "tm_set_variable_node", "tm_clear_variable_node",
         "tm_get_remote_variable_node", "tm_set_remote_variable_node", "tm_clear_remote_variable_node",
+        "tm_variable_add", "tm_variable_subtract", "tm_variable_multiply", "tm_variable_divide",
+        "tm_variable_multiply_by_scalar", "tm_variable_multiply_by_quaternion",
+        "tm_variable_multiply_by_matrix",
     ]
 
     /// Whether node `id` references a script-graph variable (so the inspector shows the
@@ -667,6 +1057,7 @@ public final class ScriptGraphEditorModel {
         connections.removeAll { $0.from.nodeID == id || $0.to.nodeID == id }
         nodes.removeAll { $0.id == id }
         literals = literals.filter { $0.key.nodeID != id }
+        unmodeledLiterals.removeAll { $0.toNode == id }
         variableNames.removeValue(forKey: id)
         if selectedNodeID == id { selectedNodeID = nil }
         markDirty()

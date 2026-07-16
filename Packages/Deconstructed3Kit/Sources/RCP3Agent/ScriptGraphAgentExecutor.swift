@@ -20,6 +20,13 @@ public enum ScriptGraphAgentCommand: Equatable, Sendable {
     case removeConnection(id: String)
     case setLiteral(nodeID: String, pin: String, value: ScriptGraphAgentLiteral?)
     case setVariable(nodeID: String, name: String?)
+    case setEnumCase(nodeID: String, caseName: String)
+    case setComponentType(nodeID: String, componentName: String)
+    case setDynamicConnectorType(nodeID: String, connectorName: String, isInput: Bool, typeName: String)
+    case addDynamicConnector(nodeID: String, connectorName: String, isInput: Bool, typeName: String)
+    case removeDynamicConnector(nodeID: String, connectorName: String, isInput: Bool)
+    case renameDynamicConnector(nodeID: String, connectorName: String, isInput: Bool, newName: String)
+    case setEntityParameterType(nodeID: String, typeName: String)
     case setLabel(nodeID: String, label: String)
     case moveNode(id: String, x: Double, y: Double)
     case selectNode(id: String?)
@@ -134,9 +141,28 @@ public final class ScriptGraphAgentExecutor: Sendable {
                 "\($0.id) | \($0.isInput ? "input" : "output") | \($0.isExec ? "exec" : "data") | \($0.label)\($0.valueLabel.map { " = \($0)" } ?? "")"
             }
             let touching = model.connections.filter { $0.from.nodeID == id || $0.to.nodeID == id }
+            var settings: [String] = []
+            if let policy = ScriptGraphNodeLibrary.enumPinPolicy(for: node.payload.type) {
+                settings.append("enum_case=\(node.enumSelection?.caseName ?? "unset") allowed=[\(policy.schema.cases.map(\.name).joined(separator: ","))]")
+            }
+            if model.supportsComponentType(nodeID: id) {
+                settings.append("component_type=\(model.componentTypeName(nodeID: id) ?? "unset")")
+            }
+            if let dynamic = node.dynamicConnectorSettings {
+                let inputs = dynamic.inputs.map { connectorDescription($0, direction: "input") }
+                let outputs = dynamic.outputs.map { connectorDescription($0, direction: "output") }
+                settings.append(contentsOf: inputs + outputs)
+                settings.append("allowed_value_types=[\(ScriptGraphAuthoringChoices.valueTypeNames.joined(separator: ","))]")
+            }
+            if let parameter = node.entityParameterSettings {
+                settings.append("entity_parameter_type=\(ScriptGraphAuthoringChoices.valueTypeName(editHash: parameter.typeHash) ?? TMHash.hex(parameter.typeHash))")
+            }
+            if let material = node.materialSettings {
+                settings.append("material_schema=\(material.objectIdentifier) inputs=\(material.inputs.map(\.name)) outputs=\(material.outputs.map(\.name))")
+            }
             return .init(
                 summary: "\(node.payload.title) (\(node.payload.type))",
-                detail: "id=\(id) position=(\(node.position.x),\(node.position.y)) connections=\(touching.count)\n" + pins.joined(separator: "\n")
+                detail: (["id=\(id) position=(\(node.position.x),\(node.position.y)) connections=\(touching.count)"] + settings + pins).joined(separator: "\n")
             )
 
         case let .searchCatalog(query, limit):
@@ -179,7 +205,14 @@ public final class ScriptGraphAgentExecutor: Sendable {
                 throw ScriptGraphAgentError.invalidArguments("Node type \(type) has no certified authoring recipe.")
             }
             let id = model.addNode(type: type, label: label, at: CGPoint(x: x, y: y))
-            return .init(summary: "Added \(type).", detail: "node_id=\(id)", mutated: true)
+            let authoredType = model.node(id)?.payload.type ?? type
+            let recipe = ScriptGraphAuthoringRecipes.recipe(for: type)
+            let replacement = authoredType == type ? nil : recipe?.replacementReason
+            let summary = authoredType == type
+                ? "Added \(type)."
+                : "Added \(authoredType) instead of \(type)."
+            let detail = (["node_id=\(id)", replacement].compactMap { $0 }).joined(separator: "\n")
+            return .init(summary: summary, detail: detail, mutated: true)
 
         case let .removeNode(id):
             _ = try requireNode(id)
@@ -221,6 +254,73 @@ public final class ScriptGraphAgentExecutor: Sendable {
             model.setVariableName(nodeID: nodeID, name: name)
             return .init(summary: "Updated variable reference.", detail: "node_id=\(nodeID) name=\(name ?? "none")", mutated: true)
 
+        case let .setEnumCase(nodeID, caseName):
+            let node = try requireNode(nodeID)
+            guard ScriptGraphNodeLibrary.enumPinPolicy(for: node.payload.type)?.schema.cases.contains(where: {
+                $0.name == caseName
+            }) == true else {
+                throw ScriptGraphAgentError.invalidArguments("Unknown enum case \(caseName) for \(node.payload.type).")
+            }
+            model.setEnumCase(nodeID: nodeID, caseName: caseName)
+            return .init(summary: "Updated enum case.", detail: "node_id=\(nodeID) case=\(caseName)", mutated: true)
+
+        case let .setComponentType(nodeID, componentName):
+            _ = try requireNode(nodeID)
+            guard model.setComponentType(nodeID: nodeID, componentName: componentName) else {
+                throw ScriptGraphAgentError.invalidArguments("Unknown or unsupported component type: \(componentName).")
+            }
+            return .init(summary: "Updated component type.", detail: "node_id=\(nodeID) component=\(componentName)", mutated: true)
+
+        case let .setDynamicConnectorType(nodeID, connectorName, isInput, typeName):
+            _ = try requireNode(nodeID)
+            guard model.setDynamicConnectorType(
+                nodeID: nodeID,
+                connectorName: connectorName,
+                isInput: isInput,
+                typeName: typeName
+            ) else {
+                throw ScriptGraphAgentError.invalidArguments("Unknown connector/type combination for node \(nodeID).")
+            }
+            return .init(
+                summary: "Updated dynamic connector type.",
+                detail: "node_id=\(nodeID) connector=\(connectorName) direction=\(isInput ? "input" : "output") type=\(typeName)",
+                mutated: true
+            )
+
+        case let .addDynamicConnector(nodeID, connectorName, isInput, typeName):
+            _ = try requireNode(nodeID)
+            guard model.addDynamicConnector(
+                nodeID: nodeID, name: connectorName, isInput: isInput, typeName: typeName
+            ) else {
+                throw ScriptGraphAgentError.invalidArguments("The connector violates this node's dynamic policy or already exists.")
+            }
+            return .init(summary: "Added dynamic connector.", detail: "node_id=\(nodeID) connector=\(connectorName)", mutated: true)
+
+        case let .removeDynamicConnector(nodeID, connectorName, isInput):
+            _ = try requireNode(nodeID)
+            guard model.removeDynamicConnector(
+                nodeID: nodeID, name: connectorName, isInput: isInput
+            ) else {
+                throw ScriptGraphAgentError.invalidArguments("The connector does not exist or is required by the node's minimum policy.")
+            }
+            return .init(summary: "Removed dynamic connector.", detail: "node_id=\(nodeID) connector=\(connectorName)", mutated: true)
+
+        case let .renameDynamicConnector(nodeID, connectorName, isInput, newName):
+            _ = try requireNode(nodeID)
+            guard model.renameDynamicConnector(
+                nodeID: nodeID, name: connectorName, isInput: isInput, newName: newName
+            ) else {
+                throw ScriptGraphAgentError.invalidArguments("The connector does not exist or the new name is invalid/duplicate.")
+            }
+            return .init(summary: "Renamed dynamic connector.", detail: "node_id=\(nodeID) connector=\(newName)", mutated: true)
+
+        case let .setEntityParameterType(nodeID, typeName):
+            _ = try requireNode(nodeID)
+            guard model.setEntityParameterType(nodeID: nodeID, typeName: typeName) else {
+                throw ScriptGraphAgentError.invalidArguments("Unknown or unsupported entity parameter type: \(typeName).")
+            }
+            return .init(summary: "Updated entity parameter type.", detail: "node_id=\(nodeID) type=\(typeName)", mutated: true)
+
         case let .setLabel(nodeID, label):
             _ = try requireNode(nodeID)
             model.setNodeLabel(nodeID: nodeID, label: label)
@@ -249,28 +349,34 @@ public final class ScriptGraphAgentExecutor: Sendable {
 
     private func validate() -> ScriptGraphAgentExecutionResult {
         let graph = model.graphSnapshot()
-        let nodeIDs = Set(graph.nodes.map(\.id))
-        var issues: [String] = []
-        for node in graph.nodes {
-            if model.nodeRegistry.spec(for: node.type) == nil {
-                issues.append("unknown node type \(node.type) (\(node.id))")
-            } else if ScriptGraphAuthoringRecipes.recipe(for: node.type) == nil {
-                issues.append("missing authoring recipe for \(node.type) (\(node.id))")
-            }
+        let report = ScriptGraphValidator.validate(graph, registry: model.nodeRegistry)
+        var details = report.issues.map {
+            "\($0.severity.rawValue) [\($0.code.rawValue)] \($0.message)"
         }
-        for wire in graph.wires {
-            if !nodeIDs.contains(wire.from) || !nodeIDs.contains(wire.to) {
-                issues.append("connection \(wire.id) references a missing node")
-            }
+        let unchecked = report.coverage.filter {
+            if case .unknown = $0.status { return true }
+            return false
+        }
+        if !unchecked.isEmpty {
+            details.append("coverage: \(unchecked.count) node/variable subject(s) remain explicitly unchecked")
         }
         let compiled = CanonicalScriptGraphCompiler().compile(graph)
         let unsupported = compiled.split(separator: "\n").filter { $0.contains("unsupported") }
         if !unsupported.isEmpty {
-            issues.append("canonical compiler emitted \(unsupported.count) unsupported marker(s)")
+            details.append("runtime compiler: \(unsupported.count) unsupported marker(s)")
+        }
+        let problemCount = report.errors.count + unsupported.count
+        let summary: String
+        if problemCount > 0 {
+            summary = "Graph validation found \(problemCount) error or runtime-coverage issue(s)."
+        } else if !unchecked.isEmpty {
+            summary = "Structural/settings validation passed with \(unchecked.count) explicit coverage gap(s)."
+        } else {
+            summary = "Structural/settings validation passed with complete declared-interface coverage."
         }
         return .init(
-            summary: issues.isEmpty ? "Graph validation passed." : "Graph validation found \(issues.count) issue(s).",
-            detail: issues.isEmpty ? "No structural or compiler coverage issues found." : issues.joined(separator: "\n")
+            summary: summary,
+            detail: details.isEmpty ? "No structural, settings, or compiler coverage issues found." : details.joined(separator: "\n")
         )
     }
 
@@ -299,11 +405,24 @@ public final class ScriptGraphAgentExecutor: Sendable {
         return nil
     }
 
+    private func connectorDescription(
+        _ connector: RCP3ScriptGraph.Node.DynamicConnector,
+        direction: String
+    ) -> String {
+        let typeName = ScriptGraphAuthoringChoices.valueTypeName(
+            typeHash: connector.typeHash,
+            editHash: connector.editHash
+        ) ?? TMHash.hex(connector.typeHash)
+        return "dynamic_\(direction)=\(connector.name) type=\(typeName)"
+    }
+
     private static func isMutating(_ command: ScriptGraphAgentCommand) -> Bool {
         switch command {
         case .overview, .listNodes, .inspectNode, .searchCatalog, .inspectNodeType, .validate, .compile:
             false
         case .addNode, .removeNode, .connect, .removeConnection, .setLiteral, .setVariable,
+             .setEnumCase, .setComponentType, .setDynamicConnectorType, .setEntityParameterType,
+             .addDynamicConnector, .removeDynamicConnector, .renameDynamicConnector,
              .setLabel, .moveNode, .selectNode, .save, .runPreview, .play, .stop:
             true
         }

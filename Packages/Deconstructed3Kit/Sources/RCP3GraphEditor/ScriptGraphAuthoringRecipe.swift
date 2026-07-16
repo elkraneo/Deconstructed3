@@ -55,6 +55,28 @@ public struct ScriptGraphAuthoringRecipe: Sendable, Hashable {
     }
 }
 
+/// The node-level result of the shared recipe interpreter. Canvas insertion,
+/// agent insertion, generated fixtures, and CLI authoring all consume this exact
+/// fragment so settings and typed literals cannot drift between surfaces.
+public struct ScriptGraphAuthoringFragment: Sendable, Equatable {
+    public let recipe: ScriptGraphAuthoringRecipe
+    public let node: RCP3ScriptGraph.Node
+    public let data: [RCP3ScriptGraph.DataLiteral]
+    public let variables: [RCP3ScriptGraph.Variable]
+
+    public init(
+        recipe: ScriptGraphAuthoringRecipe,
+        node: RCP3ScriptGraph.Node,
+        data: [RCP3ScriptGraph.DataLiteral],
+        variables: [RCP3ScriptGraph.Variable]
+    ) {
+        self.recipe = recipe
+        self.node = node
+        self.data = data
+        self.variables = variables
+    }
+}
+
 /// Source/RCP-verified recipes used by authoring generators.
 public enum ScriptGraphAuthoringRecipes {
     private static let numberVariable = ScriptGraphAuthoringRecipe.Variable.numberDouble(
@@ -154,13 +176,12 @@ public enum ScriptGraphAuthoringRecipes {
         return .init(requestedType: type, topology: topology)
     }
 
-    /// Creates a minimal graph through the same recipe interpreter for every family.
-    public static func makeGraph(
+    /// Creates one fully configured node and its dependent graph records.
+    public static func makeFragment(
         requestedType: String,
         label: String,
-        graphID: String,
         makeUUID: () -> String = { UUID().uuidString }
-    ) -> RCP3ScriptGraph? {
+    ) -> ScriptGraphAuthoringFragment? {
         guard let recipe = recipe(for: requestedType) else { return nil }
         let subjectID = makeUUID()
         var node = RCP3ScriptGraph.Node(id: subjectID, type: recipe.authoredType, label: label)
@@ -185,6 +206,9 @@ public enum ScriptGraphAuthoringRecipes {
                 inputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)],
                 outputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)]
             )
+        }
+        if node.enumSelection == nil {
+            node.enumSelection = ScriptGraphNodeLibrary.defaultEnumSelection(for: recipe.authoredType)
         }
         if node.dynamicConnectorSettings == nil {
             node.dynamicConnectorSettings = ScriptGraphNodeLibrary.defaultDynamicConnectorSettings(
@@ -238,14 +262,35 @@ public enum ScriptGraphAuthoringRecipes {
             }
         }
 
-        let needsRoot = recipe.topology == .action || recipe.topology == .scoped
+        return ScriptGraphAuthoringFragment(
+            recipe: recipe,
+            node: node,
+            data: data,
+            variables: variables
+        )
+    }
+
+    /// Creates a minimal graph through the same recipe interpreter for every family.
+    public static func makeGraph(
+        requestedType: String,
+        label: String,
+        graphID: String,
+        makeUUID: () -> String = { UUID().uuidString }
+    ) -> RCP3ScriptGraph? {
+        guard let fragment = makeFragment(
+            requestedType: requestedType,
+            label: label,
+            makeUUID: makeUUID
+        ) else { return nil }
+
+        let needsRoot = fragment.recipe.topology == .action || fragment.recipe.topology == .scoped
         let root = RCP3ScriptGraph.Node(id: makeUUID(), type: "tm_update", label: "Certification Start")
         return .init(
             id: graphID,
-            nodes: needsRoot ? [root, node] : [node],
-            wires: needsRoot ? [.init(id: makeUUID(), from: root.id, to: node.id)] : [],
-            data: data,
-            variables: variables
+            nodes: needsRoot ? [root, fragment.node] : [fragment.node],
+            wires: needsRoot ? [.init(id: makeUUID(), from: root.id, to: fragment.node.id)] : [],
+            data: fragment.data,
+            variables: fragment.variables
         )
     }
 }

@@ -19,4 +19,23 @@ import Testing
         #expect(report.authorableWithoutCorpusScenario == ["tm_material_fixture"])
         #expect(Set(report.corpusCoveredTypes).isSuperset(of: report.curatedScenarioCoveredTypes))
     }
+
+    @Test func rcp3NonCreatorCatalogEntriesStayVisibleButDoNotBecomeParityGaps() {
+        let excluded = ScriptGraphComplianceAudit.rcp3CataloguedNonCreatorTypes
+        #expect(excluded.count == 18)
+        #expect(excluded.contains("tm_begin_test"))
+        #expect(excluded.contains("tm_breakpoint"))
+        #expect(excluded.contains("tm_make_triangle_fill_mode"))
+        #expect(excluded.contains("tm_math_remap"))
+        #expect(!excluded.contains("tm_clone"))
+
+        let report = ScriptGraphComplianceAudit.makeReport(
+            cataloguedPublicTypes: excluded.union(["tm_self"]),
+            cataloguedNonCreatorTypes: excluded
+        )
+
+        #expect(report.cataloguedPublicTypes == ["tm_self"])
+        #expect(report.cataloguedNonCreatorTypes == excluded.sorted())
+        #expect(report.cataloguedButNotAuthorable.isEmpty)
+    }
 }

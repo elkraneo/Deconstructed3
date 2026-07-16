@@ -101,7 +101,7 @@ public struct InspectScriptGraphTool: Tool {
 public struct EditScriptGraphTool: Tool {
     @Generable
     public struct Arguments {
-        @Guide(description: "Action: add_node, remove_node, connect, remove_connection, set_literal, set_variable, set_label, move_node, or select_node.")
+        @Guide(description: "Action: add_node, remove_node, connect, remove_connection, set_literal, set_variable, set_enum_case, set_component_type, set_connector_type, add_connector, remove_connector, rename_connector, set_entity_parameter_type, set_label, move_node, or select_node.")
         public var action: String
         @Guide(description: "Primary node id for remove, literal, variable, label, move, or select.")
         public var nodeID: String?
@@ -129,6 +129,18 @@ public struct EditScriptGraphTool: Tool {
         public var boolValue: Bool?
         @Guide(description: "Text value when literalKind is string; variable name for set_variable.")
         public var textValue: String?
+        @Guide(description: "Enum case for set_enum_case.")
+        public var caseName: String?
+        @Guide(description: "Component name for set_component_type.")
+        public var componentName: String?
+        @Guide(description: "Dynamic connector name for set_connector_type.")
+        public var connectorName: String?
+        @Guide(description: "New dynamic connector name for rename_connector.")
+        public var newConnectorName: String?
+        @Guide(description: "Dynamic connector direction: input or output.")
+        public var connectorDirection: String?
+        @Guide(description: "RCP3 type-registry name, such as Bool, String, Number, Vector3, Entity, Quaternion, or Matrix4x4.")
+        public var typeName: String?
         @Guide(description: "Canvas x coordinate for add_node or move_node.")
         public var x: Double?
         @Guide(description: "Canvas y coordinate for add_node or move_node.")
@@ -177,6 +189,53 @@ public struct EditScriptGraphTool: Tool {
             )
         case "set_variable":
             command = .setVariable(nodeID: try required(arguments.nodeID, name: "nodeID"), name: arguments.textValue)
+        case "set_enum_case":
+            command = .setEnumCase(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                caseName: try required(arguments.caseName, name: "caseName")
+            )
+        case "set_component_type":
+            command = .setComponentType(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                componentName: try required(arguments.componentName, name: "componentName")
+            )
+        case "set_connector_type":
+            let direction = try required(arguments.connectorDirection, name: "connectorDirection")
+            guard direction == "input" || direction == "output" else {
+                throw ScriptGraphAgentError.invalidArguments("connectorDirection must be input or output.")
+            }
+            command = .setDynamicConnectorType(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                connectorName: try required(arguments.connectorName, name: "connectorName"),
+                isInput: direction == "input",
+                typeName: try required(arguments.typeName, name: "typeName")
+            )
+        case "add_connector":
+            let direction = try connectorDirection(arguments)
+            command = .addDynamicConnector(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                connectorName: try required(arguments.connectorName, name: "connectorName"),
+                isInput: direction,
+                typeName: try required(arguments.typeName, name: "typeName")
+            )
+        case "remove_connector":
+            command = .removeDynamicConnector(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                connectorName: try required(arguments.connectorName, name: "connectorName"),
+                isInput: try connectorDirection(arguments)
+            )
+        case "rename_connector":
+            command = .renameDynamicConnector(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                connectorName: try required(arguments.connectorName, name: "connectorName"),
+                isInput: try connectorDirection(arguments),
+                newName: try required(arguments.newConnectorName, name: "newConnectorName")
+            )
+        case "set_entity_parameter_type":
+            command = .setEntityParameterType(
+                nodeID: try required(arguments.nodeID, name: "nodeID"),
+                typeName: try required(arguments.typeName, name: "typeName")
+            )
         case "set_label":
             command = .setLabel(
                 nodeID: try required(arguments.nodeID, name: "nodeID"),
@@ -199,6 +258,14 @@ public struct EditScriptGraphTool: Tool {
     private func required<Value>(_ value: Value?, name: String) throws -> Value {
         guard let value else { throw ScriptGraphAgentError.invalidArguments("\(name) is required.") }
         return value
+    }
+
+    private func connectorDirection(_ arguments: Arguments) throws -> Bool {
+        let direction = try required(arguments.connectorDirection, name: "connectorDirection")
+        guard direction == "input" || direction == "output" else {
+            throw ScriptGraphAgentError.invalidArguments("connectorDirection must be input or output.")
+        }
+        return direction == "input"
     }
 
     private func literal(_ arguments: Arguments) throws -> ScriptGraphAgentLiteral? {

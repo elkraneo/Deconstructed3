@@ -2576,6 +2576,21 @@ import RCP3Runtime
         }
     }
 
+    @Test func cloneDefaultsItsSourceToTheCurrentEntity() {
+        let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
+        let clone = RCP3ScriptGraph.Node(id: "clone", type: "tm_clone")
+        let graph = RCP3ScriptGraph(
+            nodes: [update, clone],
+            wires: [.init(id: "e", from: update.id, to: clone.id)],
+            data: []
+        )
+
+        let js = CanonicalScriptGraphCompiler().compile(graph)
+
+        #expect(js.contains("this.entity.clone()"))
+        #expect(!js.contains("unsupported"))
+    }
+
     @Test func hasComponentCompilesToHasComponentCall() {
         let update = RCP3ScriptGraph.Node(id: "u", type: "tm_update")
         let set = RCP3ScriptGraph.Node(id: "set", type: "tm_set_variable_node", variableName: "hasComponent")
