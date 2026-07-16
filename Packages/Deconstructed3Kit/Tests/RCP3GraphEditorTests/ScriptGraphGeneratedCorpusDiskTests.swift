@@ -14,24 +14,14 @@ import TMFormat
 @MainActor
 @Suite struct ScriptGraphGeneratedCorpusDiskTests {
     @Test func everyCreatorVisibleRecipeMaterializesAndReopensFromDisk() throws {
-        let materialTypes: Set<String> = [
-            "tm_get_material_parameter", "tm_modify_any_material", "tm_set_material_parameter_v2",
-        ]
         let creatorVisibleTypes = Set(
             ScriptGraphNodeLibrary.paletteItems.compactMap { item in
                 ScriptGraphAuthoringRecipes.recipe(for: item.type) == nil ? nil : item.type
             }
-        ).union(materialTypes)
+        )
         let generatedCases = ScriptGraphGeneratedCorpus.all
         let generatedTypes = Set(generatedCases.map(\.requestedType))
-        let materialCases = try materialTypes.sorted().map { type in
-            (type, try #require(ScriptGraphAuthoringRecipes.makeGraph(
-                requestedType: type,
-                label: type,
-                graphID: "disk-\(type)"
-            )))
-        }
-        let cases = generatedCases.map { ($0.requestedType, $0.graph) } + materialCases
+        let cases = generatedCases.map { ($0.requestedType, $0.graph) }
 
         // Keep the disk gate coupled to the live palette/recipe intersection, so
         // adding a newly authorable RCP3 node cannot silently miss this test.

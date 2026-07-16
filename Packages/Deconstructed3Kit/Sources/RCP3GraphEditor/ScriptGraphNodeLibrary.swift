@@ -476,6 +476,32 @@ public enum ScriptGraphNodeLibrary {
         }
     }
 
+    /// The smallest concrete material descriptor used when inserting one of the
+    /// three settings-backed material nodes. The selected descriptor, rather
+    /// than a fixed node table, creates the material-property connectors.
+    public static func defaultMaterialSettings(
+        for type: String
+    ) -> RCP3ScriptGraph.Node.MaterialSettings? {
+        guard [
+            "tm_get_material_parameter",
+            "tm_set_material_parameter_v2",
+            "tm_modify_any_material",
+        ].contains(type) else { return nil }
+        let float = TMHash.murmur64a("Float")
+        let roughness = RCP3ScriptGraph.Node.MaterialSettings.Property(
+            name: "roughness",
+            typeHash: float,
+            editTypeHash: float,
+            isOptional: false
+        )
+        return .init(
+            typeHash: TMHash.murmur64a("PhysicallyBasedMaterial"),
+            objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
+            inputs: [roughness],
+            outputs: [roughness]
+        )
+    }
+
     /// Builds the interface selected by `tm_entity_parameter_node_settings`.
     /// The type hash controls the value connector's runtime type; pin names and
     /// topology are fixed by the Get/Set registrations.
@@ -568,6 +594,16 @@ public enum ScriptGraphNodeLibrary {
         for type in ["tm_get_entity_parameter", "tm_set_entity_parameter"] {
             if let settings = defaultEntityParameterSettings(for: type) {
                 authorable[type] = entityParameterSpec(for: type, settings: settings)
+            }
+        }
+        for type in [
+            "tm_get_material_parameter",
+            "tm_set_material_parameter_v2",
+            "tm_modify_any_material",
+        ] {
+            if let settings = defaultMaterialSettings(for: type),
+               let spec = materialSpec(for: type, settings: settings) {
+                authorable[type] = spec
             }
         }
         return authorable
@@ -1028,7 +1064,8 @@ public enum ScriptGraphNodeLibrary {
             fixedInputs: [exec],
             fixedOutputs: [
                 event("step", "Step"), event("end", "End"),
-                data("index", "Index"), data("element", "Element"),
+                // `element` is the typed settings output, not a second fixed pin.
+                data("index", "Index"),
             ],
             acceptsMixedInputTypes: false,
             requiresArrayInput: true
@@ -1039,7 +1076,8 @@ public enum ScriptGraphNodeLibrary {
             fixedInputs: [exec, data("searchValue", "Search Value")],
             fixedOutputs: [
                 event("found", "Found"), event("not found", "Not Found"),
-                data("index", "Index"), data("element", "Element"),
+                // `element` is the typed settings output, not a second fixed pin.
+                data("index", "Index"),
             ],
             acceptsMixedInputTypes: false,
             requiresArrayInput: true

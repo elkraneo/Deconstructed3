@@ -34,7 +34,7 @@ swift run rcp3-certify /absolute/path/to/certification-root \
 The command exits `0` only when a fresh report contains at least one successful
 test, no failed/skipped/not-executed/unknown result, no validation error, and RCP3
 prints its successful Script Graph integration completion. `failed` and
-`inconclusive` evidence exit `1`; invalid arguments or preflight failures exit `2`.
+`inconclusive` evidence exit `1`; invalid arguments or setup failures exit `2`.
 
 The evidence records the RCP3 version/build, deterministic runner arguments, SHA-256
 input manifest, bounded output tails, outer process status, integration completion,

@@ -290,6 +290,87 @@ struct ScriptGraphValidatorTests {
         })
     }
 
+    @Test("A resolved data input accepts exactly one binding")
+    func inputBindingCardinality() {
+        let registry = contractRegistry()
+        let valueHash = TMHash.murmur64a("value")
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "first", type: "test.number"),
+                .init(id: "second", type: "test.number"),
+                .init(id: "sink", type: "test.sink"),
+            ],
+            wires: [
+                .init(id: "wire-a", from: "first", to: "sink", fromPin: valueHash, toPin: valueHash),
+                .init(id: "wire-b", from: "second", to: "sink", fromPin: valueHash, toPin: valueHash),
+            ],
+            data: [
+                .init(id: "literal-a", toNode: "sink", toPin: valueHash, value: .number(1)),
+                .init(id: "literal-b", toNode: "sink", toPin: valueHash, value: .number(2)),
+            ]
+        )
+
+        let report = ScriptGraphValidator.validate(graph, registry: registry)
+        let subject = "sink:input:value"
+        #expect(report.errors.contains {
+            $0.code == .multipleWiresToInput && $0.subject == subject
+                && $0.message.contains("wire-a, wire-b")
+        })
+        #expect(report.errors.contains {
+            $0.code == .duplicateLiteralsToInput && $0.subject == subject
+                && $0.message.contains("literal-a, literal-b")
+        })
+        #expect(report.errors.contains {
+            $0.code == .conflictingInputBindings && $0.subject == subject
+        })
+    }
+
+    @Test("Resolved contracts reject duplicate connector identities per direction")
+    func duplicateContractConnectors() {
+        let duplicateInput = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.duplicate-input",
+            operationID: "duplicate-input",
+            displayName: "Duplicate Input",
+            category: .utility,
+            execution: .pure,
+            inputs: [
+                .init(name: "value", displayName: "First", typeToken: "Number"),
+                .init(name: "value", displayName: "Second", typeToken: "Number"),
+            ]
+        )
+        let duplicateOutput = ScriptGraphExternalAuthoringCatalog.Node(
+            id: "test.duplicate-output",
+            operationID: "duplicate-output",
+            displayName: "Duplicate Output",
+            category: .utility,
+            execution: .pure,
+            outputs: [
+                .init(name: "result", displayName: "First", typeToken: "Number"),
+                .init(name: "result", displayName: "Second", typeToken: "Number"),
+            ]
+        )
+        let registry = ScriptGraphNodeRegistry(externalCatalog: .init(
+            nodes: [duplicateInput, duplicateOutput]
+        ))
+        let graph = RCP3ScriptGraph(
+            nodes: [
+                .init(id: "input", type: duplicateInput.id),
+                .init(id: "output", type: duplicateOutput.id),
+            ],
+            wires: [], data: []
+        )
+
+        let report = ScriptGraphValidator.validate(graph, registry: registry)
+        for nodeID in ["input", "output"] {
+            #expect(report.errors.contains {
+                $0.code == .duplicateConnectorName && $0.subject == nodeID
+            })
+            #expect(report.errors.contains {
+                $0.code == .duplicateConnectorHash && $0.subject == nodeID
+            })
+        }
+    }
+
     @Test("Literal types and required-input static readiness are distinct from authoring validity")
     func literalsAndReadiness() {
         let registry = contractRegistry()

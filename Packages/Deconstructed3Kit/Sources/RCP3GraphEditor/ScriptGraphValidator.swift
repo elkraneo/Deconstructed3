@@ -116,6 +116,12 @@ public enum ScriptGraphValidator {
 
         for node in graph.nodes {
             guard let spec = specs[node.id] else { continue }
+            appendDuplicateConnectorIssues(
+                spec.inputs, direction: "input", node: node, issues: &issues
+            )
+            appendDuplicateConnectorIssues(
+                spec.outputs, direction: "output", node: node, issues: &issues
+            )
             for (direction, pins) in [("input", spec.inputs), ("output", spec.outputs)] {
                 for pin in pins {
                     let status: ScriptGraphValidationCoverage.Status
@@ -149,6 +155,8 @@ public enum ScriptGraphValidator {
                 }
             }
         }
+
+        validateInputBindings(in: graph, specs: specs, issues: &issues)
 
         for wire in graph.wires {
             guard let source = nodes[wire.from], let target = nodes[wire.to],
@@ -245,6 +253,90 @@ public enum ScriptGraphValidator {
         let execPins = pins.filter(\.isExec)
         return execPins.first(where: { $0.connectorName.isEmpty })
             ?? (execPins.count == 1 ? execPins.first : nil)
+    }
+
+    private struct InputBindingKey: Hashable {
+        let nodeID: String
+        let connectorHash: UInt64
+    }
+
+    private static func validateInputBindings(
+        in graph: RCP3ScriptGraph,
+        specs: [String: ScriptGraphNodeLibrary.NodeSpec],
+        issues: inout [ScriptGraphValidationIssue]
+    ) {
+        var pinsByKey: [InputBindingKey: ScriptGraphNodeLibrary.PinSpec] = [:]
+        for (nodeID, spec) in specs {
+            for pin in spec.inputs where !pin.isExec {
+                pinsByKey[.init(nodeID: nodeID, connectorHash: pin.connectorHash)] = pin
+            }
+        }
+
+        let wiresByInput = Dictionary(grouping: graph.wires.compactMap { wire in
+            guard let hash = wire.toPin else { return nil as (InputBindingKey, String)? }
+            let key = InputBindingKey(nodeID: wire.to, connectorHash: hash)
+            guard pinsByKey[key] != nil else { return nil }
+            return (key, wire.id)
+        }, by: \.0)
+        let literalsByInput = Dictionary(grouping: graph.data.compactMap { literal in
+            let key = InputBindingKey(nodeID: literal.toNode, connectorHash: literal.toPin)
+            guard pinsByKey[key] != nil else { return nil as (InputBindingKey, String)? }
+            return (key, literal.id)
+        }, by: \.0)
+
+        for key in Set(wiresByInput.keys).union(literalsByInput.keys).sorted(by: inputBindingOrder) {
+            guard let pin = pinsByKey[key] else { continue }
+            let subject = "\(key.nodeID):input:\(pin.connectorName)"
+            let wireIDs = wiresByInput[key, default: []].map(\.1).sorted()
+            let literalIDs = literalsByInput[key, default: []].map(\.1).sorted()
+            if wireIDs.count > 1 {
+                issues.append(.error(
+                    .multipleWiresToInput, subject: subject,
+                    "Input \(pin.displayName) on node \(key.nodeID) has multiple incoming wires: \(wireIDs.joined(separator: ", "))."
+                ))
+            }
+            if literalIDs.count > 1 {
+                issues.append(.error(
+                    .duplicateLiteralsToInput, subject: subject,
+                    "Input \(pin.displayName) on node \(key.nodeID) has multiple literals: \(literalIDs.joined(separator: ", "))."
+                ))
+            }
+            if !wireIDs.isEmpty && !literalIDs.isEmpty {
+                issues.append(.error(
+                    .conflictingInputBindings, subject: subject,
+                    "Input \(pin.displayName) on node \(key.nodeID) has both a wire and a literal binding."
+                ))
+            }
+        }
+    }
+
+    private static func inputBindingOrder(_ lhs: InputBindingKey, _ rhs: InputBindingKey) -> Bool {
+        (lhs.nodeID, lhs.connectorHash) < (rhs.nodeID, rhs.connectorHash)
+    }
+
+    private static func appendDuplicateConnectorIssues(
+        _ pins: [ScriptGraphNodeLibrary.PinSpec],
+        direction: String,
+        node: RCP3ScriptGraph.Node,
+        issues: inout [ScriptGraphValidationIssue]
+    ) {
+        for (name, matches) in Dictionary(grouping: pins, by: \.connectorName)
+            .filter({ $0.value.count > 1 })
+            .sorted(by: { $0.key < $1.key }) {
+            issues.append(.error(
+                .duplicateConnectorName, subject: node.id,
+                "Node \(node.id) declares \(matches.count) \(direction) connectors named \(name)."
+            ))
+        }
+        for (hash, matches) in Dictionary(grouping: pins, by: \.connectorHash)
+            .filter({ $0.value.count > 1 })
+            .sorted(by: { $0.key < $1.key }) {
+            let names = matches.map(\.connectorName).sorted().joined(separator: ", ")
+            issues.append(.error(
+                .duplicateConnectorHash, subject: node.id,
+                "Node \(node.id) declares \(matches.count) \(direction) connectors with hash \(hash) (\(names))."
+            ))
+        }
     }
 
     private static func literalTypeConstraint(
@@ -740,10 +832,15 @@ public struct ScriptGraphValidationIssue: Codable, Sendable, Equatable, Identifi
         case reversedWireEndpoint
         case mixedWireKinds
         case incompatibleWireTypes
+        case multipleWiresToInput
         case missingLiteralTarget
         case unknownLiteralTargetPin
         case reversedLiteralEndpoint
         case incompatibleLiteralType
+        case duplicateLiteralsToInput
+        case conflictingInputBindings
+        case duplicateConnectorName
+        case duplicateConnectorHash
         case missingRequiredInput
         case danglingVariableReference
         case incompleteVariableReference

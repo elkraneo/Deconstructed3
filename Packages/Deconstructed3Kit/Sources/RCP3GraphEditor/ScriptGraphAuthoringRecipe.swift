@@ -199,12 +199,8 @@ public enum ScriptGraphAuthoringRecipes {
                 outputs: [.init(name: "element", displayName: "Element", typeHash: TMHash.murmur64a("String"), order: 0)]
             )
         case .physicallyBasedMaterial:
-            let float = TMHash.murmur64a("Float")
-            node.materialSettings = .init(
-                typeHash: TMHash.murmur64a("PhysicallyBasedMaterial"),
-                objectIdentifier: "RealityKit.PhysicallyBasedMaterial",
-                inputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)],
-                outputs: [.init(name: "roughness", typeHash: float, editTypeHash: float, isOptional: false)]
+            node.materialSettings = ScriptGraphNodeLibrary.defaultMaterialSettings(
+                for: recipe.authoredType
             )
         }
         if node.enumSelection == nil {

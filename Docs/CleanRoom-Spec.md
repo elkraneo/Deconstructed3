@@ -1073,6 +1073,16 @@ Parity evidence is consequently tracked in separate layers:
 Only the fifth layer is external RCP3 runtime evidence. Passing the first four must
 never be reported as full RCP3 parity.
 
+The RCP3 creator-visible denominator currently contains 344 canonical node
+subjects and 1,226 unique resolved pins. A parity report must retain separate numerators
+for connector identity, direction/kind, value type, input presence, serialization,
+local compilation, and external RCP3 certification. It must also identify each gap;
+a single blended percentage is not sufficient evidence. Canonical fixtures isolate
+the subject node from helper nodes, and every certification record is tied to the
+fixture fingerprint and exact RCP3 application build. Configurable families expand
+as variants: all observed enum cases, boundary dynamic-connector configurations,
+component schemas, material schemas, and supported polymorphic type classes.
+
 RCP3 3.0 exposes a command-line test mode in its application executable. The
 observed Script Graph integration entry point is named `script-graph-graph-tests`;
 it reads its asset root from `TM_SCRIPT_TEST_ASSETS_DIR` and emits a

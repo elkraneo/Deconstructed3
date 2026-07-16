@@ -13,6 +13,8 @@ import TMFormat
 //   swift run rcp3-dump audit-compliance <ledger.json> <matrix.json>
 // Validate every Script Graph asset in a project with explicit coverage reporting:
 //   swift run rcp3-dump validate <path/to/Name.realitycomposerpro>
+// Emit the deterministic RCP3 creator-contract matrix:
+//   swift run rcp3-dump contract-matrix
 
 let arguments = CommandLine.arguments
 guard arguments.count == 2
@@ -26,6 +28,7 @@ else {
       rcp3-dump <path/to/Name.realitycomposerpro>
       rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
       rcp3-dump validate <path/to/Name.realitycomposerpro>
+      rcp3-dump contract-matrix
       rcp3-dump export-certification <path/to/Name.realitycomposerpro> <path/to/matrix.json>
       rcp3-dump audit-compliance <path/to/parity-ledger.json> <path/to/matrix.json>
     """.utf8))
@@ -33,6 +36,20 @@ else {
 }
 
 let command = arguments.count > 2 ? arguments[1] : "dump"
+
+if arguments.count == 2, arguments[1] == "contract-matrix" {
+    do {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        FileHandle.standardOutput.write(try encoder.encode(ScriptGraphContractMatrix.make()))
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("error: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 let url = URL(filePath: arguments[command == "dump" ? 1 : 2])
 
 private struct CertificationMatrix: Decodable {
