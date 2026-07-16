@@ -1,4 +1,5 @@
 import Foundation
+import RCP3Certification
 import RCP3Document
 import RCP3GraphEditor
 import TMFormat
@@ -14,12 +15,13 @@ import TMFormat
 // Validate every Script Graph asset in a project with explicit coverage reporting:
 //   swift run rcp3-dump validate <path/to/Name.realitycomposerpro>
 // Emit the deterministic RCP3 creator-contract matrix:
-//   swift run rcp3-dump contract-matrix
+//   swift run rcp3-dump contract-matrix [rcp3-certification.json]
 
 let arguments = CommandLine.arguments
 guard arguments.count == 2
     || (arguments.count == 3 && arguments[1] == "export-corpus")
     || (arguments.count == 3 && arguments[1] == "validate")
+    || (arguments.count == 3 && arguments[1] == "contract-matrix")
     || (arguments.count == 4 && arguments[1] == "export-certification")
     || (arguments.count == 4 && arguments[1] == "audit-compliance")
 else {
@@ -28,7 +30,7 @@ else {
       rcp3-dump <path/to/Name.realitycomposerpro>
       rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
       rcp3-dump validate <path/to/Name.realitycomposerpro>
-      rcp3-dump contract-matrix
+      rcp3-dump contract-matrix [path/to/rcp3-certification.json]
       rcp3-dump export-certification <path/to/Name.realitycomposerpro> <path/to/matrix.json>
       rcp3-dump audit-compliance <path/to/parity-ledger.json> <path/to/matrix.json>
     """.utf8))
@@ -37,11 +39,31 @@ else {
 
 let command = arguments.count > 2 ? arguments[1] : "dump"
 
-if arguments.count == 2, arguments[1] == "contract-matrix" {
+if (arguments.count == 2 || arguments.count == 3), arguments[1] == "contract-matrix" {
     do {
+        var matrix = ScriptGraphContractMatrix.make()
+        if arguments.count == 3 {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let evidence = try decoder.decode(
+                RCP3CertificationEvidence.self,
+                from: Data(contentsOf: URL(filePath: arguments[2]))
+            )
+            matrix = matrix.applyingRCP3Results(
+                applicationVersion: evidence.application.version,
+                applicationBuild: evidence.application.build,
+                results: evidence.report?.cases.map {
+                    .init(
+                        project: $0.project,
+                        result: $0.result,
+                        validationErrors: $0.validationErrors
+                    )
+                } ?? []
+            )
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        FileHandle.standardOutput.write(try encoder.encode(ScriptGraphContractMatrix.make()))
+        FileHandle.standardOutput.write(try encoder.encode(matrix))
         FileHandle.standardOutput.write(Data("\n".utf8))
         exit(0)
     } catch {

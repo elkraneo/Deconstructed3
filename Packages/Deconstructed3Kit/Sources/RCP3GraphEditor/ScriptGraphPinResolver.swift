@@ -158,6 +158,31 @@ public enum ScriptGraphPinResolver {
         in graph: RCP3ScriptGraph,
         registry: ScriptGraphNodeRegistry = .builtins
     ) -> ScriptGraphNodeLibrary.NodeSpec? {
+        resolvedContracts(in: graph, registry: registry)[node.id]
+    }
+
+    /// Resolves every instance contract together so polymorphic relations can use
+    /// concrete evidence carried by literals and neighboring wired pins.
+    static func resolvedContracts(
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry = .builtins
+    ) -> [String: ScriptGraphNodeLibrary.NodeSpec] {
+        let base = graph.nodes.reduce(
+            into: [String: ScriptGraphNodeLibrary.NodeSpec]()
+        ) { result, node in
+            guard result[node.id] == nil,
+                  let contract = graphAwareBaseContract(for: node, in: graph, registry: registry)
+            else { return }
+            result[node.id] = contract
+        }
+        return ScriptGraphRelationalTypeResolver.resolve(base, in: graph)
+    }
+
+    private static func graphAwareBaseContract(
+        for node: RCP3ScriptGraph.Node,
+        in graph: RCP3ScriptGraph,
+        registry: ScriptGraphNodeRegistry
+    ) -> ScriptGraphNodeLibrary.NodeSpec? {
         guard let base = resolvedSpec(for: node, registry: registry) else { return nil }
         var inputs = base.inputs
         var outputs = base.outputs

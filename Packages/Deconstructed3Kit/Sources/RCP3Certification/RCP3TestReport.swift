@@ -24,8 +24,51 @@ enum RCP3TestReportParser {
             statusCounts: statuses,
             unknownStatusCounts: unknown,
             validationErrorCount: validationErrors,
-            sha256: SHA256.hash(data: data).hexString
+            sha256: SHA256.hash(data: data).hexString,
+            cases: extractCases(object)
         )
+    }
+
+    private static func extractCases(_ object: Any) -> [RCP3TestReportSummary.CaseResult] {
+        guard let root = object as? [String: Any],
+              let projects = root["projects"] as? [[String: Any]]
+        else { return [] }
+        return projects.flatMap { project -> [RCP3TestReportSummary.CaseResult] in
+            let projectName = project["project"] as? String ?? ""
+            let tests = project["tests"] as? [[String: Any]] ?? []
+            return tests.map { test in
+                let result = ["result", "status", "outcome"]
+                    .compactMap { test[$0] as? String }
+                    .first.map(normalize) ?? ""
+                return .init(
+                    project: projectName,
+                    test: test["test"] as? String ?? "",
+                    result: result,
+                    validationErrors: flattenedStrings(
+                        test["validation-errors"] ?? test["validation_errors"]
+                    )
+                )
+            }
+        }.sorted {
+            ($0.project, $0.test, $0.result) < ($1.project, $1.test, $1.result)
+        }
+    }
+
+    private static func flattenedStrings(_ value: Any?) -> [String] {
+        switch value {
+        case let string as String:
+            return string.isEmpty ? [] : [string]
+        case let values as [Any]:
+            return values.flatMap { flattenedStrings($0) }
+        case let values as [String: Any]:
+            return values.sorted(by: { $0.key < $1.key }).flatMap { key, value in
+                flattenedStrings(value).map { "\(key): \($0)" }
+            }
+        case let number as NSNumber:
+            return [number.stringValue]
+        default:
+            return []
+        }
     }
 
     private static func walk(

@@ -7,7 +7,7 @@ import Testing
         let matrix = ScriptGraphContractMatrix.make()
 
         #expect(matrix.baseline == "reality-composer-pro-3")
-        #expect(matrix.schemaVersion == 1)
+        #expect(matrix.schemaVersion == 2)
         #expect(matrix.cases.count == 344)
         #expect(Set(matrix.cases.map(\.requestedType)).count == 344)
         #expect(matrix.cases.flatMap(\.pins).count == 1_226)
@@ -55,5 +55,52 @@ import Testing
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         #expect(try encoder.encode(first) == encoder.encode(second))
+    }
+
+    @Test func RCP3ResultsBindOnlyToTheExactDigestNamedProject() throws {
+        let matrix = ScriptGraphContractMatrix.make()
+        let item = try #require(matrix.cases.first)
+        let unrelated = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            results: [.init(project: "/tmp/stale.realitycomposerpro", result: "success")]
+        )
+        #expect(unrelated.cases.first?.rcp3RuntimeCertification.status == .notRecorded)
+
+        let passed = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            results: [.init(
+                project: "/tmp/\(item.certificationProjectName)",
+                result: "success"
+            )]
+        )
+        #expect(passed.cases.first?.rcp3AuthoringCertification.status == .pass)
+        #expect(passed.cases.first?.rcp3RuntimeCertification.status == .pass)
+        #expect(passed.cases.first?.rcp3RuntimeCertification.applicationBuild == "build")
+        #expect(passed.metrics.first { $0.id == "rcp3-runtime-certification" }?.numerator == 1)
+
+        let runtimeFailure = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            results: [.init(
+                project: item.certificationProjectName,
+                result: "failure"
+            )]
+        )
+        #expect(runtimeFailure.cases.first?.rcp3AuthoringCertification.status == .pass)
+        #expect(runtimeFailure.cases.first?.rcp3RuntimeCertification.status == .fail)
+
+        let validationFailure = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            results: [.init(
+                project: item.certificationProjectName,
+                result: "failure",
+                validationErrors: ["bad pin"]
+            )]
+        )
+        #expect(validationFailure.cases.first?.rcp3AuthoringCertification.status == .fail)
+        #expect(validationFailure.cases.first?.rcp3RuntimeCertification.status == .fail)
     }
 }

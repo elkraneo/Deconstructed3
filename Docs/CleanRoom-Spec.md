@@ -1083,6 +1083,13 @@ fixture fingerprint and exact RCP3 application build. Configurable families expa
 as variants: all observed enum cases, boundary dynamic-connector configurations,
 component schemas, material schemas, and supported polymorphic type classes.
 
+Relational data contracts are resolved over the complete graph instance. Concrete
+settings, typed literals, and connected concrete neighbors seed the pass;
+`sameAs`, array-element, and array-of-element constraints then propagate within
+their node until stable. A relation without concrete evidence remains relational,
+and a plain unknown pin remains unknown. The editor, agent tools, validator, and
+contract matrix consume the same resolved contracts.
+
 RCP3 3.0 exposes a command-line test mode in its application executable. The
 observed Script Graph integration entry point is named `script-graph-graph-tests`;
 it reads its asset root from `TM_SCRIPT_TEST_ASSETS_DIR` and emits a

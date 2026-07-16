@@ -85,6 +85,35 @@ struct RCP3CertificationRunnerTests {
         #expect(first.inputs != third.inputs)
     }
 
+    @Test("RCP3 project results remain individually attributable")
+    func individualCaseResults() throws {
+        let fixture = try Fixture()
+        let report = #"{"projects":[{"project":"/fixtures/alpha.realitycomposerpro","tests":[{"test":"passes","result":"success","validation-errors":[]},{"test":"bad pin","result":"failure","validation-errors":["missing input"]}]}]}"#
+        let evidence = try RCP3CertificationRunner(
+            executor: FakeExecutor { request in
+                try Data(report.utf8).write(
+                    to: request.currentDirectoryURL.appending(path: "test_report.json")
+                )
+                return .init(exitStatus: 0, stdoutTail: successLine)
+            }
+        ).certify(fixture.plan)
+
+        #expect(evidence.outcome == .failed)
+        #expect(evidence.report?.cases == [
+            .init(
+                project: "/fixtures/alpha.realitycomposerpro",
+                test: "bad pin",
+                result: "failure",
+                validationErrors: ["missing input"]
+            ),
+            .init(
+                project: "/fixtures/alpha.realitycomposerpro",
+                test: "passes",
+                result: "success"
+            ),
+        ])
+    }
+
     @Test("Wrong application major version is rejected before execution")
     func wrongVersionRejected() throws {
         let fixture = try Fixture(version: "4.0")

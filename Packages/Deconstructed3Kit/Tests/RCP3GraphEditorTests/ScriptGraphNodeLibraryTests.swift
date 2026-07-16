@@ -104,11 +104,18 @@ struct ScriptGraphNodeLibraryTests {
         let items = ScriptGraphNodeLibrary.paletteItems
         #expect(!items.isEmpty)
 
-        // Every palette item maps to a real spec (so inserted nodes have an interface),
-        // and id == type.
+        // Every palette item resolves a concrete instance spec after its shared
+        // recipe supplies settings (so inserted nodes have an interface), and id == type.
         for item in items {
             #expect(item.id == item.type)
-            #expect(ScriptGraphNodeLibrary.spec(for: item.type) != nil)
+            let recipe = try #require(ScriptGraphAuthoringRecipes.recipe(for: item.type))
+            let graph = try #require(ScriptGraphAuthoringRecipes.makeGraph(
+                requestedType: item.type,
+                label: item.displayName,
+                graphID: "palette-test-\(item.type)"
+            ))
+            let subject = try #require(graph.nodes.first { $0.type == recipe.authoredType })
+            #expect(ScriptGraphPinResolver.resolvedContract(for: subject, in: graph) != nil)
         }
 
         // The known insertable types appear with their curated display names.
@@ -288,6 +295,8 @@ struct ScriptGraphNodeLibraryTests {
                 "tm_send_entity_event", "tm_send_scene_event", "tm_trigger_event",
                 "tm_get_entity_parameter", "tm_set_entity_parameter",
                 "tm_break_material", "tm_break_physically_based_material_types",
+                "tm_get_material_parameter", "tm_set_material_parameter_v2",
+                "tm_modify_any_material",
             ])
         #expect(items.count == expectedTypeSet.count)
         #expect(Set(items.map(\.type)) == expectedTypeSet)
@@ -829,10 +838,10 @@ struct ScriptGraphNodeLibraryTests {
         #expect(remove.fixedOutputs.map(\.connectorName) == [""])
         let each = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_for_each"))
         #expect(each.fixedInputs.map(\.connectorName) == [""])
-        #expect(each.fixedOutputs.map(\.connectorName) == ["step", "end", "index", "element"])
+        #expect(each.fixedOutputs.map(\.connectorName) == ["step", "end", "index"])
         let find = try #require(ScriptGraphNodeLibrary.dynamicPinPolicy(for: "tm_array_find"))
         #expect(find.fixedInputs.map(\.connectorName) == ["", "searchValue"])
-        #expect(find.fixedOutputs.map(\.connectorName) == ["found", "not found", "index", "element"])
+        #expect(find.fixedOutputs.map(\.connectorName) == ["found", "not found", "index"])
         for type in [
             "tm_custom_event", "tm_on_scene_event", "tm_on_entity_event",
             "tm_trigger_event", "tm_send_scene_event", "tm_send_entity_event",

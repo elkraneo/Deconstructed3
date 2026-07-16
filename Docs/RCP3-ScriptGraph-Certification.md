@@ -38,7 +38,22 @@ prints its successful Script Graph integration completion. `failed` and
 
 The evidence records the RCP3 version/build, deterministic runner arguments, SHA-256
 input manifest, bounded output tails, outer process status, integration completion,
-report hash, normalized result counts, and the final outcome. RCP3 can exit `1`
+report hash, normalized result counts, individually attributable project/test results,
+and the final outcome. RCP3 can exit `1`
 because of errors explicitly reported outside the integration test, so the fresh
 Script Graph report and integration completion are authoritative; the outer status
 is preserved for diagnosis.
+
+## Merge evidence into the contract matrix
+
+```sh
+swift run rcp3-dump contract-matrix /absolute/path/to/rcp3-certification.json \
+  > /absolute/path/to/rcp3-contract-matrix.json
+```
+
+Certification project names include the full semantic fixture digest. The merge
+accepts a result only when that exact name matches the current matrix case, so an
+older success cannot certify a changed graph. A successful integration case marks
+both RCP3 authoring and runtime evidence as passing. An executed assertion failure
+marks authoring as accepted but runtime as failed; syntax or validation failures
+fail both layers; skipped or unrelated cases remain unrecorded.

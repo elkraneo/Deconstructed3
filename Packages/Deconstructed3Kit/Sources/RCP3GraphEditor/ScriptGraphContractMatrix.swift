@@ -8,7 +8,7 @@ import TMFormat
 /// collapsing structural, typing, and external execution evidence into one score.
 public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
     public static let baseline = "reality-composer-pro-3"
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public enum FieldStatus: String, Codable, Sendable {
         case exact
@@ -86,6 +86,9 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
         public let settingsFingerprint: String
         public let subjectNodeID: String
         public let fixtureDigest: String
+        /// Exact project directory expected in an RCP3 certification report.
+        /// The digest in the name prevents evidence reuse after fixture changes.
+        public let certificationProjectName: String
         public let contractResolution: Resolution
         public let pins: [PinContract]
         public let validation: Validation
@@ -103,6 +106,18 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
         public let criterion: String
         public let exclusions: [String]
         public let gapIDs: [String]
+    }
+
+    public struct RCP3Result: Sendable, Equatable {
+        public let project: String
+        public let result: String
+        public let validationErrors: [String]
+
+        public init(project: String, result: String, validationErrors: [String] = []) {
+            self.project = project
+            self.result = result
+            self.validationErrors = validationErrors
+        }
     }
 
     public let schemaVersion: Int
@@ -125,7 +140,7 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
             schemaVersion: currentSchemaVersion,
             baseline: baseline,
             catalogDigest: catalogDigest,
-            generatorRevision: "contract-matrix-v1",
+            generatorRevision: "contract-matrix-v2",
             cases: cases,
             metrics: makeMetrics(cases)
         )
@@ -185,6 +200,10 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
             settingsFingerprint: settingsFingerprint,
             subjectNodeID: subject.id,
             fixtureDigest: fixtureDigest,
+            certificationProjectName: certificationProjectName(
+                requestedType: item.requestedType,
+                fixtureDigest: fixtureDigest
+            ),
             contractResolution: resolution,
             pins: pins,
             validation: validation,
@@ -192,6 +211,79 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
             compiler: unrecorded,
             rcp3AuthoringCertification: unrecorded,
             rcp3RuntimeCertification: unrecorded
+        )
+    }
+
+    /// Binds per-project integration results to their exact canonical fixture.
+    /// A successful test proves both authoring acceptance and execution; an
+    /// assertion failure proves the graph loaded but its runtime behavior failed;
+    /// syntax/validation failures fail both layers. Skips remain unrecorded.
+    public func applyingRCP3Results(
+        applicationVersion: String,
+        applicationBuild: String,
+        results: [RCP3Result]
+    ) -> ScriptGraphContractMatrix {
+        let grouped = Dictionary(grouping: results) {
+            URL(filePath: $0.project).lastPathComponent
+        }
+        let updated = cases.map { item -> ContractCase in
+            let matches = grouped[item.certificationProjectName, default: []]
+            let statuses = Set(matches.map { normalizedResult($0.result) })
+            let hasValidationFailure = matches.contains { !$0.validationErrors.isEmpty }
+            let authoring: EvidenceStatus
+            let runtime: EvidenceStatus
+            if hasValidationFailure || statuses.contains("syntax_error") {
+                authoring = .fail
+                runtime = .fail
+            } else if !matches.isEmpty && statuses.allSatisfy({ $0 == "success" || $0 == "passed" }) {
+                authoring = .pass
+                runtime = .pass
+            } else if statuses.contains("failure") || statuses.contains("failed") {
+                authoring = .pass
+                runtime = .fail
+            } else {
+                authoring = .notRecorded
+                runtime = .notRecorded
+            }
+            return ContractCase(
+                requestedType: item.requestedType,
+                authoredType: item.authoredType,
+                category: item.category,
+                topology: item.topology,
+                fixtureKind: item.fixtureKind,
+                variantID: item.variantID,
+                coverageMode: item.coverageMode,
+                settingsKind: item.settingsKind,
+                settingsFingerprint: item.settingsFingerprint,
+                subjectNodeID: item.subjectNodeID,
+                fixtureDigest: item.fixtureDigest,
+                certificationProjectName: item.certificationProjectName,
+                contractResolution: item.contractResolution,
+                pins: item.pins,
+                validation: item.validation,
+                serialization: item.serialization,
+                compiler: item.compiler,
+                rcp3AuthoringCertification: Evidence(
+                    status: authoring,
+                    fixtureDigest: item.fixtureDigest,
+                    applicationVersion: applicationVersion,
+                    applicationBuild: applicationBuild
+                ),
+                rcp3RuntimeCertification: Evidence(
+                    status: runtime,
+                    fixtureDigest: item.fixtureDigest,
+                    applicationVersion: applicationVersion,
+                    applicationBuild: applicationBuild
+                )
+            )
+        }
+        return .init(
+            schemaVersion: schemaVersion,
+            baseline: baseline,
+            catalogDigest: catalogDigest,
+            generatorRevision: generatorRevision,
+            cases: updated,
+            metrics: Self.makeMetrics(updated)
         )
     }
 
@@ -338,6 +430,21 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
         field: String
     ) -> String {
         "\(field):\(item.requestedType):\(pin.direction):\(pin.ordinal):\(pin.connectorName)"
+    }
+
+    private static func certificationProjectName(
+        requestedType: String,
+        fixtureDigest: String
+    ) -> String {
+        let safeType = requestedType.map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "-" }
+        return "\(String(safeType))--\(fixtureDigest).realitycomposerpro"
+    }
+
+    private func normalizedResult(_ result: String) -> String {
+        result.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
     }
 
     private static func topologyName(_ topology: ScriptGraphAuthoringRecipe.Topology) -> String {

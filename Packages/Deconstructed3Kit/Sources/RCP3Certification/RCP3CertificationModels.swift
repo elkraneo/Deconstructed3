@@ -60,10 +60,59 @@ public struct RCP3CertificationProcessEvidence: Codable, Equatable, Sendable {
 }
 
 public struct RCP3TestReportSummary: Codable, Equatable, Sendable {
+    public struct CaseResult: Codable, Equatable, Sendable {
+        public let project: String
+        public let test: String
+        public let result: String
+        public let validationErrors: [String]
+
+        public init(
+            project: String,
+            test: String,
+            result: String,
+            validationErrors: [String] = []
+        ) {
+            self.project = project
+            self.test = test
+            self.result = result
+            self.validationErrors = validationErrors
+        }
+    }
+
     public let statusCounts: [String: Int]
     public let unknownStatusCounts: [String: Int]
     public let validationErrorCount: Int
     public let sha256: String
+    /// Per-project results retained for deterministic fixture-to-matrix binding.
+    /// Older or synthetic reports without RCP3's `projects/tests` shape leave it empty.
+    public let cases: [CaseResult]
+
+    public init(
+        statusCounts: [String: Int],
+        unknownStatusCounts: [String: Int],
+        validationErrorCount: Int,
+        sha256: String,
+        cases: [CaseResult] = []
+    ) {
+        self.statusCounts = statusCounts
+        self.unknownStatusCounts = unknownStatusCounts
+        self.validationErrorCount = validationErrorCount
+        self.sha256 = sha256
+        self.cases = cases
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case statusCounts, unknownStatusCounts, validationErrorCount, sha256, cases
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        statusCounts = try values.decode([String: Int].self, forKey: .statusCounts)
+        unknownStatusCounts = try values.decode([String: Int].self, forKey: .unknownStatusCounts)
+        validationErrorCount = try values.decode(Int.self, forKey: .validationErrorCount)
+        sha256 = try values.decode(String.self, forKey: .sha256)
+        cases = try values.decodeIfPresent([CaseResult].self, forKey: .cases) ?? []
+    }
 
     public var successCount: Int {
         (statusCounts["success"] ?? 0) + (statusCounts["passed"] ?? 0)
