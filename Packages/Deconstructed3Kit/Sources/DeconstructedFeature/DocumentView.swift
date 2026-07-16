@@ -46,6 +46,10 @@ public struct DocumentView<CanonicalPlay: View>: View {
 
     /// Whether the Run / Preview sheet is presented. Pure presentation state.
     @State private var showsPreview = false
+    /// The product-facing functional demo browser. Focused patterns stay available
+    /// directly in the toolbar menu; this sheet gives composed demos enough room to
+    /// explain their behavior before loading or materializing one.
+    @State private var showsDemoGallery = false
     /// Expanded entity ids in the RCP-style scene outline. Components are display-only
     /// child rows, so expansion is keyed only by entity identity.
     @State private var expandedEntityIDs: Set<RCP3Entity.ID> = []
@@ -188,6 +192,19 @@ public struct DocumentView<CanonicalPlay: View>: View {
                     showingAddComponent = false
                 },
                 onCancel: { showingAddComponent = false }
+            )
+        }
+        .sheet(isPresented: $showsDemoGallery) {
+            ScriptGraphDemoGalleryView(
+                demos: ScriptGraphExamples.functionalDemos,
+                onOpen: { example in
+                    loadExample(example)
+                    showsDemoGallery = false
+                },
+                onCreateAsset: { example in
+                    createScriptGraph(fromSample: example)
+                    showsDemoGallery = false
+                }
             )
         }
     }
@@ -512,6 +529,10 @@ public struct DocumentView<CanonicalPlay: View>: View {
     private var examplesMenu: some View {
         Menu {
             Section("Functional Demos") {
+                Button("Browse Functional Demos…", systemImage: "rectangle.grid.2x2") {
+                    showsDemoGallery = true
+                }
+                Divider()
                 ForEach(ScriptGraphExamples.functionalDemos) { example in
                     exampleButton(example)
                 }

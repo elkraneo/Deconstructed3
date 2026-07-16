@@ -138,6 +138,16 @@ public final class CanonicalScriptRuntimeHost {
         const components = Object.create(null);
         const materials = Object.create(null);
 
+        // Math3D vectors exposed by the public runtime support clone(). The bridge
+        // stores them as arrays, so add the same value-copy affordance without making
+        // it enumerable (array math and JSON payloads remain unchanged).
+        if (!Array.prototype.clone) {
+            Object.defineProperty(Array.prototype, "clone", {
+                value: function() { return this.slice(); },
+                enumerable: false
+            });
+        }
+
         function typeName(type) {
             if (typeof type === "string") return type;
             if (type && type.__typeName) return type.__typeName;

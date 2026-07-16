@@ -46,12 +46,14 @@ import Testing
         // This is exactly what ScriptGraphPreviewView.start() does.
         let graph = Self.dragToSetTranslationGraph()
         let state = RuntimeEntityState()
-        let host = ScriptGraphRunner.run(graph, into: state)
+        let host = CanonicalScriptRuntimeHost(state: state)
+        host.load(graph)
+        host.activate()
 
-        #expect(host.hasHandler(for: "drag"))
+        #expect(host.hasGestureHandler("drag"))
 
         // ...and what a drag on the pad / +X button dispatches.
-        host.dispatch(event: "drag", payload: ["delta": [2.0, 1.0, 0.0]])
+        host.dispatchGesture("drag", payload: ["sceneTranslation": [2.0, 1.0, 0.0]])
 
         #expect(state.translation == SIMD3(2, 1, 0))
         #expect(host.lastException == nil)
@@ -71,9 +73,20 @@ import Testing
         _ = view.body
 
         // And the runtime path reports no handler for it (drives the empty state).
-        let host = ScriptGraphRunner.run(graph, into: RuntimeEntityState())
-        #expect(!host.hasHandler(for: "drag"))
-        #expect(!host.hasHandler(for: "tap"))
+        let host = CanonicalScriptRuntimeHost()
+        host.load(graph)
+        host.activate()
+        #expect(!host.hasGestureHandler("drag"))
+        #expect(!host.hasGestureHandler("tap"))
+    }
+
+    @Test func functionalDemoGalleryBuildsFromTheSharedCatalog() {
+        let view = ScriptGraphDemoGalleryView(
+            demos: ScriptGraphExamples.functionalDemos,
+            onOpen: { _ in },
+            onCreateAsset: { _ in }
+        )
+        _ = view.body
     }
 
     // MARK: Capture-backed (no-ops cleanly when the capture is absent)
@@ -91,8 +104,10 @@ import Testing
         let graph = try #require(bundle.scriptGraph(assetID: asset.id))
 
         let state = RuntimeEntityState()
-        let host = ScriptGraphRunner.run(graph, into: state)
-        host.dispatch(event: "drag", payload: ["delta": [2.0, 0.0, 1.0]])
+        let host = CanonicalScriptRuntimeHost(state: state)
+        host.load(graph)
+        host.activate()
+        host.dispatchGesture("drag", payload: ["sceneTranslation": [2.0, 0.0, 1.0]])
 
         #expect(state.translation == SIMD3(2, 0, 1))
         #expect(host.lastException == nil)
