@@ -203,6 +203,22 @@ equals that prototype uuid**. Resolution = scan the bundle dir for
 **Asset shape.**
 `re_scripting_source_graph { graph: tm_graph { nodes[], connections[], data[], interface }, validation_settings }`.
 
+**RCP3 validation settings.** The `validation_settings` object is a
+`tm_script_graph_validation_settings`. Its observed authoring contract has these
+members: `path` (String), `is_test` (Bool), `test_timeout` (Double),
+`fail_on_timeout` (Bool), `flags` (UInt32), `compile_flags` (UInt32), and `info`
+(subobject set). The observed defaults are `path: ""`, `is_test: false`,
+`test_timeout: 5`, `fail_on_timeout: true`, `flags: 63`, and
+`compile_flags: 1`. A graph intended for RCP3's integration-test host must set
+`is_test: true`; a normal creator graph keeps it false. Existing object identity
+and unmodeled members such as `info` must survive an authoring edit.
+
+The observed RCP3 test assertion node has unnamed execution input, required Bool
+`condition`, defaulted String `message`, and named execution outputs `always`,
+`true`, and `false`. A semantic Bool-constructor fixture can therefore feed the
+constructor result to both `condition` and Finish Test's `success`, while routing
+Begin Test through Assert's `always` output to Finish Test.
+
 - **`nodes[]`** — `{ __uuid, type, label?, position{ x, y } }`. `type` is a plain
   member (e.g. `tm_gesture_event_drag`, `tm_set_component`), **not** `__type`.
   `label` is the author-given name (e.g. `"Set Transform"`).

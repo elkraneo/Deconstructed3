@@ -15,34 +15,54 @@ import TMFormat
 // Validate every Script Graph asset in a project with explicit coverage reporting:
 //   swift run rcp3-dump validate <path/to/Name.realitycomposerpro>
 // Emit the deterministic RCP3 creator-contract matrix:
-//   swift run rcp3-dump contract-matrix [rcp3-certification.json]
+//   swift run rcp3-dump contract-matrix [rcp3-certification.json [--evidence-mode authoring-smoke|semantic-runtime]]
+// Clone digest-bound RCP3 integration-test smoke projects:
+//   swift run rcp3-dump export-test-smoke <template> <root> <type|all>
+// Clone a digest-bound RCP3 subject-semantic test project:
+//   swift run rcp3-dump export-test-semantic <template> <root> <type>
 
 let arguments = CommandLine.arguments
 guard arguments.count == 2
     || (arguments.count == 3 && arguments[1] == "export-corpus")
     || (arguments.count == 3 && arguments[1] == "validate")
     || (arguments.count == 3 && arguments[1] == "contract-matrix")
+    || (arguments.count == 5 && arguments[1] == "contract-matrix" && arguments[3] == "--evidence-mode")
     || (arguments.count == 4 && arguments[1] == "export-certification")
     || (arguments.count == 4 && arguments[1] == "audit-compliance")
+    || (arguments.count == 5 && arguments[1] == "export-test-smoke")
+    || (arguments.count == 5 && arguments[1] == "export-test-semantic")
 else {
     FileHandle.standardError.write(Data("""
     usage:
       rcp3-dump <path/to/Name.realitycomposerpro>
       rcp3-dump export-corpus <path/to/Name.realitycomposerpro>
       rcp3-dump validate <path/to/Name.realitycomposerpro>
-      rcp3-dump contract-matrix [path/to/rcp3-certification.json]
+      rcp3-dump contract-matrix [path/to/rcp3-certification.json [--evidence-mode authoring-smoke|semantic-runtime]]
       rcp3-dump export-certification <path/to/Name.realitycomposerpro> <path/to/matrix.json>
       rcp3-dump audit-compliance <path/to/parity-ledger.json> <path/to/matrix.json>
+      rcp3-dump export-test-smoke <template.realitycomposerpro> <certification-root> <requested-type|all>
+      rcp3-dump export-test-semantic <template.realitycomposerpro> <certification-root> <requested-type>
     """.utf8))
     exit(2)
 }
 
 let command = arguments.count > 2 ? arguments[1] : "dump"
 
-if (arguments.count == 2 || arguments.count == 3), arguments[1] == "contract-matrix" {
+if (arguments.count == 2 || arguments.count == 3 || arguments.count == 5), arguments[1] == "contract-matrix" {
     do {
         var matrix = ScriptGraphContractMatrix.make()
-        if arguments.count == 3 {
+        if arguments.count >= 3 {
+            let mode: ScriptGraphContractMatrix.RCP3EvidenceMode
+            if arguments.count == 5 {
+                guard let requestedMode = ScriptGraphContractMatrix.RCP3EvidenceMode(
+                    rawValue: arguments[4]
+                ) else {
+                    throw RCP3DumpError.invalidEvidenceMode(arguments[4])
+                }
+                mode = requestedMode
+            } else {
+                mode = .semanticRuntime
+            }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let evidence = try decoder.decode(
@@ -52,6 +72,7 @@ if (arguments.count == 2 || arguments.count == 3), arguments[1] == "contract-mat
             matrix = matrix.applyingRCP3Results(
                 applicationVersion: evidence.application.version,
                 applicationBuild: evidence.application.build,
+                mode: mode,
                 results: evidence.report?.cases.map {
                     .init(
                         project: $0.project,
@@ -69,6 +90,17 @@ if (arguments.count == 2 || arguments.count == 3), arguments[1] == "contract-mat
     } catch {
         FileHandle.standardError.write(Data("error: \(error)\n".utf8))
         exit(1)
+    }
+}
+
+private enum RCP3DumpError: Error, CustomStringConvertible {
+    case invalidEvidenceMode(String)
+
+    var description: String {
+        switch self {
+        case let .invalidEvidenceMode(mode):
+            "invalid evidence mode '\(mode)'; expected authoring-smoke or semantic-runtime"
+        }
     }
 }
 
@@ -212,6 +244,36 @@ func dump(_ entity: RCP3Entity, depth: Int) {
 }
 
 do {
+    if command == "export-test-semantic" {
+        let item = try RCP3IntegrationTestFixtureExporter.exportSemantic(
+            templateProject: url,
+            certificationRoot: URL(filePath: arguments[3]),
+            requestedType: arguments[4]
+        )
+        print("\(item.requestedType)\t\(item.fixtureDigest)\t\(item.projectURL.path)")
+        exit(0)
+    }
+    if command == "export-test-smoke" {
+        let root = URL(filePath: arguments[3])
+        let selection = arguments[4]
+        let exports: [RCP3IntegrationTestFixtureExporter.ExportedProject]
+        if selection == "all" {
+            exports = try RCP3IntegrationTestFixtureExporter.exportAll(
+                templateProject: url,
+                certificationRoot: root
+            )
+        } else {
+            exports = [try RCP3IntegrationTestFixtureExporter.export(
+                templateProject: url,
+                certificationRoot: root,
+                requestedType: selection
+            )]
+        }
+        for item in exports {
+            print("\(item.requestedType)\t\(item.fixtureDigest)\t\(item.projectURL.path)")
+        }
+        exit(0)
+    }
     let bundle = try RCP3Bundle.open(url)
     if command == "validate" {
         let assets = bundle.scriptGraphAssets().map { asset in

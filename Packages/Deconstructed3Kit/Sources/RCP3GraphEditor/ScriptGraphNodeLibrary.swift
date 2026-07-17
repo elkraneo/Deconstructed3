@@ -584,7 +584,7 @@ public enum ScriptGraphNodeLibrary {
     /// so every inserted node arrives with its full named interface (pins). Sorted by
     /// display name for a stable, readable palette. Data-driven: it grows automatically
     /// as node specs are added to ``specsByType``.
-    public static var paletteItems: [PaletteItem] {
+    public static let paletteItems: [PaletteItem] = {
         var authorable = specsByType.merging(
             dynamicPoliciesByType.keys.reduce(into: [String: NodeSpec]()) { result, type in
                 result[type] = defaultDynamicSpec(for: type)
@@ -607,6 +607,7 @@ public enum ScriptGraphNodeLibrary {
             }
         }
         return authorable
+            .filter { !ScriptGraphComplianceAudit.rcp3CataloguedNonCreatorTypes.contains($0.key) }
             .map { type, spec in
                 PaletteItem(
                     id: type, type: type,
@@ -615,14 +616,12 @@ public enum ScriptGraphNodeLibrary {
                 )
             }
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
-    }
+    }()
 
     /// The insertable node types grouped into palette sections, one per ``Category``,
     /// ordered by `Category.order`. Items within a section are sorted by display name.
     /// Empty sections are omitted. Data-driven: sections grow as specs are added.
-    public static var paletteSections: [PaletteSection] {
-        sections(of: paletteItems)
-    }
+    public static let paletteSections: [PaletteSection] = sections(of: paletteItems)
 
     /// Palette sections filtered by a free-text `query`, matched case-insensitively
     /// against each item's display name AND its raw `type` (so "drag", "gesture", or
@@ -1222,6 +1221,60 @@ public enum ScriptGraphNodeLibrary {
         // hashed handle ids until confirmed. (`entity` mirrors the verified drag/tap
         // `entity` connector.)
         "tm_update": NodeSpec(inputs: [], outputs: [exec, data("deltaTime", "Delta Time"), data("scene", "Scene"), data("entity", "Entity")], category: .events),
+        // RCP3 integration-harness nodes. Their contracts remain parseable and
+        // writable but `paletteItems` filters them from ordinary creator authoring.
+        "tm_begin_test": NodeSpec(
+            inputs: [],
+            outputs: [
+                exec,
+                data("deltaTime", "Delta Time"),
+                data("scene", "Scene"),
+                data("entity", "Self"),
+            ],
+            category: .events
+        ),
+        "tm_finish_test": NodeSpec(
+            inputs: [
+                exec,
+                data(
+                    "success", "Success",
+                    type: .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash),
+                    presence: .registrationDefault,
+                    evidence: .observedInterface
+                ),
+                data(
+                    "message", "Message",
+                    type: .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash),
+                    presence: .registrationDefault,
+                    evidence: .observedInterface
+                ),
+            ],
+            outputs: [exec],
+            category: .utility
+        ),
+        "tm_test_assert": NodeSpec(
+            inputs: [
+                exec,
+                data(
+                    "condition", "Condition",
+                    type: .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash),
+                    presence: .required,
+                    evidence: .observedInterface
+                ),
+                data(
+                    "message", "Message",
+                    type: .concrete(token: "String", typeHash: ScriptGraphTypeRegistry.string.typeHash),
+                    presence: .registrationDefault,
+                    evidence: .observedInterface
+                ),
+            ],
+            outputs: [
+                PinSpec(connectorName: "always", displayName: "Always", isExec: true),
+                PinSpec(connectorName: "true", displayName: "True", isExec: true),
+                PinSpec(connectorName: "false", displayName: "False", isExec: true),
+            ],
+            category: .utility
+        ),
         // Lifecycle events — simple exec-output event sources (each carries only a
         // hidden self entity). Exec-only, so these are faithful: no data connector
         // names to verify.
@@ -1532,7 +1585,23 @@ public enum ScriptGraphNodeLibrary {
         // Literal value nodes. The captured Bool/String assets store their editable
         // value on `initial_value` (hash 7e19d630b30ae8c3); the shared Make emitter
         // exposes it as `value`. Number follows the same registered TypeInfo template.
-        "tm_make_bool": NodeSpec(inputs: [data("initial_value", "Initial Value")], outputs: [data("value", "Value")], category: .make),
+        "tm_make_bool": NodeSpec(
+            inputs: [
+                data(
+                    "initial_value", "Initial Value",
+                    type: .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash),
+                    evidence: .observedInterface
+                ),
+            ],
+            outputs: [
+                data(
+                    "value", "Value",
+                    type: .concrete(token: "Bool", typeHash: ScriptGraphTypeRegistry.bool.typeHash),
+                    evidence: .observedInterface
+                ),
+            ],
+            category: .make
+        ),
         "tm_make_number": NodeSpec(inputs: [data("initial_value", "Initial Value")], outputs: [data("value", "Value")], category: .make),
         "tm_make_string": NodeSpec(inputs: [data("initial_value", "Initial Value")], outputs: [data("value", "Value")], category: .make),
 

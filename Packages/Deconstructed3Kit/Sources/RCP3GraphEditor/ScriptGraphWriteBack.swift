@@ -9,7 +9,7 @@ import TMFormat
 ///
 /// The editor models only *part* of the asset: nodes (id, position, type, label)
 /// and connections (exec / data wires). It does **not** model data literals, the
-/// `interface`, `validation_settings`, the many `__uuid`s, or `__asset_uuid`. So
+/// `interface`, the many `__uuid`s, or `__asset_uuid`. So
 /// write-back is deliberately **surgical**: it starts from the *parsed original
 /// object* and updates only `graph.nodes` and `graph.connections` in place,
 /// preserving every other member byte-for-byte (semantically). That is the
@@ -20,7 +20,9 @@ import TMFormat
 /// This type is renderer-agnostic and UI-free: it is the testable serialization
 /// core. `patched(asset:with:)` is the pure transform (parse-in → object-out);
 /// `write(model:toAssetWithRootUUID:in:)` resolves the file by root uuid and
-/// commits the patch.
+/// commits the patch. Validation settings have a separate, explicit patch API so
+/// graph edits continue to preserve them unless the caller intentionally changes
+/// that RCP3 authoring contract.
 public enum ScriptGraphWriteBack {
     // MARK: - Pure transform (the testable core)
 
@@ -771,6 +773,37 @@ public enum ScriptGraphWriteBack {
 
     // MARK: - Persist
 
+    /// Returns a copy of `asset` with its RCP3 `validation_settings` patched from
+    /// `settings`. The existing settings object is updated in place so its
+    /// `__uuid`, `info`, and any future members survive. If an input asset has no
+    /// settings object, a minimal one is created with a fresh identity.
+    public static func patchedValidationSettings(
+        asset: TMObject,
+        with settings: RCP3ScriptGraphValidationSettings,
+        makeUUID: () -> String = { UUID().uuidString.lowercased() }
+    ) -> TMObject {
+        var validation = asset["validation_settings"]?.objectValue ?? TMObject()
+        if validation.uuid == nil {
+            validation.set(.string(makeUUID()), forKey: "__uuid")
+        }
+        validation.set(.string(settings.path), forKey: "path")
+        validation.set(.bool(settings.isTest), forKey: "is_test")
+        validation.set(.number(numberLexeme(settings.testTimeout)), forKey: "test_timeout")
+        validation.set(.bool(settings.failOnTimeout), forKey: "fail_on_timeout")
+        validation.set(.number(String(settings.flags)), forKey: "flags")
+        validation.set(.number(String(settings.compileFlags)), forKey: "compile_flags")
+        return asset.setting(.object(validation), forKey: "validation_settings")
+    }
+
+    /// Reads `asset.validation_settings`, applying RCP3's observed defaults for
+    /// members omitted from the serialized object.
+    public static func validationSettings(
+        in asset: TMObject
+    ) -> RCP3ScriptGraphValidationSettings? {
+        guard let object = asset["validation_settings"]?.objectValue else { return nil }
+        return RCP3ScriptGraphValidationSettings(tmObject: object)
+    }
+
     /// A failure resolving or writing a script-graph asset.
     public enum WriteError: Error, Equatable, Sendable, CustomStringConvertible {
         /// No `*.tm_script_graph` file in `bundleURL` has root `__uuid == rootUUID`.
@@ -806,6 +839,21 @@ public enum ScriptGraphWriteBack {
             throw WriteError.assetNotFound(rootUUID: rootUUID)
         }
         let patched = patched(asset: asset, with: model)
+        try patched.tmText().write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    /// Patches only the RCP3 validation settings of the standalone Script Graph
+    /// asset with root `rootUUID`, preserving its graph and all unmodeled settings
+    /// members, then writes it back to the same file.
+    public static func write(
+        validationSettings settings: RCP3ScriptGraphValidationSettings,
+        toAssetWithRootUUID rootUUID: String,
+        in bundleURL: URL
+    ) throws {
+        guard let (asset, fileURL) = resolveAsset(rootUUID: rootUUID, in: bundleURL) else {
+            throw WriteError.assetNotFound(rootUUID: rootUUID)
+        }
+        let patched = patchedValidationSettings(asset: asset, with: settings)
         try patched.tmText().write(to: fileURL, atomically: true, encoding: .utf8)
     }
 

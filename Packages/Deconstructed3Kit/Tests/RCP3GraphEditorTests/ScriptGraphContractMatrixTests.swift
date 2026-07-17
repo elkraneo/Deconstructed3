@@ -103,4 +103,42 @@ import Testing
         #expect(validationFailure.cases.first?.rcp3AuthoringCertification.status == .fail)
         #expect(validationFailure.cases.first?.rcp3RuntimeCertification.status == .fail)
     }
+
+    @Test func authoringSmokeNeverClaimsSubjectRuntimeEvidence() throws {
+        let matrix = ScriptGraphContractMatrix.make()
+        let item = try #require(matrix.cases.first)
+
+        let passed = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            mode: .authoringSmoke,
+            results: [.init(project: item.certificationProjectName, result: "success")]
+        )
+        #expect(passed.cases.first?.rcp3AuthoringCertification.status == .pass)
+        #expect(passed.cases.first?.rcp3RuntimeCertification.status == .notRecorded)
+        #expect(passed.metrics.first { $0.id == "rcp3-authoring-certification" }?.numerator == 1)
+        #expect(passed.metrics.first { $0.id == "rcp3-runtime-certification" }?.numerator == 0)
+
+        let harnessFailure = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            mode: .authoringSmoke,
+            results: [.init(project: item.certificationProjectName, result: "failure")]
+        )
+        #expect(harnessFailure.cases.first?.rcp3AuthoringCertification.status == .pass)
+        #expect(harnessFailure.cases.first?.rcp3RuntimeCertification.status == .notRecorded)
+
+        let validationFailure = matrix.applyingRCP3Results(
+            applicationVersion: "3.0",
+            applicationBuild: "build",
+            mode: .authoringSmoke,
+            results: [.init(
+                project: item.certificationProjectName,
+                result: "failure",
+                validationErrors: ["bad pin"]
+            )]
+        )
+        #expect(validationFailure.cases.first?.rcp3AuthoringCertification.status == .fail)
+        #expect(validationFailure.cases.first?.rcp3RuntimeCertification.status == .notRecorded)
+    }
 }

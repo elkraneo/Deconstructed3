@@ -29,6 +29,14 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
         case notRecorded
     }
 
+    /// Declares what an external RCP3 fixture actually exercises. A harness/load
+    /// smoke can prove that RCP3 accepted the authored project, but it cannot
+    /// certify the canonical subject node's runtime semantics.
+    public enum RCP3EvidenceMode: String, Codable, Sendable {
+        case authoringSmoke = "authoring-smoke"
+        case semanticRuntime = "semantic-runtime"
+    }
+
     public struct PinContract: Codable, Sendable, Equatable {
         public let ordinal: Int
         public let direction: String
@@ -215,12 +223,13 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
     }
 
     /// Binds per-project integration results to their exact canonical fixture.
-    /// A successful test proves both authoring acceptance and execution; an
-    /// assertion failure proves the graph loaded but its runtime behavior failed;
-    /// syntax/validation failures fail both layers. Skips remain unrecorded.
+    /// Semantic fixtures can certify runtime behavior. Harness/load smoke fixtures
+    /// certify only authoring acceptance, regardless of their test result. Skips
+    /// remain unrecorded and syntax/validation errors fail authoring acceptance.
     public func applyingRCP3Results(
         applicationVersion: String,
         applicationBuild: String,
+        mode: RCP3EvidenceMode = .semanticRuntime,
         results: [RCP3Result]
     ) -> ScriptGraphContractMatrix {
         let grouped = Dictionary(grouping: results) {
@@ -231,20 +240,23 @@ public struct ScriptGraphContractMatrix: Codable, Sendable, Equatable {
             let statuses = Set(matches.map { normalizedResult($0.result) })
             let hasValidationFailure = matches.contains { !$0.validationErrors.isEmpty }
             let authoring: EvidenceStatus
-            let runtime: EvidenceStatus
+            let semanticRuntime: EvidenceStatus
             if hasValidationFailure || statuses.contains("syntax_error") {
                 authoring = .fail
-                runtime = .fail
+                semanticRuntime = .fail
             } else if !matches.isEmpty && statuses.allSatisfy({ $0 == "success" || $0 == "passed" }) {
                 authoring = .pass
-                runtime = .pass
+                semanticRuntime = .pass
             } else if statuses.contains("failure") || statuses.contains("failed") {
                 authoring = .pass
-                runtime = .fail
+                semanticRuntime = .fail
             } else {
                 authoring = .notRecorded
-                runtime = .notRecorded
+                semanticRuntime = .notRecorded
             }
+            let runtime: EvidenceStatus = mode == .semanticRuntime
+                ? semanticRuntime
+                : .notRecorded
             return ContractCase(
                 requestedType: item.requestedType,
                 authoredType: item.authoredType,

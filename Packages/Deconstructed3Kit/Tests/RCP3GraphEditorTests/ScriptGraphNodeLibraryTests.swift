@@ -302,6 +302,23 @@ struct ScriptGraphNodeLibraryTests {
         #expect(Set(items.map(\.type)) == expectedTypeSet)
     }
 
+    @Test("RCP3 test harness contracts stay outside the creator palette")
+    func testHarnessContracts() throws {
+        let begin = try #require(ScriptGraphNodeLibrary.spec(for: "tm_begin_test"))
+        #expect(begin.inputs.isEmpty)
+        #expect(begin.outputs.map(\.connectorName) == ["", "deltaTime", "scene", "entity"])
+
+        let finish = try #require(ScriptGraphNodeLibrary.spec(for: "tm_finish_test"))
+        #expect(finish.inputs.map(\.connectorName) == ["", "success", "message"])
+        #expect(finish.outputs.map(\.connectorName) == [""])
+        #expect(finish.inputs[1].presence == .registrationDefault)
+        #expect(finish.inputs[2].presence == .registrationDefault)
+
+        let palette = Set(ScriptGraphNodeLibrary.paletteItems.map(\.type))
+        #expect(!palette.contains("tm_begin_test"))
+        #expect(!palette.contains("tm_finish_test"))
+    }
+
     @Test("Public value schemas author fixed Break and Write interfaces")
     func schemaDerivedBreakAndWriteSpecs() throws {
         let breakMatrix = try #require(ScriptGraphNodeLibrary.spec(for: "tm_break_matrix2x2"))

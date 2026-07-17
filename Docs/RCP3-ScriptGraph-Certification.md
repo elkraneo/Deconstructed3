@@ -16,6 +16,54 @@ The command creates the `test.json` configuration expected by RCP3. Put each
 RCP3's Script Graph test nodes; an ordinary runnable graph is reported as skipped,
 not passed.
 
+### Export integration-test smoke projects
+
+RCP3's minimum observed integration-test graph is an execution connection from
+`tm_begin_test` to `tm_finish_test`. The finish node carries `success = true` and
+an empty `message` string. The test graph must be assigned through an entity's
+Scripting Component; merely placing a Script Graph asset in the Project Browser
+does not make it executable.
+
+`rcp3-dump export-test-smoke` clones an existing, initialized RCP3 project rather
+than attempting to synthesize RCP3's project-wide support files. The exporter
+removes inherited Script Graph assets and the root Scripting Component from the
+clone only; the template is never modified. Each exported project contains:
+
+- the contract matrix case's exact canonical fixture as an unassigned asset;
+- a separately assigned `tm_begin_test` → `tm_finish_test` smoke graph; and
+- the case's digest-bound `certificationProjectName` as its directory name.
+
+This smoke tier proves that RCP3 loads the exact serialized fixture and executes
+the integration-test harness. It does not, by itself, prove the runtime semantics
+of the unassigned subject node. Runtime-semantic certification needs a case-specific
+assertion graph.
+
+```sh
+swift run rcp3-dump export-test-smoke \
+  /absolute/path/to/Initialized.realitycomposerpro \
+  /absolute/path/to/certification-root \
+  tm_add_child
+```
+
+Use `all` instead of a requested node type to export every contract-matrix case.
+The exporter refuses to overwrite an existing digest-bound project.
+
+The first case-specific semantic exporter exercises Bool construction through an
+RCP3 assertion and terminal test result:
+
+```sh
+swift run rcp3-dump export-test-semantic \
+  /absolute/path/to/Initialized.realitycomposerpro \
+  /absolute/path/to/semantic-certification-root \
+  tm_make_bool
+```
+
+The observed minimal terminal test path is `Begin Test → Finish Test`. `Begin Test`
+is an RCP3 harness source and presents the On Update-style event surface. `Finish
+Test` accepts execution, Bool `success` (registration default `true`), and String
+`message` (registration default empty), then emits the terminal test result. The
+ordinary creator palette must not expose these harness-only nodes.
+
 ## Run RCP3
 
 ```sh
@@ -51,9 +99,22 @@ swift run rcp3-dump contract-matrix /absolute/path/to/rcp3-certification.json \
   > /absolute/path/to/rcp3-contract-matrix.json
 ```
 
+For a harness/load smoke fixture that does not exercise the canonical subject's
+behavior, merge it explicitly as authoring-only evidence:
+
+```sh
+swift run rcp3-dump contract-matrix /absolute/path/to/rcp3-certification.json \
+  --evidence-mode authoring-smoke \
+  > /absolute/path/to/rcp3-contract-matrix.json
+```
+
+Use `--evidence-mode semantic-runtime` (the default) only when the RCP3 test
+contains case-specific assertions over the canonical subject node.
+
 Certification project names include the full semantic fixture digest. The merge
 accepts a result only when that exact name matches the current matrix case, so an
-older success cannot certify a changed graph. A successful integration case marks
-both RCP3 authoring and runtime evidence as passing. An executed assertion failure
-marks authoring as accepted but runtime as failed; syntax or validation failures
-fail both layers; skipped or unrelated cases remain unrecorded.
+older success cannot certify a changed graph. A successful semantic integration
+case marks both RCP3 authoring and runtime evidence as passing. An executed semantic
+assertion failure marks authoring as accepted but runtime as failed. Authoring-smoke
+results never alter runtime evidence; syntax or validation failures still fail
+authoring acceptance. Skipped or unrelated cases remain unrecorded.

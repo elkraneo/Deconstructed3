@@ -804,6 +804,51 @@ import RCP3Document
         }
     }
 
+    // MARK: - RCP3 validation settings
+
+    @Test func validationSettingsPatchPreservesIdentityInfoAndGraph() throws {
+        let original = try Self.handBuiltAsset()
+        let originalGraph = try #require(original["graph"]?.objectValue)
+        var validation = try #require(original["validation_settings"]?.objectValue)
+        var info = TMObject()
+        info.set(.string("keep-me"), forKey: "future_member")
+        validation.set(.object(info), forKey: "info")
+        validation.set(.string("also-keep"), forKey: "unknown_setting")
+        let asset = original.setting(.object(validation), forKey: "validation_settings")
+
+        let settings = RCP3ScriptGraphValidationSettings(
+            path: "Integration/Smoke",
+            isTest: true,
+            testTimeout: 12.5,
+            failOnTimeout: false,
+            flags: 7,
+            compileFlags: 3
+        )
+        let patched = ScriptGraphWriteBack.patchedValidationSettings(
+            asset: asset,
+            with: settings
+        )
+
+        #expect(patched["graph"]?.objectValue == originalGraph)
+        let result = try #require(patched["validation_settings"]?.objectValue)
+        #expect(result.uuid == "vs-uuid")
+        #expect(result["info"]?.objectValue?["future_member"]?.stringValue == "keep-me")
+        #expect(result["unknown_setting"]?.stringValue == "also-keep")
+        #expect(result["path"]?.stringValue == "Integration/Smoke")
+        #expect(result["is_test"]?.boolValue == true)
+        #expect(result["test_timeout"]?.doubleValue == 12.5)
+        #expect(result["fail_on_timeout"]?.boolValue == false)
+        #expect(result["flags"]?.numberLexeme == "7")
+        #expect(result["compile_flags"]?.numberLexeme == "3")
+        #expect(ScriptGraphWriteBack.validationSettings(in: patched) == settings)
+    }
+
+    @Test func validationSettingsDefaultsReadFromSparseRCP3Object() throws {
+        let asset = try Self.handBuiltAsset()
+        let settings = try #require(ScriptGraphWriteBack.validationSettings(in: asset))
+        #expect(settings == RCP3ScriptGraphValidationSettings(path: "Some/Validation/Path"))
+    }
+
     // MARK: - File write resolves by root uuid
 
     @Test func writeResolvesByRootUUIDAndPersists() throws {
@@ -844,6 +889,30 @@ import RCP3Document
         #expect(throws: ScriptGraphWriteBack.WriteError.assetNotFound(rootUUID: "nope")) {
             try ScriptGraphWriteBack.write(model: model, toAssetWithRootUUID: "nope", in: tmp)
         }
+    }
+
+    @Test func validationSettingsWriteResolvesByRootUUIDAndPersists() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appending(path: "wb-validation-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let asset = try Self.handBuiltAsset()
+        let fileURL = tmp.appending(path: "Script Graph.tm_script_graph")
+        try asset.tmText().write(to: fileURL, atomically: true, encoding: .utf8)
+
+        try ScriptGraphWriteBack.write(
+            validationSettings: .integrationTest,
+            toAssetWithRootUUID: "root-uuid",
+            in: tmp
+        )
+
+        let text = try String(contentsOf: fileURL, encoding: .utf8)
+        let written = try #require(try TM.parse(text).objectValue)
+        let settings = try #require(ScriptGraphWriteBack.validationSettings(in: written))
+        #expect(settings == .integrationTest)
+        #expect(written["validation_settings"]?.objectValue?.uuid == "vs-uuid")
+        #expect(written["graph"]?.objectValue == asset["graph"]?.objectValue)
     }
 
     // MARK: - Variable round-trip + authoring
